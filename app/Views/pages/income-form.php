@@ -33,7 +33,7 @@ $hasCategories = $tree !== [];
     </div>
 <?php else : ?>
 <form method="post" action="<?= e(url('/income')) ?>" novalidate
-      x-data="{ status: '<?= old('payment_status', 'received') ?>' }">
+      x-data="{ status: '<?= e(old('payment_status', 'received')) ?>' }">
     <?= csrf_field() ?>
 
     <div class="grid gap-5 xl:grid-cols-[1fr_320px]">

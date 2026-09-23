@@ -126,7 +126,7 @@ $activeAccounts = array_values(array_filter($accounts, static fn (array $a): boo
     </div>
 
     <?php if ($canWrite) : ?>
-        <div class="card p-5" x-data="{ movement: '<?= old('movement', 'contribution') ?>' }">
+        <div class="card p-5" x-data="{ movement: '<?= e(old('movement', 'contribution')) ?>' }">
             <h2 class="font-display text-sm font-semibold text-ink">Record a movement</h2>
 
             <?php if ($partners === [] || $activeAccounts === []) : ?>

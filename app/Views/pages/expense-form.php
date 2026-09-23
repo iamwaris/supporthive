@@ -38,7 +38,7 @@ $hasCategories = $tree !== [];
 <?php else : ?>
 <form method="post" action="<?= e(url('/expenses')) ?>" novalidate
       x-data="{
-          vendor: <?= json_encode(old('vendor'), JSON_THROW_ON_ERROR) ?>,
+          vendor: <?= e(json_encode(old('vendor'), JSON_THROW_ON_ERROR)) ?>,
           suggestions: [],
           open: false,
           async lookup() {
