@@ -54,6 +54,7 @@ docs/            plan, tracker, security, deployment, design system
 | [docs/TRACKER.md](docs/TRACKER.md) | Task board — update it with your work |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security mechanisms and review checklists |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Local setup, CI/CD, migrations, rollback |
+| [docs/GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | One-time: remote, secrets, variables, branch protection |
 | [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) | Tokens, primitives, UI conventions, a11y |
 
 ## Commands

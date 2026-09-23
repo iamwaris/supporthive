@@ -106,6 +106,8 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 
 ## 4. GitHub configuration
 
+> Step-by-step version with the exact UI paths: [GITHUB-SETUP.md](GITHUB-SETUP.md).
+
 **Settings → Secrets and variables → Actions → Secrets:**
 
 | Secret | Example | Notes |
