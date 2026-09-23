@@ -1,7 +1,8 @@
 # LedgerHive — Development Plan
 
-> Status: **foundation deployed; product spec received, planning V1 build.**
-> Owner: Muhammad Waris · Last updated: 2026-09-23
+> Status: **M1–M4 live in production** (auth, master data, the ledger,
+> daily entry). Next: M5 — budgets and profit distribution.
+> Owner: Muhammad Waris · Last updated: 2026-09-24
 > Source of truth for product scope: `LedgerHive_App.pdf` V1.0
 
 What we are building and why. Module breakdown lives in

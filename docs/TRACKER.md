@@ -25,10 +25,20 @@ The ledger contract is settled, so **M3 is unblocked**.
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| OPS-1 | Update `DB_PASS` secret, redeploy | S | todo | Production DB unreachable until done |
-| OPS-2 | Protect `main` (require PR + green CI) | S | todo | Anything on `main` deploys straight to production |
+| OPS-1 | Update `DB_PASS` secret, redeploy | S | done | Rotated 2026-09-23; production DB connects |
+| OPS-2 | Protect `main` (require PR + green CI) | S | deferred | User's explicit call while solo and testing on live — revisit before other users get access |
+| OPS-3 | Turn off `DEV_QUICK_LOGIN` before wider access | S | todo | Currently **ON** in production (`true`) — password-free login for any active user. One repo variable + redeploy to disable |
 
-## M1 — Auth & shell ✅ *(branch `feat/m1-auth-shell`, awaiting merge)*
+## Live status (2026-09-24)
+
+**M1–M4 are merged to `main` and deployed to https://myinvoicestudio.com.**
+Verified on production, not just by build hash: all 6 migrations applied,
+14 tables, every new route exists and requires auth, CSP intact, no secrets
+web-reachable, `transactions` table empty (no test data leaked from local).
+
+Next: **M5 — budgets and profit distribution.**
+
+## M1 — Auth & shell ✅ *(merged to `main`, deployed)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
@@ -44,7 +54,7 @@ The ledger contract is settled, so **M3 is unblocked**.
 | M1-10 | Self-hosted fonts | S | done | Google Fonts is blocked by our own `font-src 'self'` |
 | M1-11 | `scripts/create-user.php` | S | done | CLI only; password from stdin, not argv |
 
-## M2 — Master data ✅ *(branch `feat/m2-master-data`)*
+## M2 — Master data ✅ *(merged to `main`, deployed)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
@@ -54,10 +64,10 @@ The ledger contract is settled, so **M3 is unblocked**.
 | M2-4 | `accounts` CRUD with opening balance | M | done | `DECIMAL(15,2)`, kept as a string end to end |
 | M2-5 | `customers` CRUD | S | done | |
 | M2-6 | Share-validation tests | M | done | 17 cases incl. a verified float-failure split |
-| M2-7 | Vendor type-ahead endpoint | S | blocked | D-5. Needs the `expenses` table — moves to M4 |
-| M2-8 | Quick-login buttons for testing | S | done | Behind `DEV_QUICK_LOGIN`, off by default; every use logged |
+| M2-7 | ~~Vendor type-ahead endpoint~~ | — | moved | D-5. Needed the `expenses` table — built as M4-8 instead |
+| M2-8 | Quick-login buttons for testing | S | done | Behind `DEV_QUICK_LOGIN` — see OPS-3, it's ON in production by request |
 
-## M3 — Ledger ✅ *(branch `feat/m3-ledger`)*
+## M3 — Ledger ✅ *(merged to `main`, deployed)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
@@ -72,17 +82,19 @@ The ledger contract is settled, so **M3 is unblocked**.
 | M3-9 | Nested transaction support | S | done | `postTransfer` posts two rows through `post()` |
 | M3-10 | Derived account balances | S | done | Opening + posted movements; never stored |
 
-## M4 — Daily use
+## M4 — Daily use ✅ *(merged to `main`, deployed to production)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M4-1 | Expense list + add/edit | L | todo | Spec §8 |
-| M4-2 | Fast-entry affordances | M | todo | Today default, remembered account, save-and-add-another |
-| M4-3 | Income list + add/edit | L | todo | Spec §9 |
-| M4-4 | Transfer screen | M | todo | |
-| M4-5 | Partner contributions | M | todo | Not income |
-| M4-6 | Partner withdrawals | M | todo | Not an expense |
-| M4-7 | Capital-isolation tests | M | todo | Contribution moves balance, not P&L |
+| M4-1 | Expense list + add/edit | L | done | Month filter, search, by-category breakdown |
+| M4-2 | Fast-entry affordances | M | done | Today default, remembered account, save-and-add-another, vendor type-ahead |
+| M4-3 | Income list + add/edit | L | done | Cash-basis: pending invoices excluded from revenue until marked received |
+| M4-4 | Transfer screen | M | done | Live balances per account, derived not stored |
+| M4-5 | Partner contributions | M | done | Verified: P&L row count unchanged after posting |
+| M4-6 | Partner withdrawals | M | done | Same verification |
+| M4-7 | Capital-isolation tests | M | done | Confirmed live: contribution/withdrawal do not touch profit |
+| M4-8 | Vendor type-ahead endpoint | S | done | Was M2-7, blocked on `expenses` table; built here |
+| M4-9 | `markReceived()` flow | M | done | Pending → posted; starts counting from the received date |
 
 ## M5 — Controls
 
