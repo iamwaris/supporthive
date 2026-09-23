@@ -49,7 +49,7 @@ Status: `todo` · `doing` · `review` · `done` · `blocked`
 | M0-5 | Tailwind + Alpine + ApexCharts + Lucide front-end build, all vendored | 2026-09-23 | |
 | M0-6 | Tooling: PHPCS (PSR-12 + banned functions), PHPStan L5, PHPUnit | 2026-09-23 | |
 | M0-7 | CI workflow (lint, static analysis, tests, front-end build) | 2026-09-23 | |
-| M0-8 | Deploy workflow (FTPS to cPanel on `main`) | 2026-09-23 | |
+| M0-8 | Deploy workflow (FTPS to Hostinger on `main`) | 2026-09-23 | Gated behind `DEPLOY_ENABLED` |
 
 ---
 

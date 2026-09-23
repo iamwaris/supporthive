@@ -69,13 +69,13 @@ have to guess at.
 | 2026-09-23 | Application code lives outside the web root on the host | Source, `.env` and logs are unreachable over HTTP even if PHP stops executing | Everything in `public_html` |
 | 2026-09-23 | Vendored front-end libraries, no CDN | Keeps CSP at `'self'`; no third party can change the bytes we ship | CDN links |
 | 2026-09-23 | Server-side pagination instead of DataTables | Avoids jQuery; does not send the whole table to the browser; scales | DataTables |
-| 2026-09-23 | Deploy via GitHub Actions over FTPS to cPanel | Only transport the host offers; keeps deploys reproducible from `main` | Manual FileZilla uploads |
+| 2026-09-23 | Deploy via GitHub Actions over FTPS to Hostinger | Available on every plan; keeps deploys reproducible from `main` | Manual FileZilla uploads; Hostinger Git integration (less control over the build) |
 
 ## 6. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Shared host has an older PHP than 8.3 | Code may not run | Confirm via cPanel MultiPHP; `preflight.php` asserts ≥ 8.2 |
+| Shared host has an older PHP than 8.3 | Code may not run | Resolved 2026-09-23: host runs PHP 8.3.30. `preflight.php` still asserts ≥ 8.2 |
 | No shell on host → migrations run by hand | Schema drift between local and prod | Run `migrate.php` locally against the prod DB, or import via phpMyAdmin; record every run in TRACKER |
 | FTPS credentials leak | Full site compromise | Store only as GitHub secrets; rotate on any suspicion; never in the repo |
 | `.env` uploaded to the web root by mistake | Total credential disclosure | `.gitignore`, deploy exclusions, and a `preflight.php` check |

@@ -36,14 +36,14 @@ git ls-files | grep -E '^\.env$|node_modules|^vendor/'   # must print nothing
 | Secret | Value |
 |---|---|
 | `FTP_SERVER` | `ftp.yourdomain.com` — hostname only, no `ftp://` |
-| `FTP_USERNAME` | the cPanel FTP account, e.g. `deploy@yourdomain.com` |
+| `FTP_USERNAME` | the Hostinger FTP account (hPanel → Files → FTP Accounts) |
 | `FTP_PASSWORD` | that account's password |
 | `APP_URL` | `https://yourdomain.com` — no trailing slash |
 | `APP_KEY` | run `php scripts/genkey.php` and use a **fresh** value, not your local one |
-| `DB_HOST` | usually `localhost` on cPanel |
+| `DB_HOST` | `localhost` on Hostinger |
 | `DB_PORT` | `3306` |
-| `DB_NAME` | cPanel prefixes it, e.g. `cpuser_supporthive` |
-| `DB_USER` | e.g. `cpuser_sh` |
+| `DB_NAME` | Hostinger prefixes it, e.g. `u123456789_supporthive` |
+| `DB_USER` | e.g. `u123456789_sh` |
 | `DB_PASS` | that user's password |
 | `MAIL_HOST` `MAIL_PORT` `MAIL_USER` `MAIL_PASS` `MAIL_FROM` | optional until email is wired up — leave unset for now |
 
@@ -53,14 +53,15 @@ git ls-files | grep -E '^\.env$|node_modules|^vendor/'   # must print nothing
 
 | Variable | Value |
 |---|---|
-| `APP_DIR` | `/supporthive_app/` |
-| `WEB_ROOT` | `/public_html/` |
+| `APP_DIR` | `/domains/<site>/supporthive_app/` |
+| `WEB_ROOT` | `/domains/<site>/public_html/` |
 | `DEPLOY_ENABLED` | `true` |
 
-`APP_DIR` and `WEB_ROOT` each need a leading **and** trailing slash. `APP_DIR`
-must be a directory that sits *beside* `public_html`, not inside it — that is
-the whole point of the two-directory layout, and the deploy job refuses to run
-if you point it inside the web root.
+Paths are relative to the FTP account's root, which on Hostinger is the home
+directory — hence the leading `/domains/`. Both need a leading **and** trailing
+slash. `APP_DIR` must sit *beside* `public_html`, not inside it — that is the
+whole point of the two-directory layout, and the deploy job refuses to run if
+you point it inside the web root.
 
 `DEPLOY_ENABLED` is the master switch. **Leave it unset until everything above
 is filled in and the application directory exists on the host** — the deploy
@@ -88,9 +89,9 @@ Worth enabling until you've watched a few deploys succeed.
 
 ## 6. First deploy
 
-Before pushing to `main`, create the application directory on the host (cPanel →
-File Manager → the level containing `public_html` → **+ Folder** →
-`supporthive_app`). The pipeline will not create it for you.
+Before pushing to `main`, create the application directory on the host (hPanel →
+Files → File Manager → `domains/<site>/` → **New Folder** → `supporthive_app`,
+beside `public_html`). The pipeline will not create it for you.
 
 Then set `DEPLOY_ENABLED` to `true` and push:
 

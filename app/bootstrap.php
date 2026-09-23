@@ -15,7 +15,7 @@ define('ROUTES_PATH', BASE_PATH . '/routes');
 define('STORAGE_PATH', BASE_PATH . '/storage');
 
 // public/index.php defines PUBLIC_PATH before requiring this file, so the
-// document root may sit outside BASE_PATH (the cPanel layout does exactly that).
+// document root may sit outside BASE_PATH (the shared-hosting layout does).
 if (!defined('PUBLIC_PATH')) {
     define('PUBLIC_PATH', BASE_PATH . '/public');
 }

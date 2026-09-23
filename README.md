@@ -1,7 +1,7 @@
 # SupportHive
 
 Core PHP 8.3 application — no framework, MVC structure, MySQL via PDO,
-Tailwind + Alpine front end. Deploys from `main` to cPanel shared hosting
+Tailwind + Alpine front end. Deploys from `main` to Hostinger shared hosting
 through GitHub Actions.
 
 ## Quick start (XAMPP)

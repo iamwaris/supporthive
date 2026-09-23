@@ -1,15 +1,17 @@
 # Deployment
 
-Local (XAMPP) → GitHub → cPanel shared hosting over FTPS.
+Local (XAMPP) → GitHub → Hostinger shared hosting (hPanel) over FTPS.
 
 ```
-  localhost/XAMPP          GitHub                      cPanel host
-  ───────────────          ──────                      ───────────
+  localhost/XAMPP          GitHub                     Hostinger host
+  ───────────────          ──────                     ──────────────
   feat/ branch    push ->  CI (lint, PHPStan,
                            tests, build, secrets)
        │                          │
-       └── PR ──> main ──> Deploy workflow ──FTPS──>  /supporthive_app/  (code, .env)
-                                              └────>  /public_html/      (public/)
+       └── PR ──> main ──> Deploy workflow ──FTPS──>  domains/<site>/supporthive_app/
+                                              │                        (code, .env)
+                                              └────>  domains/<site>/public_html/
+                                                                       (public/)
                                    │
                                    └── smoke test: 200 OK + nothing sensitive readable
 ```
@@ -20,24 +22,30 @@ Nothing is ever uploaded by hand. Production is always exactly what is on `main`
 
 ## 1. Why the two-directory layout
 
-cPanel serves `public_html`. If the whole project lived there, then a single
-PHP misconfiguration (a bad upgrade, `.htaccess` ignored, PHP handler disabled)
-would expose `.env`, your source, and your logs as plain text.
+Hostinger serves only the `public_html` folder inside each site directory. If
+the whole project lived there, a single PHP misconfiguration (a bad upgrade,
+`.htaccess` ignored, the PHP handler disabled) would expose `.env`, your source
+and your logs as plain text.
 
-So:
+Hostinger's layout gives us a natural hiding place. Each site lives at
+`~/domains/<site>/`, and only `public_html` inside it is served, so a sibling
+folder is private by construction:
+
+```
+~/domains/supporthive.example/
+|-- public_html/        <- WEB_ROOT, served over HTTP
+`-- supporthive_app/    <- APP_DIR, never served
+```
 
 | Uploaded to | Contents | Web-reachable |
 |---|---|---|
-| `/supporthive_app/` | `app/`, `config/`, `database/`, `scripts/`, `storage/`, `.env` | no |
-| `/public_html/` | `index.php`, `assets/`, `uploads/`, `.htaccess`, `robots.txt` | yes |
+| `/domains/<site>/supporthive_app/` | `app/`, `config/`, `routes/`, `database/`, `scripts/`, `storage/`, `.env` | no |
+| `/domains/<site>/public_html/` | `index.php`, `assets/`, `uploads/`, `.htaccess`, `robots.txt` | yes |
 
 `public/index.php` looks for `../app/bootstrap.php` first (the local XAMPP
-layout) and falls back to `../supporthive_app/app/bootstrap.php` (the host
-layout), so the identical file works in both places.
-
-> If your host puts `public_html` somewhere that has no writable sibling
-> directory, set `APP_DIR` to any directory above the web root that you *can*
-> write to, and adjust the fallback path in `public/index.php` to match.
+layout); failing that it walks up to three directories looking for
+`supporthive_app/app/bootstrap.php`. The same file therefore works locally, on
+a primary domain and on an addon site, with no per-host edits.
 
 ## 2. Local setup (XAMPP)
 
@@ -89,20 +97,30 @@ the URL has no `/public` in it. Add to `C:\xampp\apache\conf\extra\httpd-vhosts.
 Then add `127.0.0.1 supporthive.test` to `C:\Windows\System32\drivers\etc\hosts`,
 restart Apache, and set `APP_URL=http://supporthive.test`.
 
-## 3. One-time host setup
+## 3. One-time host setup (Hostinger / hPanel)
 
-1. **Check the PHP version.** cPanel → *MultiPHP Manager* → set the domain to
-   PHP 8.3 (8.2 minimum). Enable `pdo_mysql`, `mbstring`, `fileinfo`, `openssl`.
-2. **Create the database and user.** cPanel → *MySQL Databases*. Grant the user
-   only `SELECT, INSERT, UPDATE, DELETE` on that database — not `ALL PRIVILEGES`.
-3. **Create the application directory** at the account root (the level that
-   *contains* `public_html`), e.g. `supporthive_app`. Leave it empty; the
-   pipeline fills it.
-4. **Create an FTP account** scoped as tightly as your host allows, and confirm
-   FTPS (explicit TLS on port 21) works. Plain FTP sends the password in clear
-   text — do not use it.
-5. **Install the SSL certificate** (AutoSSL / Let's Encrypt) before the first
-   deploy, since the app forces HTTPS.
+1. **Add the site.** hPanel → *Websites* → **Add Website**, or point an existing
+   domain at the account. Hostinger creates `~/domains/<site>/public_html/`.
+2. **Set the PHP version.** hPanel → *Advanced* → **PHP Configuration** → select
+   the site → PHP **8.3**. Under *PHP extensions* confirm `pdo_mysql`,
+   `mbstring`, `fileinfo` and `openssl` are enabled.
+3. **Create the application directory.** *Files* → **File Manager** → open
+   `domains/<site>/` → **New Folder** → `supporthive_app`. It must sit **beside**
+   `public_html`, never inside it. Leave it empty; the pipeline fills it.
+4. **Create the database.** hPanel → *Databases* → **MySQL Databases**. Note the
+   generated names — Hostinger prefixes them (`u123456789_supporthive`).
+   Hostinger grants its database user full rights on its own database; that is
+   platform behaviour and cannot be narrowed from hPanel.
+5. **FTP.** *Files* → **FTP Accounts**. The main account is rooted at the home
+   directory, which is exactly what the two-directory layout needs. Note the FTP
+   hostname shown there. Use FTPS (explicit TLS, port 21), never plain FTP.
+6. **SSL.** *Security* → **SSL** → install and verify the certificate for the new
+   site, and wait for it to go active. The app forces HTTPS, so deploying before
+   the certificate is live produces a redirect loop.
+
+> **SSH (Business plans and above):** hPanel → *Advanced* → **SSH Access**. With
+> it you can run `php database/migrate.php` directly on the server instead of
+> the manual migration steps in §6. Worth checking your plan.
 
 ## 4. GitHub configuration
 
@@ -117,10 +135,10 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 | `FTP_PASSWORD` | | |
 | `APP_URL` | `https://yourdomain.com` | no trailing slash |
 | `APP_KEY` | `base64:…` | generate a **fresh** one — not your local key |
-| `DB_HOST` | `localhost` | usually `localhost` on cPanel |
+| `DB_HOST` | `localhost` | `localhost` on Hostinger |
 | `DB_PORT` | `3306` | |
-| `DB_NAME` | `cpaneluser_supporthive` | cPanel prefixes the name |
-| `DB_USER` | `cpaneluser_sh` | |
+| `DB_NAME` | `u123456789_supporthive` | Hostinger prefixes the name |
+| `DB_USER` | `u123456789_sh` | |
 | `DB_PASS` | | |
 | `MAIL_HOST` `MAIL_PORT` `MAIL_USER` `MAIL_PASS` `MAIL_FROM` | | optional until email is wired up |
 
@@ -128,14 +146,15 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 
 | Variable | Example |
 |---|---|
-| `APP_DIR` | `/supporthive_app/` |
-| `WEB_ROOT` | `/public_html/` |
+| `APP_DIR` | `/domains/<site>/supporthive_app/` |
+| `WEB_ROOT` | `/domains/<site>/public_html/` |
 | `DEPLOY_ENABLED` | `true` |
 
-`APP_DIR` and `WEB_ROOT` need the leading and trailing slash. `DEPLOY_ENABLED`
-gates the whole deploy job: while it is unset the job is skipped, so `main`
-stays green before hosting exists. The job also refuses to run if `APP_DIR`
-points inside the web root.
+Paths are relative to the **FTP account's root**, which on Hostinger is the
+home directory - hence the leading `/domains/`. Both need a leading and a
+trailing slash. `DEPLOY_ENABLED` gates the whole deploy job: while it is unset
+the job is skipped, so `main` stays green before hosting exists. The job also
+refuses to run if `APP_DIR` points inside the web root.
 
 **Settings → Environments → `production`:** add a required reviewer if you want
 a manual approval gate before each deploy.
@@ -163,7 +182,7 @@ half-applied schema change from a failed FTP deploy is worse than a manual step.
 Either:
 
 **A. Run the migrator locally against the production database** (needs remote
-MySQL access enabled in cPanel → *Remote MySQL*, with your IP allow-listed):
+MySQL access enabled in hPanel → *Databases* → **Remote MySQL**, with your IP added):
 
 ```bash
 cp .env .env.local.bak
@@ -173,12 +192,11 @@ php database/migrate.php
 mv .env.local.bak .env      # restore immediately
 ```
 
-**B. Import through phpMyAdmin:** run each pending file from
+**B. Import through phpMyAdmin** (hPanel → *Databases* → phpMyAdmin)**:** run each pending file from
 `database/migrations` in filename order, then add its filename to the
 `migrations` table so the runner does not repeat it.
 
-Always take a backup first (cPanel → *Backup* → *Download a MySQL Database
-Backup*), and prefer additive changes (new nullable column) over destructive
+Always take a backup first (hPanel → *Files* → **Backups**), and prefer additive changes (new nullable column) over destructive
 ones so a rollback of the code does not break the live schema.
 
 ## 7. Post-deploy verification
