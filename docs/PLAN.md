@@ -117,6 +117,10 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | 2026-09-23 | **Balances derived, not stored** | A stored balance is a second truth that drifts | Running-balance column |
 | 2026-09-23 | **Effective-dated `partner_shares`** | Profit distribution needs the split *as of* a period | Percentage column on `partners` |
 | 2026-09-23 | **Service layer** added to the scaffold | Financial rules (posting, validation, distribution) belong in one testable place | Logic in controllers/models |
+| 2026-09-23 | **Cash basis**: only `received` income counts toward profit | Profit never shows money that has not arrived; matches how an owner-managed business reads the dashboard. Pending sales are tracked and reported as expected income, not revenue | Accrual (implies receivables, deferred to V2); showing both (doubles every report) |
+| 2026-09-23 | **Void by status flag**, not reversing entry | Simple, readable, history intact. Risk mitigated by a central query builder | Reversing entries: correct accounting, but two extra rows for a typo fix, and V1 has no period-close concept |
+| 2026-09-23 | **Attachments in `storage/documents`**, streamed by an authenticated controller | Financial documents must not be readable by anyone holding a URL | `public/uploads` with random filenames |
+| 2026-09-23 | **Rebrand app to LedgerHive; infrastructure names unchanged** | Zero risk, no downtime. Repo `supporthive`, DB `u400948127_supporthive`, site `myinvoicestudio.com` keep their names | Renaming repo/DB/domain |
 
 ## 6. Risks
 
@@ -134,16 +138,16 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 
 Raised 2026-09-23, shaping V1:
 
-- [ ] Product naming vs provisioned infrastructure (repo/DB/domain say SupportHive)
-- [ ] Accounting basis: does *pending* income count toward profit?
-- [ ] Corrections: status-flag void, or posted reversing entry?
-- [ ] Attachment storage location and serving model
 - [ ] Vendors: free text or a managed table?
 - [ ] Export libraries — the only runtime dependencies V1 would take on
 - [ ] Expected transaction volume per month (drives indexing and caching)
 - [ ] Staging site before production deploys?
 
 Answered:
+- [x] Product naming - rebrand app to LedgerHive, leave infra names alone
+- [x] Accounting basis - **cash basis**, only `received` income counts
+- [x] Corrections - **status-flag void**, excluded from aggregates
+- [x] Attachments - `storage/documents`, authenticated controller
 - [x] PHP version on host — 8.3.30 web, 8.2.30 CLI
 - [x] Domain and HTTPS — provisioned
 - [x] Currency — PKR, single currency in V1

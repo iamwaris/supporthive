@@ -52,7 +52,8 @@ transactions" **by construction** rather than by discipline.
 | Account balance | **Derived**, not stored: `opening_balance + SUM(signed amounts)` | A stored balance is a second source of truth that silently goes wrong. Add a cached aggregate only if measurement shows it is needed. |
 | Signed amounts | Store `amount` positive + a `direction` (`+1`/`-1`) resolved from type | Keeps "show me the amount" trivial while making `SUM(amount * direction)` correct. |
 | Partner shares | Separate `partner_shares` table with `effective_from` / `effective_to` | The spec requires effective dates. A percentage column on `partners` cannot answer "what was the split in March?" — which is exactly what profit distribution needs. |
-| Corrections | `status` = `posted` / `void`, excluded from every aggregate, plus audit row | Spec: never silently delete. See open question on void-vs-reversal. |
+| Corrections | `status` = `posted` / `void`, excluded from every aggregate, plus audit row | Decided 2026-09-23. Simple, readable, history intact. **Risk:** any aggregate that forgets `WHERE status = 'posted'` silently counts voided rows. Mitigated by routing every read through one query builder that applies it - a hand-written `SUM()` is a review failure. |
+| Profit basis | **Cash**: only `sales.payment_status = 'received'` is revenue | Decided 2026-09-23. Profit never shows money that has not arrived. Pending sales get their own expected-income report. |
 | Category type | Categories are typed (`expense` / `income`) | Stops an income category being selected on an expense form. |
 
 ---
@@ -194,11 +195,16 @@ would acquire — see open questions.
 
 Receipts, invoices, bills, payment proofs linked to transactions.
 
-Spec §18: *"stored outside executable PHP directories where practical."* The
-scaffold currently writes to `public/uploads` with an execution-blocking
-`.htaccess`. For financial documents this should move to `storage/documents/`
-(already outside the web root) served through an authenticated controller —
-otherwise anyone with a guessable URL reads your receipts. See open questions.
+**Decided 2026-09-23:** files live in `storage/documents/`, outside the web root
+entirely, streamed by a controller that checks the session *and* that the user
+may see the owning transaction. Nothing is readable by holding a URL.
+
+Two consequences for the code:
+- `Upload::store()` needs a variant writing outside `PUBLIC_PATH` (it currently
+  hardcodes `PUBLIC_PATH . '/uploads'`).
+- `DocumentController@show` resolves an attachment **id** to a file path via the
+  database. A user-supplied path must never reach the filesystem - that is how
+  path traversal reads `.env`.
 
 ---
 

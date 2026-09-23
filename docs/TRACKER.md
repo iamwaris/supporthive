@@ -7,17 +7,16 @@ Module definitions: [MODULES.md](MODULES.md) · Decisions: [PLAN.md](PLAN.md)
 
 ---
 
-## Blocked on a decision
+## Decisions settled (2026-09-23)
 
-| ID | Task | Blocking question |
+| ID | Decision | Consequence for the code |
 |---|---|---|
-| D-1 | Rename app to LedgerHive | Repo/DB/domain provisioned as SupportHive — rename, or keep infra names? |
-| D-2 | Sales `pending` handling | Does pending income count toward profit? Changes every P&L query. |
-| D-3 | Void vs reversal | Status flag, or posted reversing entry? Changes the ledger contract. |
-| D-4 | Attachment storage | `storage/documents` + authed controller, or `public/uploads`? |
+| D-1 | Rebrand app to LedgerHive; infra names unchanged | `APP_NAME`, UI, docs, favicon change. Repo/DB/domain stay as-is. |
+| D-2 | Cash basis - only `received` income is revenue | Every P&L aggregate filters `payment_status='received'`. Pending gets its own report. |
+| D-3 | Void by status flag | Every aggregate filters `status='posted'` - enforced in one query builder, not by memory. |
+| D-4 | Attachments in `storage/documents`, authenticated controller | `Upload` needs a non-public variant; `DocumentController@show` resolves by id. |
 
-D-2 and D-3 must be settled **before M3** — they define the ledger contract.
-D-1 is cheapest now (no production data). D-4 is needed before M10.
+The ledger contract is settled, so **M3 is unblocked**.
 
 ## Now
 
@@ -35,6 +34,7 @@ D-1 is cheapest now (no production data). D-4 is needed before M10.
 | M1-3 | `permission:` middleware | M | todo | Extends existing `role:` middleware |
 | M1-4 | Login / logout screens | M | todo | Rate-limited, audited — primitives exist |
 | M1-5 | LedgerHive palette in `app.src.css` | S | todo | Navy/slate/amber per spec §2 |
+| M1-9 | Rebrand: `APP_NAME`, README, views, favicon | S | todo | D-1. Infra names unchanged |
 | M1-6 | App shell: sidebar nav, spec §20.1 | M | todo | Lucide icons, mobile responsive |
 | M1-7 | `settings` table + Settings screen | M | todo | Company, currency, fiscal start, approval threshold |
 | M1-8 | Permission enforcement tests | S | todo | Data Entry must not reach `/users` |
@@ -54,12 +54,13 @@ D-1 is cheapest now (no production data). D-4 is needed before M10.
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M3-1 | `transactions` schema + indexes | M | todo | `DECIMAL(15,2)`; blocked by D-2, D-3 |
+| M3-1 | `transactions` schema + indexes | M | todo | `DECIMAL(15,2)`, `status` enum. Unblocked |
 | M3-2 | `TransactionService::post()` | L | todo | Ledger + satellite + audit in one DB transaction |
 | M3-3 | `TransactionService::void()` | M | todo | Mandatory reason, audit |
 | M3-4 | Transfers as two linked legs | M | todo | Excluded from P&L |
 | M3-5 | All Transactions screen + full filter set | L | todo | Spec §17, server-side pagination |
 | M3-6 | Ledger integrity tests | L | todo | Voids excluded; transfers net zero; 10k-row pagination |
+| M3-7 | Query builder that always applies `status='posted'` | M | todo | D-3 mitigation - stops a hand-written `SUM()` counting voids |
 
 ## M4 — Daily use
 
@@ -93,6 +94,7 @@ D-1 is cheapest now (no production data). D-4 is needed before M10.
 | M6-3 | Chart JSON endpoints | M | todo | No inline script data — CSP |
 | M6-4 | ApexCharts wiring, spec §15 | M | todo | Vendored already |
 | M6-5 | 12 reports with filters | L | todo | Spec §16 |
+| M6-9 | Expected-income report (pending sales) | S | todo | D-2 - pending stays visible, just not revenue |
 | M6-6 | CSV export | M | todo | Native PHP, no dependency |
 | M6-7 | PDF export | M | todo | Needs library decision |
 | M6-8 | KPI reconciliation tests | M | todo | Dashboard == filtered ledger |
@@ -101,8 +103,8 @@ D-1 is cheapest now (no production data). D-4 is needed before M10.
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M7-1 | `attachments` + upload flow | M | todo | Blocked by D-4 |
-| M7-2 | Authenticated document controller | M | todo | Ownership check per file |
+| M7-1 | `attachments` + upload flow to `storage/documents` | M | todo | D-4. Needs a non-public `Upload` variant |
+| M7-2 | `DocumentController@show` | M | todo | Session + record-ownership check; resolve by id, never by path |
 | M7-3 | Audit every write path | M | todo | Old/new values |
 | M7-4 | Audit log viewer | M | todo | |
 | M7-5 | Approval threshold | M | todo | Configurable amount |
