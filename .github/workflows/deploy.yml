@@ -146,7 +146,7 @@ jobs:
         run: |
           umask 077
           cat > release/app_private/.env <<'ENVEOF'
-          APP_NAME=SupportHive
+          APP_NAME=LedgerHive
           APP_ENV=production
           APP_DEBUG=false
           APP_TIMEZONE=UTC
@@ -178,7 +178,7 @@ jobs:
             echo "MAIL_USER=${{ secrets.MAIL_USER }}"
             echo "MAIL_PASS=${{ secrets.MAIL_PASS }}"
             echo "MAIL_FROM=${{ secrets.MAIL_FROM }}"
-            echo "MAIL_FROM_NAME=SupportHive"
+            echo "MAIL_FROM_NAME=LedgerHive"
           } >> release/app_private/.env
           chmod 600 release/app_private/.env
 

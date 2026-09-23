@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use App\Services\Access;
+
 /**
  * Small explicit router. Routes are declared in config/routes.php; there is no
  * dynamic controller resolution from the URL, so a request can never reach a
@@ -97,8 +99,43 @@ final class Router
             'auth'  => Auth::requireLogin(),
             'guest' => Auth::check() ? Http::redirect('/dashboard') : null,
             'role'  => Auth::requireRole(...explode(',', (string) $arg)),
+            // Ability gates delegate to App\Services\Access, which is unit
+            // tested. Routes name what the user must be able to DO, not which
+            // roles happen to be allowed today.
+            'can'   => $this->requireAbility((string) $arg),
             default => null,
         };
+    }
+
+    /**
+     * Enforce an ability from the access policy. Unknown abilities and unknown
+     * roles both deny — a typo must never widen access.
+     */
+    private function requireAbility(string $ability): void
+    {
+        Auth::requireLogin();
+
+        $user = Auth::user();
+        $role = (string) ($user['role'] ?? '');
+
+        $allowed = match ($ability) {
+            'write'      => Access::canWriteTransactions($role),
+            'master'     => Access::canManageMasterData($role),
+            'administer' => Access::canAdminister($role),
+            'distribute' => Access::canDistributeProfit($role),
+            'view'       => Access::canViewFinancials($role),
+            default      => false,
+        };
+
+        if (!$allowed) {
+            Logger::security('Ability denied', [
+                'user_id' => Auth::id(),
+                'role'    => $role,
+                'ability' => $ability,
+                'path'    => Http::path(),
+            ]);
+            Http::abort(403);
+        }
     }
 
     /** @param array<string,string> $params */

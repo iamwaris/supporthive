@@ -4,24 +4,35 @@
  * Route table. Every reachable URL in the application is listed here.
  *
  * Signature: $router->method($path, 'Controller@action', [middleware...])
- * Middleware: 'auth', 'guest', 'role:admin,agent'
+ * Middleware:
+ *   auth              signed in
+ *   guest             signed out only
+ *   can:<ability>     checked against App\Services\Access (unit tested)
+ *                     write | master | administer | distribute | view
  */
 
 declare(strict_types=1);
 
+use App\Core\Http;
 use App\Core\Router;
 
 /** @var Router $router */
 
 // --- Public ---------------------------------------------------------------
-$router->get('/', 'HomeController@index');
+$router->get('/', static fn (): never => Http::redirect('/dashboard'));
 
-// --- Authentication (add controllers as the app plan lands) ---------------
-// $router->get('/login',    'AuthController@showLogin',  ['guest']);
-// $router->post('/login',   'AuthController@login',      ['guest']);
-// $router->post('/logout',  'AuthController@logout',     ['auth']);
+// --- Authentication -------------------------------------------------------
+$router->get('/login', 'AuthController@showLogin', ['guest']);
+$router->post('/login', 'AuthController@login', ['guest']);
+$router->post('/logout', 'AuthController@logout', ['auth']);
 
 // --- Application ----------------------------------------------------------
-// $router->get('/dashboard',      'DashboardController@index', ['auth']);
-// $router->get('/tickets/{id}',   'TicketController@show',     ['auth']);
-// $router->post('/admin/users',   'UserController@store',      ['auth', 'role:admin']);
+$router->get('/dashboard', 'DashboardController@index', ['can:view']);
+
+// --- System ---------------------------------------------------------------
+$router->get('/settings', 'SettingsController@index', ['can:administer']);
+$router->post('/settings', 'SettingsController@update', ['can:administer']);
+
+// Routes land here as their modules are built (see docs/MODULES.md). They are
+// deliberately absent rather than stubbed: the sidebar renders an unbuilt item
+// as disabled, so nothing links into a 404.

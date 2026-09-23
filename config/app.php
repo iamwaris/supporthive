@@ -5,7 +5,7 @@ declare(strict_types=1);
 use App\Core\Env;
 
 return [
-    'name'     => Env::get('APP_NAME', 'SupportHive'),
+    'name'     => Env::get('APP_NAME', 'LedgerHive'),
     'env'      => Env::get('APP_ENV', 'production'),
     // Debug defaults to OFF. A missing or malformed .env must never expose traces.
     'debug'    => Env::bool('APP_DEBUG', false),

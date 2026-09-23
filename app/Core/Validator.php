@@ -161,7 +161,12 @@ final class Validator
             'int', 'numeric' => "The {$label} must be a number.",
             'min'      => "The {$label} must be at least {$arg} characters.",
             'max'      => "The {$label} may not be longer than {$arg} characters.",
-            'between'  => "The {$label} must be between {$arg}.",
+            'between'  => sprintf(
+                'The %s must be between %s.',
+                $label,
+                // "1,100" reads as one number. Say "1 and 100".
+                implode(' and ', array_map('trim', explode(',', (string) $arg)))
+            ),
             'in'       => "The selected {$label} is not valid.",
             'same'     => "The {$label} does not match.",
             default    => "The {$label} is not valid.",

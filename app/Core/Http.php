@@ -95,11 +95,30 @@ final class Http
         return self::method() === 'POST';
     }
 
+    /**
+     * The request path, relative to wherever the front controller is mounted.
+     *
+     * Served from a subdirectory (http://host/LedgerHive/public/login) the URI
+     * carries that prefix, and route matching would fail on every request. The
+     * prefix is taken from SCRIPT_NAME's directory rather than configured, so
+     * the same code works at a domain root and in a subfolder with nothing to
+     * keep in sync.
+     */
     public static function path(): string
     {
         $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/');
         $path = parse_url($uri, PHP_URL_PATH);
-        return '/' . trim(is_string($path) ? $path : '/', '/');
+        $path = '/' . trim(is_string($path) ? $path : '/', '/');
+
+        // SCRIPT_NAME is a URL path, so it uses forward slashes on every
+        // platform, Windows included.
+        $base = '/' . trim(dirname((string) ($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+
+        if ($base !== '/' && str_starts_with($path, $base)) {
+            $path = substr($path, strlen($base));
+        }
+
+        return '/' . trim($path, '/');
     }
 
     /** Only same-origin relative paths are allowed, to prevent open redirects. */
