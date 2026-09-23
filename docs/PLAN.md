@@ -1,7 +1,8 @@
 # LedgerHive — Development Plan
 
 > Status: **M1–M4 live in production** (auth, master data, the ledger,
-> daily entry). Next: M5 — budgets and profit distribution.
+> daily entry). **M5 — budgets and profit distribution — built and tested,
+> pending PR/merge.** Next after that: M6 — visibility.
 > Owner: Muhammad Waris · Last updated: 2026-09-24
 > Source of truth for product scope: `LedgerHive_App.pdf` V1.0
 

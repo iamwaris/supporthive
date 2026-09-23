@@ -36,7 +36,9 @@ Verified on production, not just by build hash: all 6 migrations applied,
 14 tables, every new route exists and requires auth, CSP intact, no secrets
 web-reachable, `transactions` table empty (no test data leaked from local).
 
-Next: **M5 — budgets and profit distribution.**
+M5 — budgets and profit distribution — is built on `feat/m5-budgets-profit-distribution`,
+verified locally (migration applied, `composer check` clean, 15 new tests
+passing) and awaiting PR review and merge. Next after that: **M6 — visibility.**
 
 ## M1 — Auth & shell ✅ *(merged to `main`, deployed)*
 
@@ -96,16 +98,16 @@ Next: **M5 — budgets and profit distribution.**
 | M4-8 | Vendor type-ahead endpoint | S | done | Was M2-7, blocked on `expenses` table; built here |
 | M4-9 | `markReceived()` flow | M | done | Pending → posted; starts counting from the received date |
 
-## M5 — Controls
+## M5 — Controls ✅ *(built, pending deploy — see Now)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M5-1 | `budgets` schema + CRUD | M | todo | Unique on year+month+category |
-| M5-2 | Budget vs actual view | M | todo | Live from ledger |
-| M5-3 | Threshold + exceeded alerts | S | todo | Configurable, default 80% |
-| M5-4 | Profit calculation service | L | todo | Distributable profit for a period |
-| M5-5 | Profit distribution + approval flow | L | todo | Calculated vs distributed |
-| M5-6 | Rounding-remainder tests | M | todo | Allocations must sum exactly to profit |
+| M5-1 | `budgets` schema + CRUD | M | done | Unique on `(year, month, category_id)`; top-level expense categories only |
+| M5-2 | Budget vs actual view | M | done | `LedgerQuery::groupedByCategory()`, same rollup every other report uses |
+| M5-3 | Threshold + exceeded alerts | S | done | Configurable per budget, default 80%; `ok`/`warning`/`exceeded` badges |
+| M5-4 | Profit calculation service | L | done | `ProfitDistributionService`; cash-basis P&L over the period, split read as of period end |
+| M5-5 | Profit distribution + approval flow | L | done | `calculate → approve → distribute`, each a separate audited action; posts through `TransactionService::post()` |
+| M5-6 | Rounding-remainder tests | M | done | Largest-remainder method in bcmath cents; exact-sum, tie-break-by-id and mid-period-split cases all pass |
 
 ## M6 — Visibility
 
