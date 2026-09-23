@@ -55,10 +55,14 @@ matrix is machinery with nothing to express yet. Simple role middleware covers
 it. The table arrives with the third role, which is when it starts earning its
 keep.
 
-Assumption worth correcting if wrong: with no Data Entry role, **the admin
-does the daily expense entry**, and partners only look. If partners should be
-able to record expenses too, say so - it is a one-line middleware change now
-and a data migration later.
+**Confirmed 2026-09-23:** with no Data Entry role, the admin does the daily
+expense entry and partners are read-only. Revisiting this later means a
+migration once transactions carry a `created_by` history, so it is recorded
+rather than left as an assumption.
+
+Where this is enforced: `App\Services\Access::canWriteTransactions()`, which
+returns false for `partner` and is asserted in `tests/Unit/AccessTest.php`.
+Changing the policy means changing that one function and its test.
 
 **Conflict to resolve:** the deployed `users.role` enum is
 `admin / agent / customer` — from the generic scaffold, wrong for this product.
