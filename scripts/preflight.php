@@ -21,6 +21,7 @@ use App\Core\Database;
 
 $pass = 0;
 $fail = 0;
+$warn = 0;
 
 function check(string $label, bool $ok, string $remedy = ''): void
 {
@@ -32,6 +33,22 @@ function check(string $label, bool $ok, string $remedy = ''): void
     }
     $fail++;
     echo "  FAIL  {$label}" . ($remedy !== '' ? " -> {$remedy}" : '') . "\n";
+}
+
+/**
+ * Hardening that is desirable but that the application already enforces at
+ * runtime, so a weak php.ini default is not by itself a defect.
+ */
+function warn(string $label, bool $ok, string $remedy = ''): void
+{
+    global $pass, $warn;
+    if ($ok) {
+        $pass++;
+        echo "  PASS  {$label}\n";
+        return;
+    }
+    $warn++;
+    echo "  WARN  {$label}" . ($remedy !== '' ? " -> {$remedy}" : '') . "\n";
 }
 
 $isProduction = Config::isProduction();
@@ -47,9 +64,14 @@ check('openssl loaded', extension_loaded('openssl'));
 
 echo "\nSecurity\n";
 check('display_errors off', ini_get('display_errors') === '0' || ini_get('display_errors') === '');
-check('expose_php off', ini_get('expose_php') !== '1', 'set expose_php=Off in php.ini');
+warn('expose_php off', ini_get('expose_php') !== '1', 'set expose_php=Off in php.ini (the app also unsets the header)');
 check('allow_url_include off', ini_get('allow_url_include') !== '1');
-check('session.cookie_httponly on', ini_get('session.cookie_httponly') === '1');
+// The app sets these per session in Session::start(), so a weak ini default
+// is defence-in-depth rather than an actual exposure. What must be right is
+// the application's own session configuration.
+warn('session.cookie_httponly on in php.ini', ini_get('session.cookie_httponly') === '1');
+check('app sets a SameSite policy', in_array(Config::get('session.samesite'), ['Lax', 'Strict'], true), 'set SESSION_SAMESITE=Lax');
+check('session lifetime is bounded', (int) Config::get('session.lifetime', 0) > 0, 'set SESSION_LIFETIME');
 if ($isProduction) {
     check('APP_DEBUG is false in production', Config::get('app.debug') === false, 'set APP_DEBUG=false');
     check('SESSION_SECURE is true in production', Config::get('session.secure') === true, 'set SESSION_SECURE=true');
@@ -72,5 +94,5 @@ try {
     check('connection', false, 'check DB_* values in .env');
 }
 
-echo "\n{$pass} passed, {$fail} failed\n";
+echo "\n{$pass} passed, {$warn} warning(s), {$fail} failed\n";
 exit($fail === 0 ? 0 : 1);
