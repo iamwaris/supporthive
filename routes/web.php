@@ -13,6 +13,7 @@
 
 declare(strict_types=1);
 
+use App\Controllers\DevAuthController;
 use App\Core\Http;
 use App\Core\Router;
 
@@ -26,6 +27,14 @@ $router->get('/login', 'AuthController@showLogin', ['guest']);
 $router->post('/login', 'AuthController@login', ['guest']);
 $router->post('/logout', 'AuthController@logout', ['auth']);
 
+// --- Quick login (testing) ------------------------------------------------
+// Registered ONLY while DEV_QUICK_LOGIN is on, so with the switch off this URL
+// does not exist and returns 404 rather than merely hiding its button. The
+// controller checks the same switch again.
+if (DevAuthController::isEnabled()) {
+    $router->post('/dev-login', 'DevAuthController@login', ['guest']);
+}
+
 // --- Application ----------------------------------------------------------
 $router->get('/dashboard', 'DashboardController@index', ['can:view']);
 
@@ -33,6 +42,26 @@ $router->get('/dashboard', 'DashboardController@index', ['can:view']);
 $router->get('/settings', 'SettingsController@index', ['can:administer']);
 $router->post('/settings', 'SettingsController@update', ['can:administer']);
 
-// Routes land here as their modules are built (see docs/MODULES.md). They are
+// --- Master data (M2) -----------------------------------------------------
+// Reading is open to anyone who may see financials; every write needs the
+// master-data ability, which today means admin only.
+$router->get('/partners', 'PartnerController@index', ['can:view']);
+$router->post('/partners', 'PartnerController@store', ['can:master']);
+$router->post('/partners/shares', 'PartnerController@activateShares', ['can:master']);
+$router->post('/partners/{id}', 'PartnerController@update', ['can:master']);
+
+$router->get('/categories', 'CategoryController@index', ['can:view']);
+$router->post('/categories', 'CategoryController@store', ['can:master']);
+$router->post('/categories/{id}/toggle', 'CategoryController@toggle', ['can:master']);
+
+$router->get('/accounts', 'AccountController@index', ['can:view']);
+$router->post('/accounts', 'AccountController@store', ['can:master']);
+$router->post('/accounts/{id}', 'AccountController@update', ['can:master']);
+
+$router->get('/customers', 'CustomerController@index', ['can:view']);
+$router->post('/customers', 'CustomerController@store', ['can:master']);
+$router->post('/customers/{id}', 'CustomerController@update', ['can:master']);
+
+// Later modules land here as they are built (see docs/MODULES.md). They are
 // deliberately absent rather than stubbed: the sidebar renders an unbuilt item
 // as disabled, so nothing links into a 404.

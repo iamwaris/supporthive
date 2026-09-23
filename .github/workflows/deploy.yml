@@ -170,6 +170,10 @@ jobs:
             echo "DB_USER=${{ secrets.DB_USER }}"
             echo "DB_PASS=${{ secrets.DB_PASS }}"
             echo "DB_CHARSET=utf8mb4"
+            # Password-free login buttons. Off unless the repository variable
+            # DEV_QUICK_LOGIN is set to true. Switching it off is a variable
+            # change and a redeploy, with no code edit.
+            echo "DEV_QUICK_LOGIN=${{ vars.DEV_QUICK_LOGIN || 'false' }}"
             # The document root is not BASE_PATH/public in this split layout,
             # so CLI tools (preflight, uploads) need it spelled out.
             echo "APP_PUBLIC_PATH=$WEB_ROOT"

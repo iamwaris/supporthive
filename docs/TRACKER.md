@@ -44,17 +44,18 @@ The ledger contract is settled, so **M3 is unblocked**.
 | M1-10 | Self-hosted fonts | S | done | Google Fonts is blocked by our own `font-src 'self'` |
 | M1-11 | `scripts/create-user.php` | S | done | CLI only; password from stdin, not argv |
 
-## M2 — Master data
+## M2 — Master data ✅ *(branch `feat/m2-master-data`)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M2-1 | `partners` CRUD | M | todo | |
-| M2-2 | `partner_shares` effective-dated + 100% validation | L | todo | **Acceptance criterion.** Service + tests |
-| M2-3 | `categories` tree, typed expense/income | M | todo | Seed spec's 12 starter categories |
-| M2-4 | `accounts` CRUD with opening balance | M | todo | |
-| M2-5 | `customers` CRUD | S | todo | |
-| M2-7 | Vendor type-ahead endpoint | S | todo | D-5. `SELECT DISTINCT vendor` scoped + limited; keeps free-text spellings converging |
-| M2-6 | Share-validation unit tests | M | todo | Mid-period change, deactivation, 99.99% rejection |
+| M2-1 | `partners` CRUD | M | done | Inline edit; deactivation blocked while holding a share |
+| M2-2 | `partner_shares` effective-dated + 100% validation | L | done | **Acceptance criterion met.** Integer basis points; 105% refused with "5% over", zero rows written |
+| M2-3 | `categories` tree, typed expense/income | M | done | 15 seeded; hidden not deleted; children follow the parent |
+| M2-4 | `accounts` CRUD with opening balance | M | done | `DECIMAL(15,2)`, kept as a string end to end |
+| M2-5 | `customers` CRUD | S | done | |
+| M2-6 | Share-validation tests | M | done | 17 cases incl. a verified float-failure split |
+| M2-7 | Vendor type-ahead endpoint | S | blocked | D-5. Needs the `expenses` table — moves to M4 |
+| M2-8 | Quick-login buttons for testing | S | done | Behind `DEV_QUICK_LOGIN`, off by default; every use logged |
 
 ## M3 — Ledger (critical path)
 

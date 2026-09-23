@@ -39,6 +39,28 @@ if (!function_exists('old')) {
     }
 }
 
+if (!function_exists('old_array')) {
+    /**
+     * Flashed input for a field that submits as an array, e.g. shares[12].
+     *
+     * old() deliberately returns a string, so reading old('shares')[$id] would
+     * trip an array-to-string conversion. Array fields get their own accessor
+     * rather than making the common case pay for the rare one.
+     *
+     * @return array<array-key,string>
+     */
+    function old_array(string $field): array
+    {
+        $values = Session::get('_old', []);
+
+        if (!is_array($values) || !isset($values[$field]) || !is_array($values[$field])) {
+            return [];
+        }
+
+        return array_map(static fn (mixed $v): string => is_scalar($v) ? (string) $v : '', $values[$field]);
+    }
+}
+
 if (!function_exists('url')) {
     function url(string $path = ''): string
     {

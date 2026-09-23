@@ -14,11 +14,21 @@ final class Config
 
     public static function load(string $dir): void
     {
-        foreach (glob($dir . '/*.php') ?: [] as $file) {
-            $name = basename($file, '.php');
-            /** @var array<string,mixed> $data */
-            $data = require $file;
-            self::$items[$name] = $data;
+        // The require happens inside a closure, NOT in this method's scope.
+        //
+        // `require` executes in the calling scope, so a config file that
+        // declares a variable named like one of ours silently overwrites it.
+        // config/database.php assigning $name keyed the entire config array by
+        // the database name instead of "database", and every config lookup
+        // returned null - with no error anywhere.
+        $read = static function (string $path): array {
+            /** @var array<string,mixed> $values */
+            $values = require $path;
+            return $values;
+        };
+
+        foreach (glob($dir . '/*.php') ?: [] as $configFile) {
+            self::$items[basename($configFile, '.php')] = $read($configFile);
         }
     }
 

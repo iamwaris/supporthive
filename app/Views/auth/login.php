@@ -6,6 +6,7 @@
 
 declare(strict_types=1);
 
+use App\Controllers\DevAuthController;
 use App\Core\Config;
 
 $errors = $errors ?? [];
@@ -62,6 +63,47 @@ $passwordError = $errors['password'][0] ?? null;
     </div>
 
     <button type="submit" class="btn-primary mt-7 w-full">Sign in</button>
+
+    <?php $testAccounts = DevAuthController::testAccounts(); ?>
+    <?php if ($testAccounts !== []) : ?>
+        <!-- Development only. Rendered solely when APP_ENV is local, and the
+             route it posts to is not registered outside local either. -->
+        <div class="mt-6 rounded-xl border border-dashed border-brand-500/60 bg-brand-50 px-4 py-3.5">
+            <div class="flex items-center gap-2">
+                <svg class="h-3.5 w-3.5 shrink-0 text-brand-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 4l8 14H4z"></path><path d="M12 10v3"></path><path d="M12 16h.01"></path>
+                </svg>
+                <p class="flex-1 text-[11px] font-semibold uppercase tracking-wider text-brand-900">
+                    Development shortcut
+                </p>
+                <span class="money text-[10.5px] text-brand-700"><?= e((string) Config::get('app.env')) ?></span>
+            </div>
+            <p class="mt-1.5 text-[11.5px] leading-relaxed text-brand-900/80">
+                Signs in without a password. Inert in production &mdash; the route is not
+                registered there, so it returns 404 even if this markup ships.
+            </p>
+
+            <div class="mt-3 flex flex-col gap-2">
+                <?php foreach ($testAccounts as $account) : ?>
+                    <form method="post" action="<?= e(url('/dev-login')) ?>">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="user_id" value="<?= e((string) $account['id']) ?>">
+                        <button type="submit"
+                                class="flex min-h-11 w-full items-center gap-2.5 rounded-lg border border-brand-500/40 bg-white px-3 py-2 text-left hover:border-brand-500 hover:bg-brand-50/60">
+                            <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-ink font-display text-[10.5px] font-bold text-brand-400">
+                                <?= e(strtoupper(mb_substr((string) $account['name'], 0, 2))) ?>
+                            </span>
+                            <span class="min-w-0 flex-1">
+                                <span class="block truncate text-xs font-medium text-ink"><?= e((string) $account['name']) ?></span>
+                                <span class="block truncate text-[10.5px] text-slate-500"><?= e((string) $account['email']) ?></span>
+                            </span>
+                            <span class="badge-mute shrink-0"><?= e(ucfirst(str_replace('_', ' ', (string) $account['role']))) ?></span>
+                        </button>
+                    </form>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    <?php endif; ?>
 
     <div class="mt-6 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
         <svg class="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
