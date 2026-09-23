@@ -64,26 +64,26 @@ have to guess at.
 | Date | Decision | Why | Alternatives rejected |
 |---|---|---|---|
 | 2026-09-23 | Core PHP, no framework | Client requirement; full control over the request lifecycle | Laravel (host constraints, learning overhead) |
-| 2026-09-23 | Composer for dev tools only | Shared host has no shell; the app must boot with an empty `vendor/` | Shipping `vendor/` over FTP |
+| 2026-09-23 | Composer for dev tools only | Fewer moving parts and a smaller supply-chain surface; the app must boot with an empty `vendor/` | Shipping `vendor/`; running `composer install` on the server |
 | 2026-09-23 | Single front controller (`public/index.php`) + explicit route table | Only one web-reachable entry point; no URL-to-file mapping to exploit | One PHP file per page |
 | 2026-09-23 | Application code lives outside the web root on the host | Source, `.env` and logs are unreachable over HTTP even if PHP stops executing | Everything in `public_html` |
 | 2026-09-23 | Vendored front-end libraries, no CDN | Keeps CSP at `'self'`; no third party can change the bytes we ship | CDN links |
 | 2026-09-23 | Server-side pagination instead of DataTables | Avoids jQuery; does not send the whole table to the browser; scales | DataTables |
-| 2026-09-23 | Deploy via GitHub Actions over FTPS to Hostinger | Available on every plan; keeps deploys reproducible from `main` | Manual FileZilla uploads; Hostinger Git integration (less control over the build) |
+| 2026-09-23 | Deploy via GitHub Actions over SSH (rsync) to Hostinger | Hostinger's per-site FTP accounts are chrooted to `public_html` and cannot place code outside the web root; SSH can, and also runs migrations remotely | FTPS (blocked by the chroot); manual FileZilla uploads; Hostinger Git integration (less control over the build) |
 
 ## 6. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Shared host has an older PHP than 8.3 | Code may not run | Resolved 2026-09-23: host runs PHP 8.3.30. `preflight.php` still asserts ≥ 8.2 |
-| No shell on host → migrations run by hand | Schema drift between local and prod | Run `migrate.php` locally against the prod DB, or import via phpMyAdmin; record every run in TRACKER |
-| FTPS credentials leak | Full site compromise | Store only as GitHub secrets; rotate on any suspicion; never in the repo |
+| Migrations drift between local and prod | Wrong schema in production | Resolved 2026-09-23: host has SSH, so `migrate.php` runs remotely. Kept opt-in via `RUN_MIGRATIONS` so a destructive change is never automatic |
+| Deploy key leaks | Full site compromise | Dedicated ed25519 key in GitHub secrets only; revocable in hPanel independently of the personal key |
 | `.env` uploaded to the web root by mistake | Total credential disclosure | `.gitignore`, deploy exclusions, and a `preflight.php` check |
 | Unbounded uploads fill the disk | Outage | Size limit in config; monitor disk; prune orphans |
 
 ## 7. Open questions
 
-- [ ] Exact PHP version available on the hosting account?
+- [x] PHP version on the host — 8.3.30, confirmed 2026-09-23
 - [ ] Domain name and whether HTTPS is already provisioned?
 - [ ] Is a staging subdomain available (strongly recommended)?
 - [ ] Transactional email: host SMTP, or a provider?

@@ -29,11 +29,11 @@ The binding rules are in [`CLAUDE.md`](../CLAUDE.md); this document explains the
 | A01 Broken access control | Explicit route table; `auth` / `role:` middleware; **ownership must be re-checked in the handler** — a session is not an entitlement to a specific record id |
 | A02 Cryptographic failures | `password_hash()` only; tokens are 32 random bytes stored as SHA-256; HTTPS + HSTS; `APP_KEY` from `random_bytes` |
 | A03 Injection | Bound parameters everywhere; `Database::identifier()` for names; `e()` on all output; no `eval`/`exec` (banned in PHPCS) |
-| A04 Insecure design | Deny-by-default routing; least privilege DB user; rate limits on every anonymous endpoint |
+| A04 Insecure design | Deny-by-default routing; rate limits on every anonymous endpoint; least-privilege DB user where the host allows it (§5) |
 | A05 Misconfiguration | `APP_DEBUG=false` in production; `scripts/preflight.php` asserts it; app code outside the web root; deny-all `.htaccess` fallback |
 | A06 Vulnerable components | Zero runtime dependencies; dev tools pinned; `npm audit` in CI |
 | A07 Auth failures | Throttled logins, session rotation on privilege change, single-use expiring reset tokens, identical messaging for unknown-user vs bad-password |
-| A08 Integrity failures | No `unserialize()` of user data; no CDN; deploys only from `main` via CI |
+| A08 Integrity failures | No `unserialize()` of user data; no CDN for app assets; deploys only from `main` via CI, over SSH with a pinned host key |
 | A09 Logging failures | Security events logged with IP and user id; secrets redacted; `audit_log` is append-only |
 | A10 SSRF | No user-controlled outbound requests. If one is ever added: allow-list the host, forbid redirects, block private IP ranges |
 
@@ -60,9 +60,16 @@ bug into full account takeover.
 
 ## 5. Database privileges
 
-The application's MySQL user gets `SELECT, INSERT, UPDATE, DELETE` on its own
-schema and nothing else. No `DROP`, no `GRANT`, no `FILE`, no access to other
-schemas. Schema changes use a separate admin user, run by hand.
+**Locally**, the application's MySQL user is created by
+`database/setup-local.sql` with only the rights it needs on its own schema.
+
+**On Hostinger this cannot be enforced.** hPanel grants each database user full
+privileges on its own database, with no UI to narrow them, so the production
+user holds `DROP` and `ALTER` whether we want it to or not. That is a real
+limitation of the platform, not something the application can fix, and the
+mitigation is the layer above it: every query is a bound prepared statement and
+no identifier is ever interpolated, so injected SQL has no route to DDL in the
+first place. Revisit if the project moves to a VPS.
 
 ## 6. Code review checklist
 
@@ -90,7 +97,7 @@ Every PR that touches request handling:
 - [ ] Upload execution blocked — upload a harmless `.txt`, then confirm a
       renamed `.php` cannot execute
 - [ ] Default/seed accounts removed or given real passwords
-- [ ] DB user has no `DROP`/`GRANT`
+- [ ] DB user privileges reviewed (see §5 — not narrowable on Hostinger)
 - [ ] Automated backups running **and a restore has been tested**
 - [ ] `storage/logs` writable, not web-readable, and rotating
 - [ ] Error alerting in place
@@ -98,7 +105,7 @@ Every PR that touches request handling:
 
 ## 8. Incident response
 
-1. Rotate every credential: DB, FTPS, SMTP, `APP_KEY`.
+1. Rotate every credential: DB, SSH deploy key, SMTP, `APP_KEY`.
 2. Preserve `storage/logs` and the host's access logs before changing anything.
 3. Put the site in maintenance mode.
 4. Establish scope from `audit_log` + `security-*.log`.

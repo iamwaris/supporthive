@@ -114,11 +114,16 @@ jobs:
       - name: Reject committed secrets and env files
         run: |
           set -e
-          if git ls-files | grep -E '(^|/)\.env$|\.pem$|\.key$'; then
+          if git ls-files | grep -E '(^|/)\.env$|\.pem$|\.key$|(^|/)id_(rsa|ed25519)$|_deploy$'; then
             echo "::error::Secret or .env file is tracked by git. Remove it and rotate the credential."
             exit 1
           fi
-          if git grep -nIE "(DB_PASS|MAIL_PASS|FTP_PASSWORD|APP_KEY)[[:space:]]*=[[:space:]]*['\"]?[A-Za-z0-9+/=_-]{8,}" -- ':!.env.example' ':!.github' ':!docs'; then
+
+          if git grep -lI -- '-----BEGIN .*PRIVATE KEY-----' | grep -v '^.github/'; then
+            echo "::error::A private key is committed. Revoke it immediately, then remove it from history."
+            exit 1
+          fi
+          if git grep -nIE "(DB_PASS|MAIL_PASS|SSH_PRIVATE_KEY|APP_KEY)[[:space:]]*=[[:space:]]*['\"]?[A-Za-z0-9+/=_-]{8,}" -- ':!.env.example' ':!.github' ':!docs'; then
             echo "::error::Hard-coded credential found."
             exit 1
           fi

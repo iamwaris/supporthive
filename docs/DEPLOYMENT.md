@@ -1,6 +1,6 @@
 # Deployment
 
-Local (XAMPP) → GitHub → Hostinger shared hosting (hPanel) over FTPS.
+Local (XAMPP) → GitHub → Hostinger shared hosting (hPanel) over SSH.
 
 ```
   localhost/XAMPP          GitHub                     Hostinger host
@@ -8,7 +8,7 @@ Local (XAMPP) → GitHub → Hostinger shared hosting (hPanel) over FTPS.
   feat/ branch    push ->  CI (lint, PHPStan,
                            tests, build, secrets)
        │                          │
-       └── PR ──> main ──> Deploy workflow ──FTPS──>  domains/<site>/supporthive_app/
+       └── PR ──> main ──> Deploy workflow ──SSH──>   domains/<site>/supporthive_app/
                                               │                        (code, .env)
                                               └────>  domains/<site>/public_html/
                                                                        (public/)
@@ -111,16 +111,17 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
    generated names — Hostinger prefixes them (`u123456789_supporthive`).
    Hostinger grants its database user full rights on its own database; that is
    platform behaviour and cannot be narrowed from hPanel.
-5. **FTP.** *Files* → **FTP Accounts**. The main account is rooted at the home
-   directory, which is exactly what the two-directory layout needs. Note the FTP
-   hostname shown there. Use FTPS (explicit TLS, port 21), never plain FTP.
+5. **SSH.** *Advanced* → **SSH Access**. Note the host and port (Hostinger
+   commonly uses 65002), and add the deploy key's public half. Do **not** use
+   the per-site FTP account: it is chrooted to that site's `public_html` and
+   therefore cannot write the application directory at all.
 6. **SSL.** *Security* → **SSL** → install and verify the certificate for the new
    site, and wait for it to go active. The app forces HTTPS, so deploying before
    the certificate is live produces a redirect loop.
 
-> **SSH (Business plans and above):** hPanel → *Advanced* → **SSH Access**. With
-> it you can run `php database/migrate.php` directly on the server instead of
-> the manual migration steps in §6. Worth checking your plan.
+> **Why SSH and not FTP:** Hostinger's per-site FTP accounts are chrooted to
+> their own `public_html`, so they cannot place code outside the web root. SSH
+> can, and it also lets the pipeline run migrations remotely.
 
 ## 4. GitHub configuration
 
@@ -130,9 +131,11 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 
 | Secret | Example | Notes |
 |---|---|---|
-| `FTP_SERVER` | `ftp.yourdomain.com` | hostname only |
-| `FTP_USERNAME` | `deploy@yourdomain.com` | |
-| `FTP_PASSWORD` | | |
+| `SSH_HOST` | `45.137.159.36` | from hPanel → Advanced → SSH Access |
+| `SSH_PORT` | `65002` | Hostinger rarely uses 22 |
+| `SSH_USER` | `u400948127` | the account user |
+| `SSH_PRIVATE_KEY` | | the whole deploy key file, BEGIN/END lines included |
+| `SSH_KNOWN_HOSTS` | | output of `ssh-keyscan -p <port> <host>` |
 | `APP_URL` | `https://yourdomain.com` | no trailing slash |
 | `APP_KEY` | `base64:…` | generate a **fresh** one — not your local key |
 | `DB_HOST` | `localhost` | `localhost` on Hostinger |
@@ -146,15 +149,15 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 
 | Variable | Example |
 |---|---|
-| `APP_DIR` | `/domains/<site>/supporthive_app/` |
-| `WEB_ROOT` | `/domains/<site>/public_html/` |
+| `APP_DIR` | `/home/<user>/domains/<site>/supporthive_app` |
+| `WEB_ROOT` | `/home/<user>/domains/<site>/public_html` |
 | `DEPLOY_ENABLED` | `true` |
+| `RUN_MIGRATIONS` | `true` to migrate on every deploy (optional) |
 
-Paths are relative to the **FTP account's root**, which on Hostinger is the
-home directory - hence the leading `/domains/`. Both need a leading and a
-trailing slash. `DEPLOY_ENABLED` gates the whole deploy job: while it is unset
-the job is skipped, so `main` stays green before hosting exists. The job also
-refuses to run if `APP_DIR` points inside the web root.
+Use **absolute** paths: SSH has no chroot making them relative.
+`DEPLOY_ENABLED` gates the whole deploy job — while it is unset the job is
+skipped, so `main` stays green before hosting exists. The job also refuses to
+run if `APP_DIR` points inside the web root.
 
 **Settings → Environments → `production`:** add a required reviewer if you want
 a manual approval gate before each deploy.
@@ -168,18 +171,32 @@ Merging to `main` deploys, once `DEPLOY_ENABLED` is `true`. To deploy without a 
 *Deploy to production* workflow manually from the Actions tab.
 
 The workflow: builds assets → assembles the two trees → writes `.env` from
-secrets → uploads both over FTPS → smoke-tests the live URL and fails if
-`.env`, source files, or `.git` are readable over HTTP.
+secrets → verifies the SSH connection and that both remote directories exist →
+rsyncs each tree to its destination → optionally migrates → smoke-tests the
+live URL and fails if `.env`, source files, or `.git` are readable over HTTP.
 
 `public/build.txt` contains the deployed commit SHA — use it to confirm what is
 actually live.
 
 ## 6. Database migrations
 
-**Migrations do not run automatically.** Shared hosting has no shell, and a
-half-applied schema change from a failed FTP deploy is worse than a manual step.
+Migrations run automatically **only** when the repository variable
+`RUN_MIGRATIONS` is `true`. It is off by default: a half-applied schema change
+is worse than a manual step, so you opt in once you trust the pipeline.
 
-Either:
+With `RUN_MIGRATIONS=true` the deploy runs `database/migrate.php` over SSH
+after the upload. To do it by hand instead:
+
+**A. Over SSH on the host** (simplest now that SSH is available):
+
+```bash
+ssh -i ~/.ssh/supporthive_deploy -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
+cd domains/<site>/supporthive_app
+php database/migrate.php --status
+php database/migrate.php
+```
+
+Or remotely from your machine:
 
 **A. Run the migrator locally against the production database** (needs remote
 MySQL access enabled in hPanel → *Databases* → **Remote MySQL**, with your IP added):
@@ -228,5 +245,5 @@ backup taken before the migration if the schema is the problem.
 | Unstyled page | `npm run build` output missing — check the front-end job, and that `WEB_ROOT` is right |
 | 404 on every route but `/` | `mod_rewrite` off or `AllowOverride` not `All`; ask the host |
 | Redirect loop | Host terminates TLS at a proxy — the `X-Forwarded-Proto` condition in `public/.htaccess` handles this; if it persists, set `trust_proxy` in `config/security.php` |
-| FTP action times out | Host blocks the runner's IP, or FTPS is not enabled on port 21 |
+| SSH connection refused | Wrong `SSH_PORT` (Hostinger often 65002, not 22), or the deploy public key is not in the host's authorized keys |
 | Sessions lost on every request | `SESSION_SECURE=true` without working HTTPS |

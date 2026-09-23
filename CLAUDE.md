@@ -16,9 +16,11 @@ something you need, change the rule in a PR — do not work around it silently.
 | Tables | Server-side pagination + Alpine enhancement (no jQuery/DataTables) |
 | Tooling | Composer for dev tools only — the app runs with an empty `vendor/` |
 
-Runtime dependencies are deliberately zero. Adding a Composer package the app
-*requires at runtime* needs an explicit decision recorded in `docs/PLAN.md`,
-because the production host has no shell and cannot run `composer install`.
+Runtime dependencies are deliberately zero, and adding a Composer package the
+app *requires at runtime* needs an explicit decision recorded in
+`docs/PLAN.md`. The host does have SSH, so this is a choice rather than a
+constraint: fewer moving parts, no `vendor/` to ship, nothing to rebuild on the
+server, and a much smaller supply-chain surface.
 
 ## Non-negotiable security rules
 

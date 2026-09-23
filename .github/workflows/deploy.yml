@@ -8,45 +8,50 @@ on:
 permissions:
   contents: read
 
-# Never let two deploys overwrite each other mid-upload.
+# Never let two deploys overwrite each other mid-transfer.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Build and upload to Hostinger
+    name: Build and deploy to Hostinger
     runs-on: ubuntu-latest
     environment: production
 
-    # Deployment stays off until the host is actually configured. Set the
-    # repository variable DEPLOY_ENABLED to "true" (Settings -> Secrets and
-    # variables -> Actions -> Variables) once the secrets below exist and the
-    # application directory has been created on the host. Without this gate a
-    # push to main fails noisily on every repository that has no hosting yet.
+    # Deployment stays off until the host is configured. Set the repository
+    # variable DEPLOY_ENABLED to "true" (Settings -> Secrets and variables ->
+    # Actions -> Variables) once the secrets below exist and the application
+    # directory has been created on the host.
     if: vars.DEPLOY_ENABLED == 'true'
+
+    env:
+      APP_DIR: ${{ vars.APP_DIR }}
+      WEB_ROOT: ${{ vars.WEB_ROOT }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      PHP_BIN: ${{ vars.PHP_BIN || 'php' }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # Fail with a precise list rather than an opaque error deep in the upload.
+      # Fail with a precise list rather than an opaque error mid-transfer.
       - name: Verify required secrets and variables are set
         env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           APP_URL: ${{ secrets.APP_URL }}
           APP_KEY: ${{ secrets.APP_KEY }}
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASS: ${{ secrets.DB_PASS }}
-          APP_DIR: ${{ vars.APP_DIR }}
-          WEB_ROOT: ${{ vars.WEB_ROOT }}
         run: |
           missing=""
-          for name in FTP_SERVER FTP_USERNAME FTP_PASSWORD APP_URL APP_KEY \
-                      DB_HOST DB_NAME DB_USER DB_PASS APP_DIR WEB_ROOT; do
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS \
+                      APP_URL APP_KEY DB_HOST DB_NAME DB_USER DB_PASS \
+                      APP_DIR WEB_ROOT; do
             if [ -z "${!name}" ]; then
               missing="$missing $name"
             fi
@@ -58,11 +63,18 @@ jobs:
             exit 1
           fi
 
-          # A path pointing inside the web root would publish the source code.
+          # Application code inside the web root would publish the source.
           case "$APP_DIR" in
-            */public_html/*|/public_html/*)
+            */public_html|*/public_html/|*/public_html/*)
               echo "::error::APP_DIR ($APP_DIR) is inside the web root. Application code must not be web-reachable."
               exit 1
+              ;;
+          esac
+
+          case "$WEB_ROOT" in
+            */public_html|*/public_html/) ;;
+            *)
+              echo "::warning::WEB_ROOT ($WEB_ROOT) does not end in public_html. Confirm it is really the document root."
               ;;
           esac
 
@@ -96,10 +108,10 @@ jobs:
           npm run vendor
           test -s public/assets/css/app.css
 
-      # ---- Assemble the exact tree to upload ---------------------------
+      # ---- Assemble the exact tree to transfer -------------------------
       # Two destinations, because application code must not be web-reachable:
-      #   release/app_private/  -> $APP_DIR      (outside the web root)
-      #   release/public/       -> $WEB_ROOT     (public_html)
+      #   release/app_private/ -> $APP_DIR   (beside the web root)
+      #   release/public/      -> $WEB_ROOT  (public_html)
       - name: Assemble release
         run: |
           set -e
@@ -124,6 +136,7 @@ jobs:
 
       - name: Write the production .env from secrets
         run: |
+          umask 077
           cat > release/app_private/.env <<'ENVEOF'
           APP_NAME=SupportHive
           APP_ENV=production
@@ -144,7 +157,7 @@ jobs:
             echo "APP_URL=${{ secrets.APP_URL }}"
             echo "APP_KEY=${{ secrets.APP_KEY }}"
             echo "DB_HOST=${{ secrets.DB_HOST }}"
-            echo "DB_PORT=${{ secrets.DB_PORT }}"
+            echo "DB_PORT=${{ secrets.DB_PORT || '3306' }}"
             echo "DB_NAME=${{ secrets.DB_NAME }}"
             echo "DB_USER=${{ secrets.DB_USER }}"
             echo "DB_PASS=${{ secrets.DB_PASS }}"
@@ -156,52 +169,139 @@ jobs:
             echo "MAIL_FROM=${{ secrets.MAIL_FROM }}"
             echo "MAIL_FROM_NAME=SupportHive"
           } >> release/app_private/.env
+          chmod 600 release/app_private/.env
 
-      # ---- Upload ------------------------------------------------------
-      # FTP_SERVER / FTP_USERNAME / FTP_PASSWORD are repository secrets.
-      # APP_DIR and WEB_ROOT are repository variables (paths, not secrets),
-      # e.g. APP_DIR=/supporthive_app/  WEB_ROOT=/public_html/
+      # ---- SSH ---------------------------------------------------------
+      # The host key is pinned from the SSH_KNOWN_HOSTS secret rather than
+      # accepted on first use, so a hijacked DNS entry cannot receive the
+      # .env file we are about to upload.
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
+            || { echo "::error::SSH_PRIVATE_KEY is not a valid private key. Paste the whole file, including the BEGIN/END lines."; exit 1; }
+
+      - name: Verify connection and remote layout
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "
+                set -e
+                echo \"host: \$(hostname)\"
+                test -d '$APP_DIR'  || { echo 'MISSING_APP_DIR';  exit 21; }
+                test -d '$WEB_ROOT' || { echo 'MISSING_WEB_ROOT'; exit 22; }
+                echo \"rsync: \$(command -v rsync || echo 'not present')\"
+                echo \"php:   \$(command -v $PHP_BIN || echo 'not present')\"
+              " || {
+            status=$?
+            case $status in
+              21) echo "::error::APP_DIR ($APP_DIR) does not exist on the host. Create it in hPanel File Manager, beside public_html." ;;
+              22) echo "::error::WEB_ROOT ($WEB_ROOT) does not exist on the host. Check the path." ;;
+              *)  echo "::error::SSH connection failed (exit $status). Check SSH_HOST, SSH_PORT, SSH_USER, and that the deploy public key is in the host's authorized_keys." ;;
+            esac
+            exit 1
+          }
+
+      # ---- Transfer ----------------------------------------------------
+      # rsync where available (only changed files move); tar over SSH as a
+      # fallback, since shared hosts do not always ship rsync.
       - name: Upload application code (outside the web root)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-          local-dir: ./release/app_private/
-          server-dir: ${{ vars.APP_DIR }}
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/storage/logs/**
-            **/storage/cache/**
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          SSH_CMD="ssh -i ~/.ssh/deploy_key -p $SSH_PORT -o BatchMode=yes"
+
+          if $SSH_CMD "$SSH_USER@$SSH_HOST" "command -v rsync >/dev/null 2>&1"; then
+            echo "Using rsync."
+            rsync -rlptz --delete \
+              --exclude 'storage/logs/***' \
+              --exclude 'storage/cache/***' \
+              -e "$SSH_CMD" \
+              ./release/app_private/ "$SSH_USER@$SSH_HOST:$APP_DIR"
+          else
+            echo "rsync not available on the host; falling back to tar over SSH."
+            tar -C ./release/app_private -czf - . \
+              | $SSH_CMD "$SSH_USER@$SSH_HOST" "mkdir -p '$APP_DIR' && tar -C '$APP_DIR' -xzf -"
+          fi
 
       - name: Upload public assets (web root)
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-          local-dir: ./release/public/
-          server-dir: ${{ vars.WEB_ROOT }}
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/uploads/**
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          SSH_CMD="ssh -i ~/.ssh/deploy_key -p $SSH_PORT -o BatchMode=yes"
+
+          if $SSH_CMD "$SSH_USER@$SSH_HOST" "command -v rsync >/dev/null 2>&1"; then
+            # uploads/ holds user files that exist only on the server: never delete.
+            rsync -rlptz --delete \
+              --exclude 'uploads/***' \
+              -e "$SSH_CMD" \
+              ./release/public/ "$SSH_USER@$SSH_HOST:$WEB_ROOT"
+          else
+            tar -C ./release/public -czf - . \
+              | $SSH_CMD "$SSH_USER@$SSH_HOST" "tar -C '$WEB_ROOT' -xzf -"
+          fi
+
+      - name: Tighten permissions on the host
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "
+                chmod 600 '$APP_DIR/.env' 2>/dev/null || true
+                mkdir -p '$APP_DIR/storage/logs' '$APP_DIR/storage/cache' '$WEB_ROOT/uploads'
+                chmod 750 '$APP_DIR/storage/logs' '$APP_DIR/storage/cache'
+                chmod 755 '$WEB_ROOT/uploads'
+              "
+
+      # ---- Migrate -----------------------------------------------------
+      # Opt-in: set the repository variable RUN_MIGRATIONS to "true".
+      # Take a database backup before enabling it for a destructive change.
+      - name: Run database migrations
+        if: vars.RUN_MIGRATIONS == 'true'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "
+                cd '$APP_DIR' && $PHP_BIN database/migrate.php --status && $PHP_BIN database/migrate.php
+              "
 
       # ---- Verify ------------------------------------------------------
       - name: Smoke test the live site
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
         run: |
           set -e
-          url="${{ secrets.APP_URL }}"
+          url="${APP_URL%/}"
+
           code=$(curl -s -o /tmp/body.html -w '%{http_code}' --max-time 30 "$url/")
           echo "GET $url/ -> $code"
           test "$code" = "200"
+
+          deployed=$(curl -s --max-time 15 "$url/build.txt" | tr -d '[:space:]')
+          echo "build.txt reports: $deployed"
+          if [ "$deployed" != "${{ github.sha }}" ]; then
+            echo "::warning::build.txt does not match this commit. Hostinger's CDN may be serving a cached copy."
+          fi
 
           echo "Checking that nothing sensitive is web-reachable..."
           leaked=0
@@ -219,8 +319,8 @@ jobs:
 
           echo "Checking security headers..."
           headers=$(curl -sI --max-time 15 "$url/")
-          echo "$headers" | grep -qi 'content-security-policy' || echo "::warning::CSP header missing"
-          echo "$headers" | grep -qi 'x-content-type-options'  || echo "::warning::nosniff header missing"
+          echo "$headers" | grep -qi 'content-security-policy'   || echo "::warning::CSP header missing"
+          echo "$headers" | grep -qi 'x-content-type-options'    || echo "::warning::nosniff header missing"
           echo "$headers" | grep -qi 'strict-transport-security' || echo "::warning::HSTS header missing"
 
       - name: Deployment summary
@@ -232,8 +332,5 @@ jobs:
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- App dir: \`${{ vars.APP_DIR }}\`"
             echo "- Web root: \`${{ vars.WEB_ROOT }}\`"
-            echo ""
-            echo "Database migrations are **not** run automatically (no shell on the host)."
-            echo "Run them yourself: \`php database/migrate.php\` against the production DB,"
-            echo "or import the pending files in \`database/migrations\` via phpMyAdmin."
+            echo "- Migrations: \`${{ vars.RUN_MIGRATIONS == 'true' && 'run automatically' || 'skipped (RUN_MIGRATIONS not set)' }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

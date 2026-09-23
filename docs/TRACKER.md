@@ -11,7 +11,7 @@ Status: `todo` · `doing` · `review` · `done` · `blocked`
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M0-9 | Confirm host PHP version + provision FTPS credentials | S | todo | Blocks first deploy |
+| M0-9 | Authorise the deploy key on the host and set GitHub secrets | S | doing | Blocks first deploy. Host confirmed on PHP 8.3.30 |
 
 ## Next (ready to pick up)
 
@@ -49,7 +49,7 @@ Status: `todo` · `doing` · `review` · `done` · `blocked`
 | M0-5 | Tailwind + Alpine + ApexCharts + Lucide front-end build, all vendored | 2026-09-23 | |
 | M0-6 | Tooling: PHPCS (PSR-12 + banned functions), PHPStan L5, PHPUnit | 2026-09-23 | |
 | M0-7 | CI workflow (lint, static analysis, tests, front-end build) | 2026-09-23 | |
-| M0-8 | Deploy workflow (FTPS to Hostinger on `main`) | 2026-09-23 | Gated behind `DEPLOY_ENABLED` |
+| M0-8 | Deploy workflow (SSH/rsync to Hostinger on `main`) | 2026-09-23 | Gated behind `DEPLOY_ENABLED`; migrations opt-in via `RUN_MIGRATIONS` |
 
 ---
 
