@@ -1,0 +1,37 @@
+{
+    "name": "supporthive/app",
+    "description": "SupportHive - core PHP application",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {
+        "squizlabs/php_codesniffer": "^3.9",
+        "phpstan/phpstan": "^1.11",
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "scripts": {
+        "lint": "@php -l public/index.php",
+        "cs": "phpcs",
+        "cs:fix": "phpcbf",
+        "stan": "phpstan analyse --memory-limit=512M",
+        "test": "phpunit",
+        "check": ["@cs", "@stan", "@test"],
+        "serve": "@php -S localhost:8000 -t public"
+    }
+}

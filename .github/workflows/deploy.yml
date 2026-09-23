@@ -1,0 +1,193 @@
+name: Deploy to production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never let two deploys overwrite each other mid-upload.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and upload to cPanel
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Build -------------------------------------------------------
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mbstring, fileinfo
+          coverage: none
+          tools: composer:v2
+
+      - name: Syntax check (last gate before production)
+        run: |
+          set -e
+          find app config routes database public scripts -name '*.php' -print0 \
+            | xargs -0 -n1 -P4 php -l > /dev/null
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build front-end assets
+        run: |
+          npm run build
+          npm run vendor
+          test -s public/assets/css/app.css
+
+      # ---- Assemble the exact tree to upload ---------------------------
+      # Two destinations, because application code must not be web-reachable:
+      #   release/app_private/  -> $APP_DIR      (outside the web root)
+      #   release/public/       -> $WEB_ROOT     (public_html)
+      - name: Assemble release
+        run: |
+          set -e
+          mkdir -p release/app_private release/public
+
+          cp -r app config routes database scripts release/app_private/
+          cp composer.json release/app_private/
+          mkdir -p release/app_private/storage/logs release/app_private/storage/cache
+          # Deny-all guard in case the private directory is ever exposed.
+          cp .htaccess release/app_private/.htaccess
+
+          cp -r public/. release/public/
+
+          # Never ship these.
+          find release -name '.env' -delete
+          find release -name '*.log' -delete
+          rm -rf release/public/uploads/*
+
+          echo "${{ github.sha }}" > release/public/build.txt
+          echo "--- app_private ---" && find release/app_private -maxdepth 2
+          echo "--- public ---"      && find release/public -maxdepth 2
+
+      - name: Write the production .env from secrets
+        run: |
+          cat > release/app_private/.env <<'ENVEOF'
+          APP_NAME=SupportHive
+          APP_ENV=production
+          APP_DEBUG=false
+          APP_TIMEZONE=UTC
+          SESSION_NAME=shsid
+          SESSION_LIFETIME=7200
+          SESSION_SECURE=true
+          SESSION_SAMESITE=Lax
+          CSRF_TOKEN_LIFETIME=7200
+          PASSWORD_MIN_LENGTH=12
+          LOGIN_MAX_ATTEMPTS=5
+          LOGIN_LOCKOUT_SECONDS=900
+          UPLOAD_MAX_BYTES=5242880
+          UPLOAD_ALLOWED_MIME=image/jpeg,image/png,image/webp,application/pdf
+          ENVEOF
+          {
+            echo "APP_URL=${{ secrets.APP_URL }}"
+            echo "APP_KEY=${{ secrets.APP_KEY }}"
+            echo "DB_HOST=${{ secrets.DB_HOST }}"
+            echo "DB_PORT=${{ secrets.DB_PORT }}"
+            echo "DB_NAME=${{ secrets.DB_NAME }}"
+            echo "DB_USER=${{ secrets.DB_USER }}"
+            echo "DB_PASS=${{ secrets.DB_PASS }}"
+            echo "DB_CHARSET=utf8mb4"
+            echo "MAIL_HOST=${{ secrets.MAIL_HOST }}"
+            echo "MAIL_PORT=${{ secrets.MAIL_PORT }}"
+            echo "MAIL_USER=${{ secrets.MAIL_USER }}"
+            echo "MAIL_PASS=${{ secrets.MAIL_PASS }}"
+            echo "MAIL_FROM=${{ secrets.MAIL_FROM }}"
+            echo "MAIL_FROM_NAME=SupportHive"
+          } >> release/app_private/.env
+
+      # ---- Upload ------------------------------------------------------
+      # FTP_SERVER / FTP_USERNAME / FTP_PASSWORD are repository secrets.
+      # APP_DIR and WEB_ROOT are repository variables (paths, not secrets),
+      # e.g. APP_DIR=/supporthive_app/  WEB_ROOT=/public_html/
+      - name: Upload application code (outside the web root)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./release/app_private/
+          server-dir: ${{ vars.APP_DIR }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/storage/logs/**
+            **/storage/cache/**
+
+      - name: Upload public assets (web root)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./release/public/
+          server-dir: ${{ vars.WEB_ROOT }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/uploads/**
+
+      # ---- Verify ------------------------------------------------------
+      - name: Smoke test the live site
+        run: |
+          set -e
+          url="${{ secrets.APP_URL }}"
+          code=$(curl -s -o /tmp/body.html -w '%{http_code}' --max-time 30 "$url/")
+          echo "GET $url/ -> $code"
+          test "$code" = "200"
+
+          echo "Checking that nothing sensitive is web-reachable..."
+          leaked=0
+          for path in .env composer.json composer.lock package.json .git/config \
+                      app/bootstrap.php app/Core/Database.php config/database.php \
+                      database/migrate.php storage/logs/app.log; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --path-as-is "$url/$path" || echo 000)
+            echo "  /$path -> $status"
+            if [ "$status" = "200" ]; then
+              echo "::error::/$path is publicly readable. Fix this before using the deployment."
+              leaked=1
+            fi
+          done
+          test "$leaked" = "0"
+
+          echo "Checking security headers..."
+          headers=$(curl -sI --max-time 15 "$url/")
+          echo "$headers" | grep -qi 'content-security-policy' || echo "::warning::CSP header missing"
+          echo "$headers" | grep -qi 'x-content-type-options'  || echo "::warning::nosniff header missing"
+          echo "$headers" | grep -qi 'strict-transport-security' || echo "::warning::HSTS header missing"
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "### Deployment ${{ job.status }}"
+            echo ""
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- App dir: \`${{ vars.APP_DIR }}\`"
+            echo "- Web root: \`${{ vars.WEB_ROOT }}\`"
+            echo ""
+            echo "Database migrations are **not** run automatically (no shell on the host)."
+            echo "Run them yourself: \`php database/migrate.php\` against the production DB,"
+            echo "or import the pending files in \`database/migrations\` via phpMyAdmin."
+          } >> "$GITHUB_STEP_SUMMARY"

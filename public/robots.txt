@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /admin
+Disallow: /login
+Disallow: /uploads
+Allow: /
+
+Sitemap: https://example.com/sitemap.xml

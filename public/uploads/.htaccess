@@ -1,0 +1,27 @@
+# User-supplied files live here. Nothing in this directory may ever execute.
+# Without this file, an uploaded .php (or .phtml, or .php.jpg on a misconfigured
+# server) becomes remote code execution.
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .cgi .pl .py .asp .aspx .shtml
+RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .cgi .pl .py
+
+<FilesMatch "\.(php|phtml|php[0-9]|phps|cgi|pl|py|asp|aspx|shtml|htaccess)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+Options -Indexes -ExecCGI
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Content-Disposition "attachment"
+</IfModule>

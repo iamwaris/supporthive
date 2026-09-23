@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  php:
+    name: PHP checks
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: supporthive_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mbstring, fileinfo, openssl
+          coverage: none
+          tools: composer:v2
+
+      - name: Syntax check every PHP file
+        run: |
+          set -e
+          find app config routes database public scripts tests -name '*.php' -print0 \
+            | xargs -0 -n1 -P4 php -l > /dev/null
+          echo "Syntax OK"
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer/files
+          key: composer-${{ hashFiles('composer.json') }}
+          restore-keys: composer-
+
+      - name: Install dev tooling
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Coding standards (PSR-12 + banned functions)
+        run: vendor/bin/phpcs
+
+      - name: Static analysis
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=512M
+
+      - name: Prepare test environment
+        run: |
+          cp .env.example .env
+          sed -i "s|^APP_ENV=.*|APP_ENV=local|"            .env
+          sed -i "s|^APP_KEY=.*|APP_KEY=$(php scripts/genkey.php)|" .env
+          sed -i "s|^DB_NAME=.*|DB_NAME=supporthive_test|" .env
+          sed -i "s|^DB_USER=.*|DB_USER=root|"             .env
+          sed -i "s|^DB_PASS=.*|DB_PASS=root|"             .env
+
+      - name: Run migrations
+        run: php database/migrate.php
+
+      - name: Tests
+        run: vendor/bin/phpunit
+
+  frontend:
+    name: Front-end build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Build CSS and vendor JS libraries
+        run: |
+          npm run build
+          npm run vendor
+
+      - name: Fail if the CSS did not compile
+        run: test -s public/assets/css/app.css
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject committed secrets and env files
+        run: |
+          set -e
+          if git ls-files | grep -E '(^|/)\.env$|\.pem$|\.key$'; then
+            echo "::error::Secret or .env file is tracked by git. Remove it and rotate the credential."
+            exit 1
+          fi
+          if git grep -nIE "(DB_PASS|MAIL_PASS|FTP_PASSWORD|APP_KEY)[[:space:]]*=[[:space:]]*['\"]?[A-Za-z0-9+/=_-]{8,}" -- ':!.env.example' ':!.github' ':!docs'; then
+            echo "::error::Hard-coded credential found."
+            exit 1
+          fi
+          echo "No tracked secrets."

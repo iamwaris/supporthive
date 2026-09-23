@@ -1,0 +1,43 @@
+# ---- Secrets: never commit ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+config/local.php
+
+# ---- Runtime artifacts ----
+/storage/logs/*
+!/storage/logs/.gitkeep
+/storage/cache/*
+!/storage/cache/.gitkeep
+/storage/sessions/*
+!/storage/sessions/.gitkeep
+/public/uploads/*
+!/public/uploads/.gitkeep
+!/public/uploads/.htaccess
+
+# ---- Dependencies / tooling ----
+/vendor/
+.phpunit.result.cache
+.php-cs-fixer.cache
+/node_modules/
+
+# ---- Database dumps ----
+*.sql.gz
+/database/dumps/
+
+# ---- Editors / OS ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ---- Front-end build output (produced by CI and `npm run build`) ----
+/public/assets/css/app.css
+/public/assets/vendor/*
+!/public/assets/vendor/.gitkeep

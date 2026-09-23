@@ -1,0 +1,19 @@
+# Normalise to LF in the repository. The host is Linux; committing CRLF into
+# .htaccess or shell scripts breaks them there.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff  binary
+*.woff2 binary
+*.pdf binary
+
+# Keep these out of release archives and language statistics.
+/docs        export-ignore
+/tests       export-ignore
+/.github     export-ignore
+*.md         linguist-documentation
