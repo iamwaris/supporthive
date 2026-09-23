@@ -70,7 +70,11 @@ check('allow_url_include off', ini_get('allow_url_include') !== '1');
 // is defence-in-depth rather than an actual exposure. What must be right is
 // the application's own session configuration.
 warn('session.cookie_httponly on in php.ini', ini_get('session.cookie_httponly') === '1');
-check('app sets a SameSite policy', in_array(Config::get('session.samesite'), ['Lax', 'Strict'], true), 'set SESSION_SAMESITE=Lax');
+check(
+    'app sets a SameSite policy',
+    in_array(Config::get('session.samesite'), ['Lax', 'Strict'], true),
+    'set SESSION_SAMESITE=Lax'
+);
 check('session lifetime is bounded', (int) Config::get('session.lifetime', 0) > 0, 'set SESSION_LIFETIME');
 if ($isProduction) {
     check('APP_DEBUG is false in production', Config::get('app.debug') === false, 'set APP_DEBUG=false');

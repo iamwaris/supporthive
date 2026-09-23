@@ -52,3 +52,37 @@ if (!function_exists('str_random')) {
         return bin2hex(random_bytes($bytes));
     }
 }
+
+if (!function_exists('asset')) {
+    /**
+     * Versioned URL for a built asset.
+     *
+     * public/.htaccess caches CSS and JS for a year, which is correct for
+     * performance and wrong for an unversioned filename: after a deploy a
+     * returning browser keeps serving the previous app.css and the page
+     * renders with stylesheet rules that no longer match the markup. It
+     * happened on the first M1 deploy - the buttons came back in the old
+     * scaffold's indigo and every icon rendered full-size.
+     *
+     * A content hash in the query string makes each build a distinct URL, so
+     * a changed file is fetched and an unchanged one still hits the cache.
+     * Hashed once per request per file.
+     */
+    function asset(string $path): string
+    {
+        static $versions = [];
+
+        $relative = ltrim($path, '/');
+
+        if (!array_key_exists($relative, $versions)) {
+            $file = PUBLIC_PATH . '/' . $relative;
+            $versions[$relative] = is_file($file)
+                ? substr((string) md5_file($file), 0, 10)
+                : null;
+        }
+
+        $version = $versions[$relative];
+
+        return $version === null ? url($path) : url($path) . '?v=' . $version;
+    }
+}

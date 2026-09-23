@@ -30,9 +30,9 @@ $nav = $nav ?? '';
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title><?= e($title) ?> &middot; <?= e($company) ?></title>
-    <link rel="icon" href="<?= e(url('assets/img/favicon.svg')) ?>" type="image/svg+xml">
-    <link rel="preload" href="<?= e(url('assets/fonts/ibm-plex-sans-latin-400-normal.woff2')) ?>" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="<?= e(url('assets/css/app.css')) ?>">
+    <link rel="icon" href="<?= e(asset('assets/img/favicon.svg')) ?>" type="image/svg+xml">
+    <link rel="preload" href="<?= e(asset('assets/fonts/ibm-plex-sans-latin-400-normal.woff2')) ?>" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="<?= e(asset('assets/css/app.css')) ?>">
 </head>
 <body class="h-full bg-slate-50 font-sans text-ink antialiased">
 
@@ -113,7 +113,7 @@ $nav = $nav ?? '';
     </div>
 </div>
 
-<script src="<?= e(url('assets/vendor/alpine.min.js')) ?>" defer></script>
-<script src="<?= e(url('assets/js/app.js')) ?>" defer></script>
+<script src="<?= e(asset('assets/vendor/alpine.min.js')) ?>" defer></script>
+<script src="<?= e(asset('assets/js/app.js')) ?>" defer></script>
 </body>
 </html>
