@@ -5,6 +5,21 @@
 Options -Indexes -MultiViews
 DirectoryIndex index.php
 
+# Re-grant access explicitly.
+#
+# The repository root ships a deny-all .htaccess as a safety net, and Apache
+# applies every parent directory's .htaccess to this one. Serving the project
+# from a subfolder (http://localhost/LedgerHive/public/) therefore inherits
+# that denial and returns 403 on every request. This directory IS the public
+# one, so it says so rather than depending on where it sits.
+<IfModule mod_authz_core.c>
+    Require all granted
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Allow from all
+</IfModule>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
@@ -58,7 +73,12 @@ DirectoryIndex index.php
     # .htaccess is ignored. See docs/SECURITY.md section 3 for why
     # 'unsafe-eval' (Alpine) and 'unsafe-inline' for styles (ApexCharts) are
     # present, and never add 'unsafe-inline' to script-src.
+    # Two unsets on purpose: `always` clears the error-response table, plain
+    # clears the normal one where PHP's own header() lands. Without both, the
+    # response carries TWO CSP headers and the browser enforces their
+    # intersection - identical today, silently broken the day they drift.
     Header always unset Content-Security-Policy
+    Header unset Content-Security-Policy
     Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
 </IfModule>
 

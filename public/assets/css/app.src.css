@@ -1,35 +1,130 @@
 @import "tailwindcss";
 
-/* Tailwind scans these paths for class names. Anything not literally present
-   in the source is not generated - see docs/DESIGN-SYSTEM.md §8. */
+/* Tailwind scans these for class names. Anything not literally present in the
+   source is not generated — see docs/DESIGN-SYSTEM.md §8. */
 @source "../../../app/Views/**/*.php";
 @source "../../../public/assets/js/**/*.js";
 
-/* Design tokens. Change design decisions here, not in component classes. */
-@theme {
-  --color-brand-50:  oklch(0.97 0.02 275);
-  --color-brand-100: oklch(0.93 0.05 275);
-  --color-brand-500: oklch(0.58 0.19 275);
-  --color-brand-600: oklch(0.51 0.19 275);
-  --color-brand-700: oklch(0.44 0.17 275);
-
-  --radius-card: 1rem;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+/* ---------------------------------------------------------------------------
+   Fonts, self-hosted.
+   The CSP is font-src 'self', so Google Fonts is not an option — a <link> to
+   fonts.googleapis.com is blocked and the page silently falls back to system
+   faces. `npm run vendor` copies these from @fontsource.
+   --------------------------------------------------------------------------- */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/space-grotesk-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/space-grotesk-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2");
 }
 
-/* Base primitives are declared with @utility so that the variants below can
-   @apply them. In Tailwind v4, @apply only accepts utilities - applying a
-   plain @layer components class fails the build. */
+/* ---------------------------------------------------------------------------
+   Design tokens — LedgerHive, from the approved mockups.
+   Change design decisions here, never in a component.
+   --------------------------------------------------------------------------- */
+@theme {
+  /* Primary — sidebar, headings, body text */
+  --color-ink: #0F172A;
+  --color-ink-soft: #1E293B;
+
+  /* Accent — the only saturated colour, used sparingly */
+  --color-brand-50:  #FFFBEB;
+  --color-brand-100: #FEF3C7;
+  --color-brand-400: #FBBF24;
+  --color-brand-500: #F59E0B;
+  --color-brand-600: #D97706;
+  --color-brand-700: #B45309;
+  --color-brand-900: #78350F;
+
+  /* Status.
+     The spec's #10B981 and #EF4444 measure ~2.5:1 and ~3.5:1 on white, below
+     the 4.5:1 minimum, so they are FILL-only. The -text variants carry the
+     same meaning at a legible contrast. */
+  --color-ok: #10B981;
+  --color-ok-text: #047857;
+  --color-ok-bg: #ECFDF5;
+  --color-ok-line: #A7F3D0;
+
+  --color-bad: #EF4444;
+  --color-bad-text: #B91C1C;
+  --color-bad-strong: #991B1B;
+  --color-bad-bg: #FEF2F2;
+  --color-bad-line: #FECACA;
+
+  --radius-card: 0.75rem;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+/* ---------------------------------------------------------------------------
+   Base primitives, declared with @utility so the variants below can @apply
+   them. Tailwind v4 rejects @apply of a plain @layer components class.
+   --------------------------------------------------------------------------- */
 @utility btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: --spacing(2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding-inline: --spacing(4);
-  padding-block: --spacing(2);
   font-size: var(--text-sm);
   font-weight: 500;
+  /* 42px: comfortably above the 44px touch target once padding is counted,
+     and matches the mockups' control height. */
+  height: --spacing(10.5);
+  white-space: nowrap;
   transition-property: color, background-color, border-color, box-shadow;
   transition-duration: 150ms;
 }
@@ -38,40 +133,94 @@
   border-radius: var(--radius-card);
   border: 1px solid var(--color-slate-200);
   background-color: var(--color-white);
-  padding: --spacing(6);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
 }
 
-@utility input {
+@utility badge {
+  display: inline-block;
+  border-radius: var(--radius-md);
+  padding-inline: --spacing(2);
+  padding-block: --spacing(0.5);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+@utility field {
   display: block;
   width: 100%;
-  border-radius: var(--radius-md);
+  height: --spacing(10.5);
+  border-radius: var(--radius-lg);
   border: 1px solid var(--color-slate-300);
+  background-color: var(--color-white);
   padding-inline: --spacing(3);
-  padding-block: --spacing(2);
   font-size: var(--text-sm);
-  box-shadow: var(--shadow-sm);
+  color: var(--color-ink);
 }
 
-/* Variants. Keep this list short: promote a pattern here only once it has been
-   repeated in three or more views. */
 @layer components {
+  /* --- buttons --- */
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700
-           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600
-           disabled:opacity-50;
+    @apply btn bg-brand-500 text-ink border border-brand-500 hover:bg-brand-600 hover:border-brand-600
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply btn bg-white text-slate-700 border border-slate-300 hover:bg-slate-50
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-dark {
+    @apply btn bg-ink text-white border border-ink hover:bg-ink-soft
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink
+           disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
-  .btn-ghost {
-    @apply btn text-slate-700 hover:bg-slate-100
-           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400
-           disabled:opacity-50;
+  /* --- forms --- */
+  .input {
+    @apply field focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25;
+  }
+  .input-error {
+    @apply field border-bad focus:border-bad-text focus:outline-none focus:ring-2 focus:ring-bad/20;
+  }
+  .label { @apply mb-1.5 block text-xs font-medium text-slate-700; }
+  .help  { @apply mt-1.5 text-xs text-slate-500; }
+  .error { @apply mt-1.5 flex items-center gap-1.5 text-xs font-medium text-bad-text; }
+
+  /* --- money --- */
+  /* Tabular figures so digits line up down a column and totals are scannable.
+     Every amount in the app uses this. */
+  .money { @apply font-mono tabular-nums; }
+
+  /* --- sidebar nav --- */
+  .nav-link {
+    @apply flex min-h-11 items-center gap-3 rounded-lg px-2 py-2.5 text-sm text-slate-300
+           hover:bg-white/5 hover:text-white
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400;
+  }
+  .nav-link-active {
+    @apply flex min-h-11 items-center gap-3 rounded-lg px-2 py-2.5 text-sm font-medium
+           bg-brand-500/15 text-brand-400
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400;
+  }
+  .nav-group {
+    @apply px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500;
   }
 
-  .input-base  { @apply input focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30; }
-  .input-error { @apply input border-rose-400 focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-500/30; }
+  /* --- badges --- */
+  .badge-ok   { @apply badge bg-ok-bg text-ok-text; }
+  .badge-bad  { @apply badge bg-bad-bg text-bad-text; }
+  .badge-warn { @apply badge bg-brand-50 text-brand-900; }
+  .badge-mute { @apply badge bg-slate-100 text-slate-600; }
 
-  .label { @apply mb-1 block text-sm font-medium text-slate-700; }
-  .help  { @apply mt-1 text-xs text-slate-500; }
-  .error { @apply mt-1 text-xs font-medium text-rose-600; }
+  /* --- data tables --- */
+  .th {
+    @apply bg-slate-50 px-3.5 py-2.5 text-left text-[10px] font-semibold uppercase
+           tracking-wider text-slate-500 whitespace-nowrap border-b border-slate-200;
+  }
+  .td { @apply border-b border-slate-100 px-3.5 py-3 text-[12.5px] text-slate-700 align-middle; }
+
+  /* --- KPI tile --- */
+  .kpi-label { @apply text-[10.5px] font-semibold uppercase tracking-wider text-slate-500; }
+  .kpi-value { @apply mt-2 font-display text-[25px] font-semibold tracking-tight text-ink; }
 }

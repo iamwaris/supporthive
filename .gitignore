@@ -41,3 +41,6 @@ Thumbs.db
 /public/assets/css/app.css
 /public/assets/vendor/*
 !/public/assets/vendor/.gitkeep
+# Self-hosted fonts, copied from @fontsource by `npm run vendor`.
+/public/assets/fonts/*
+!/public/assets/fonts/.gitkeep

@@ -15,6 +15,9 @@ abstract class Controller
                 'success' => Session::flash('success'),
                 'error'   => Session::flash('error'),
             ],
+            // Per-field messages. A summary banner alone is not enough: the
+            // design rule is that every field shows its own error.
+            'errors'   => Session::flash('errors') ?? [],
         ];
         View::render($template, $data, $layout);
     }

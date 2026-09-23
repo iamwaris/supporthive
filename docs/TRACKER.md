@@ -16,7 +16,8 @@ Module definitions: [MODULES.md](MODULES.md) · Decisions: [PLAN.md](PLAN.md)
 | D-3 | Void by status flag | Every aggregate filters `status='posted'` - enforced in one query builder, not by memory. |
 | D-4 | Attachments in `storage/documents`, authenticated controller | `Upload` needs a non-public variant; `DocumentController@show` resolves by id. |
 | D-5 | Vendor/payee is free text, no table | Plain column on `expenses`, trimmed on save, with a type-ahead endpoint over prior values. |
-| D-6 | V1 ships **admin + partner only** | Enum keeps all four values; `role_permissions` deferred until a third role exists. Partner is read-only. |
+| D-6 | V1 ships **admin + partner only** | Enum keeps all four values; `role_permissions` deferred until a third role exists. |
+| D-7 | Partner is **read-only** (confirmed) | Admin records transactions. Enforced in `Access::canWriteTransactions()` and asserted in `AccessTest`. |
 
 The ledger contract is settled, so **M3 is unblocked**.
 
@@ -27,19 +28,21 @@ The ledger contract is settled, so **M3 is unblocked**.
 | OPS-1 | Update `DB_PASS` secret, redeploy | S | todo | Production DB unreachable until done |
 | OPS-2 | Protect `main` (require PR + green CI) | S | todo | Anything on `main` deploys straight to production |
 
-## M1 — Auth & shell
+## M1 — Auth & shell ✅ *(branch `feat/m1-auth-shell`, awaiting merge)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M1-1 | Migrate `users.role` → `admin/partner/accountant/data_entry` | S | todo | D-6. Only admin+partner assignable in V1 |
-| M1-2 | ~~`role_permissions` table~~ | — | deferred | D-6. Nothing to express with two roles; revisit at role #3 |
-| M1-3 | Partner read-only enforcement | S | todo | Existing `role:` middleware on every write route |
-| M1-4 | Login / logout screens | M | todo | Rate-limited, audited — primitives exist |
-| M1-5 | LedgerHive palette in `app.src.css` | S | todo | Navy/slate/amber per spec §2 |
-| M1-9 | Rebrand: `APP_NAME`, README, views, favicon | S | todo | D-1. Infra names unchanged |
-| M1-6 | App shell: sidebar nav, spec §20.1 | M | todo | Lucide icons, mobile responsive |
-| M1-7 | `settings` table + Settings screen | M | todo | Company, currency, fiscal start, approval threshold |
-| M1-8 | Role enforcement tests | M | todo | Partner blocked from every POST/PUT/DELETE route and `/users` |
+| M1-1 | Migrate `users.role` → `admin/partner/accountant/data_entry` | S | done | Only admin+partner assignable |
+| M1-2 | ~~`role_permissions` table~~ | — | deferred | D-6. Revisit at role #3 |
+| M1-3 | Partner read-only enforcement | S | done | `can:` middleware → `Access`; verified 403 on GET and POST |
+| M1-4 | Login / logout screens | M | done | Rate-limited per-email **and** per-IP; single failure path |
+| M1-5 | LedgerHive palette in `app.src.css` | S | done | Plus `-text` status variants for contrast |
+| M1-9 | Rebrand: `APP_NAME`, favicon, views | S | done | Infra names unchanged per D-1 |
+| M1-6 | App shell: sidebar nav, spec §20.1 | M | done | Unbuilt items render disabled, not as 404 links |
+| M1-7 | `settings` table + Settings screen | M | done | Typed values; changes attributed to a user |
+| M1-8 | Role enforcement tests | M | done | 6 cases incl. unknown-role fail-closed |
+| M1-10 | Self-hosted fonts | S | done | Google Fonts is blocked by our own `font-src 'self'` |
+| M1-11 | `scripts/create-user.php` | S | done | CLI only; password from stdin, not argv |
 
 ## M2 — Master data
 
