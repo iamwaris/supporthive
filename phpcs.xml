@@ -18,6 +18,15 @@
 
     <rule ref="PSR12"/>
 
+    <!-- The bootstrap and the front controller exist precisely to define
+         constants AND perform side effects. Every other file must obey this. -->
+    <rule ref="PSR1.Files.SideEffects">
+        <exclude-pattern>app/bootstrap.php</exclude-pattern>
+        <exclude-pattern>public/index.php</exclude-pattern>
+        <exclude-pattern>database/migrate.php</exclude-pattern>
+        <exclude-pattern>scripts/*</exclude-pattern>
+    </rule>
+
     <!-- Hard bans: these are how SQL injection and XSS get in. -->
     <rule ref="Generic.PHP.ForbiddenFunctions">
         <properties>
@@ -47,5 +56,9 @@
             <property name="lineLimit" value="120"/>
             <property name="absoluteLineLimit" value="160"/>
         </properties>
+        <!-- Templates are HTML: a Tailwind class list legitimately runs long,
+             and wrapping it hurts readability more than the long line does.
+             Every other PSR-12 rule still applies to views. -->
+        <exclude-pattern>app/Views/*</exclude-pattern>
     </rule>
 </ruleset>

@@ -24,15 +24,22 @@ abstract class Model
     /** @return array<string,mixed>|null */
     public function find(int $id): ?array
     {
-        return $this->db()->first(
-            sprintf('SELECT * FROM %s WHERE %s = :id LIMIT 1', Database::identifier($this->table), Database::identifier($this->primaryKey)),
-            ['id' => $id]
+        $sql = sprintf(
+            'SELECT * FROM %s WHERE %s = :id LIMIT 1',
+            Database::identifier($this->table),
+            Database::identifier($this->primaryKey)
         );
+
+        return $this->db()->first($sql, ['id' => $id]);
     }
 
     /** @return list<array<string,mixed>> */
-    public function paginate(int $page = 1, int $perPage = 20, string $orderBy = 'id', string $direction = 'DESC'): array
-    {
+    public function paginate(
+        int $page = 1,
+        int $perPage = 20,
+        string $orderBy = 'id',
+        string $direction = 'DESC'
+    ): array {
         $direction = strtoupper($direction) === 'ASC' ? 'ASC' : 'DESC';
         $perPage = max(1, min($perPage, 100));
         $offset = max(0, ($page - 1) * $perPage);
@@ -65,7 +72,12 @@ abstract class Model
     /** @param array<string,mixed> $data */
     public function updateById(int $id, array $data): int
     {
-        return $this->db()->update($this->table, $this->filter($data), Database::identifier($this->primaryKey) . ' = :id', ['id' => $id]);
+        return $this->db()->update(
+            $this->table,
+            $this->filter($data),
+            Database::identifier($this->primaryKey) . ' = :id',
+            ['id' => $id]
+        );
     }
 
     public function deleteById(int $id): int

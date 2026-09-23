@@ -1,11 +1,12 @@
 <?php
 
-declare(strict_types=1);
-
 /**
  * Rendered when something failed unexpectedly. It must never include the
  * exception message, file path, query, or trace - those go to the log only.
  */
+
+declare(strict_types=1);
+
 $safeMessage = $safeMessage ?? '';
 ?>
 <!DOCTYPE html>

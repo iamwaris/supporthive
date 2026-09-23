@@ -115,7 +115,7 @@ final class Session
                 'domain'   => $params['domain'],
                 'secure'   => $params['secure'],
                 'httponly' => $params['httponly'],
-                'samesite' => $params['samesite'] ?? 'Lax',
+                'samesite' => $params['samesite'],
             ]);
         }
         if (session_status() === PHP_SESSION_ACTIVE) {
