@@ -65,6 +65,15 @@ $router->get('/customers', 'CustomerController@index', ['can:view']);
 $router->post('/customers', 'CustomerController@store', ['can:master']);
 $router->post('/customers/{id}', 'CustomerController@update', ['can:master']);
 
+// --- Ledger (M3) ----------------------------------------------------------
+// Reading is open to anyone who may see financials. Posting and voiding need
+// the write ability, which today means admin only.
+$router->get('/transactions', 'TransactionController@index', ['can:view']);
+$router->post('/transactions/{id}/void', 'TransactionController@void', ['can:write']);
+
+$router->get('/transfers', 'TransferController@index', ['can:view']);
+$router->post('/transfers', 'TransferController@store', ['can:write']);
+
 // Later modules land here as they are built (see docs/MODULES.md). They are
 // deliberately absent rather than stubbed: the sidebar renders an unbuilt item
 // as disabled, so nothing links into a 404.

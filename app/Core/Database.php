@@ -20,6 +20,12 @@ final class Database
     private static ?self $instance = null;
     private PDO $pdo;
 
+    /** Nesting depth, so only the outermost transaction() begins and commits. */
+    private int $transactionDepth = 0;
+
+    /** Set when any depth throws, so an outer commit cannot persist half the work. */
+    private bool $transactionAborted = false;
+
     private function __construct()
     {
         /** @var array<string,mixed> $c */
@@ -132,19 +138,57 @@ final class Database
         return $this->run($sql, $params)->rowCount();
     }
 
+    /**
+     * Run a callback inside a database transaction.
+     *
+     * Nesting is supported by counting depth: only the outermost call begins
+     * and commits. PDO throws on a second beginTransaction(), and the
+     * alternative - forbidding nesting - means a service can never call
+     * another service that also needs atomicity. Posting a transfer does
+     * exactly that: two ledger rows, each posted through the same method that
+     * guarantees its own atomicity.
+     *
+     * If anything throws at any depth the whole transaction is marked
+     * aborted, so an outer commit cannot quietly persist half the work even
+     * if some intermediate layer swallowed the exception.
+     */
     public function transaction(callable $callback): mixed
     {
-        $this->pdo->beginTransaction();
+        if ($this->transactionDepth === 0) {
+            $this->pdo->beginTransaction();
+            $this->transactionAborted = false;
+        }
+
+        $this->transactionDepth++;
+
         try {
             $result = $callback($this);
-            $this->pdo->commit();
-            return $result;
         } catch (Throwable $e) {
-            if ($this->pdo->inTransaction()) {
+            $this->transactionAborted = true;
+            $this->transactionDepth--;
+
+            if ($this->transactionDepth === 0 && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
+
             throw $e;
         }
+
+        $this->transactionDepth--;
+
+        if ($this->transactionDepth === 0) {
+            if ($this->transactionAborted) {
+                if ($this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
+
+                throw new RuntimeException('Transaction was aborted by a nested failure; nothing was written.');
+            }
+
+            $this->pdo->commit();
+        }
+
+        return $result;
     }
 
     /**

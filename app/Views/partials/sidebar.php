@@ -31,8 +31,8 @@ $groups = [
     'Transactions' => [
         ['key' => 'expenses', 'label' => 'Expenses', 'href' => '/expenses', 'icon' => 'receipt', 'show' => true, 'ready' => false],
         ['key' => 'income', 'label' => 'Income', 'href' => '/income', 'icon' => 'trend', 'show' => true, 'ready' => false],
-        ['key' => 'transfers', 'label' => 'Transfers', 'href' => '/transfers', 'icon' => 'swap', 'show' => true, 'ready' => false],
-        ['key' => 'ledger', 'label' => 'All Transactions', 'href' => '/transactions', 'icon' => 'list', 'show' => true, 'ready' => false],
+        ['key' => 'transfers', 'label' => 'Transfers', 'href' => '/transfers', 'icon' => 'swap', 'show' => true, 'ready' => true],
+        ['key' => 'ledger', 'label' => 'All Transactions', 'href' => '/transactions', 'icon' => 'list', 'show' => true, 'ready' => true],
     ],
     'Finance' => [
         ['key' => 'accounts', 'label' => 'Accounts', 'href' => '/accounts', 'icon' => 'card', 'show' => true, 'ready' => true],
