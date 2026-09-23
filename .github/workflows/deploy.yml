@@ -132,7 +132,11 @@ jobs:
           # Never ship these.
           find release -name '.env' -delete
           find release -name '*.log' -delete
+          rm -f release/public/assets/css/app.src.css
+          # `uploads/*` leaves dotfiles alone, so uploads/.htaccess survives -
+          # that file is what prevents an uploaded file executing as PHP.
           rm -rf release/public/uploads/*
+          test -f release/public/uploads/.htaccess             || { echo "::error::uploads/.htaccess missing from the release."; exit 1; }
 
           echo "${{ github.sha }}" > release/public/build.txt
           echo "--- app_private ---" && find release/app_private -maxdepth 2
@@ -166,6 +170,9 @@ jobs:
             echo "DB_USER=${{ secrets.DB_USER }}"
             echo "DB_PASS=${{ secrets.DB_PASS }}"
             echo "DB_CHARSET=utf8mb4"
+            # The document root is not BASE_PATH/public in this split layout,
+            # so CLI tools (preflight, uploads) need it spelled out.
+            echo "APP_PUBLIC_PATH=$WEB_ROOT"
             echo "MAIL_HOST=${{ secrets.MAIL_HOST }}"
             echo "MAIL_PORT=${{ secrets.MAIL_PORT }}"
             echo "MAIL_USER=${{ secrets.MAIL_USER }}"
@@ -251,14 +258,33 @@ jobs:
           SSH_CMD="ssh -i ~/.ssh/deploy_key -p $SSH_PORT -o BatchMode=yes"
 
           if $SSH_CMD "$SSH_USER@$SSH_HOST" "command -v rsync >/dev/null 2>&1"; then
-            # uploads/ holds user files that exist only on the server: never delete.
+            # uploads/ holds user files that exist only on the server, so its
+            # CONTENTS are never deleted or overwritten - but uploads/.htaccess
+            # is ours and MUST ship: it is what stops an uploaded file from
+            # executing as PHP. The include has to precede the exclude, because
+            # rsync applies the first matching rule.
             rsync -rlptz --delete \
+              --include 'uploads/' \
+              --include 'uploads/.htaccess' \
               --exclude 'uploads/***' \
               -e "$SSH_CMD" \
               ./release/public/ "$SSH_USER@$SSH_HOST:$WEB_ROOT"
           else
             tar -C ./release/public -czf - . \
               | $SSH_CMD "$SSH_USER@$SSH_HOST" "tar -C '$WEB_ROOT' -xzf -"
+          fi
+
+      - name: Verify uploads cannot execute
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          if ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes                  "$SSH_USER@$SSH_HOST" "test -f '$WEB_ROOT/uploads/.htaccess'"; then
+            echo "uploads/.htaccess present."
+          else
+            echo "::error::uploads/.htaccess is missing on the host. An uploaded file could execute as PHP."
+            exit 1
           fi
 
       - name: Tighten permissions on the host

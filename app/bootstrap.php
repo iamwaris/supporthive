@@ -14,11 +14,9 @@ define('CONFIG_PATH', BASE_PATH . '/config');
 define('ROUTES_PATH', BASE_PATH . '/routes');
 define('STORAGE_PATH', BASE_PATH . '/storage');
 
-// public/index.php defines PUBLIC_PATH before requiring this file, so the
-// document root may sit outside BASE_PATH (the shared-hosting layout does).
-if (!defined('PUBLIC_PATH')) {
-    define('PUBLIC_PATH', BASE_PATH . '/public');
-}
+// PUBLIC_PATH is resolved below, after .env is available: over the web
+// public/index.php has already defined it, but a CLI script cannot know where
+// the document root is when the deployed layout splits it from BASE_PATH.
 
 // Fail loudly during bootstrap; ErrorHandler takes over as soon as it is registered.
 error_reporting(E_ALL);
@@ -53,6 +51,22 @@ use App\Core\Session;
 
 Env::load(BASE_PATH . '/.env');
 Config::load(CONFIG_PATH);
+
+// Resolve the document root now that .env has been read.
+//   - Over the web, public/index.php already defined it from __DIR__.
+//   - On the host the application lives outside the web root, so a CLI script
+//     (preflight, maintenance tasks) has no way to infer it: the deploy writes
+//     APP_PUBLIC_PATH into .env for exactly this case.
+//   - Locally it is simply BASE_PATH/public.
+if (!defined('PUBLIC_PATH')) {
+    $configuredPublicPath = Env::get('APP_PUBLIC_PATH', '');
+    define(
+        'PUBLIC_PATH',
+        $configuredPublicPath !== '' && is_dir($configuredPublicPath)
+            ? rtrim($configuredPublicPath, '/\\')
+            : BASE_PATH . '/public'
+    );
+}
 
 date_default_timezone_set(Config::get('app.timezone', 'UTC'));
 mb_internal_encoding('UTF-8');
