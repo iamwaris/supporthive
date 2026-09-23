@@ -85,9 +85,19 @@ final class DevAuthController extends Controller
             Http::redirect('/login');
         }
 
+        // Clear any existing session first. Auth::login() regenerates the id,
+        // but leaving the previous user's session data in place risks carrying
+        // their flashes and cached state into the new identity.
+        $previousId = Auth::id();
+        if ($previousId !== null) {
+            Auth::logout();
+            Session::start();
+        }
+
         Auth::login((int) $user['id']);
 
         Logger::security('Dev quick-login used', [
+            'switched_from' => $previousId,
             'user_id' => $user['id'],
             'role' => $user['role'],
             'env' => (string) Config::get('app.env'),

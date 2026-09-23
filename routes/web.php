@@ -32,7 +32,10 @@ $router->post('/logout', 'AuthController@logout', ['auth']);
 // does not exist and returns 404 rather than merely hiding its button. The
 // controller checks the same switch again.
 if (DevAuthController::isEnabled()) {
-    $router->post('/dev-login', 'DevAuthController@login', ['guest']);
+    // Deliberately NOT ['guest']: these buttons exist to switch between test
+    // accounts, and the guest gate turned a click while signed in into a
+    // silent redirect that kept you as the user you already were.
+    $router->post('/dev-login', 'DevAuthController@login');
 }
 
 // --- Application ----------------------------------------------------------
