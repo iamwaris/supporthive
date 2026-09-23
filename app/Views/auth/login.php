@@ -64,6 +64,18 @@ $passwordError = $errors['password'][0] ?? null;
 
     <button type="submit" class="btn-primary mt-7 w-full">Sign in</button>
 
+    <div class="mt-6 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <svg class="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="10" width="16" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+        </svg>
+        <p class="text-[11.5px] leading-relaxed text-slate-500">
+            <?= e((string) Config::get('security.login_max_attempts', 5)) ?> failed attempts locks sign-in for
+            <?= e((string) (int) round((int) Config::get('security.login_lockout', 900) / 60)) ?> minutes.
+            Every attempt is recorded with its time and IP address.
+        </p>
+    </div>
+</form>
+
     <?php $testAccounts = DevAuthController::testAccounts(); ?>
     <?php if ($testAccounts !== []) : ?>
         <!-- Development only. Rendered solely when APP_ENV is local, and the
@@ -104,15 +116,3 @@ $passwordError = $errors['password'][0] ?? null;
             </div>
         </div>
     <?php endif; ?>
-
-    <div class="mt-6 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-        <svg class="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="4" y="10" width="16" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
-        </svg>
-        <p class="text-[11.5px] leading-relaxed text-slate-500">
-            <?= e((string) Config::get('security.login_max_attempts', 5)) ?> failed attempts locks sign-in for
-            <?= e((string) (int) round((int) Config::get('security.login_lockout', 900) / 60)) ?> minutes.
-            Every attempt is recorded with its time and IP address.
-        </p>
-    </div>
-</form>
