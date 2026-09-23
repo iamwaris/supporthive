@@ -19,8 +19,54 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
 
+    # Deployment stays off until the host is actually configured. Set the
+    # repository variable DEPLOY_ENABLED to "true" (Settings -> Secrets and
+    # variables -> Actions -> Variables) once the secrets below exist and the
+    # application directory has been created on the host. Without this gate a
+    # push to main fails noisily on every repository that has no hosting yet.
+    if: vars.DEPLOY_ENABLED == 'true'
+
     steps:
       - uses: actions/checkout@v4
+
+      # Fail with a precise list rather than an opaque error deep in the upload.
+      - name: Verify required secrets and variables are set
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          APP_URL: ${{ secrets.APP_URL }}
+          APP_KEY: ${{ secrets.APP_KEY }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          APP_DIR: ${{ vars.APP_DIR }}
+          WEB_ROOT: ${{ vars.WEB_ROOT }}
+        run: |
+          missing=""
+          for name in FTP_SERVER FTP_USERNAME FTP_PASSWORD APP_URL APP_KEY \
+                      DB_HOST DB_NAME DB_USER DB_PASS APP_DIR WEB_ROOT; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::Not configured for deployment. Missing:$missing"
+            echo "See docs/GITHUB-SETUP.md sections 2 and 3."
+            exit 1
+          fi
+
+          # A path pointing inside the web root would publish the source code.
+          case "$APP_DIR" in
+            */public_html/*|/public_html/*)
+              echo "::error::APP_DIR ($APP_DIR) is inside the web root. Application code must not be web-reachable."
+              exit 1
+              ;;
+          esac
+
+          echo "Configuration present."
 
       # ---- Build -------------------------------------------------------
       - name: Set up PHP

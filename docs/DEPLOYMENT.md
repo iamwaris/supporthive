@@ -130,8 +130,12 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 |---|---|
 | `APP_DIR` | `/supporthive_app/` |
 | `WEB_ROOT` | `/public_html/` |
+| `DEPLOY_ENABLED` | `true` |
 
-Both need the leading and trailing slash.
+`APP_DIR` and `WEB_ROOT` need the leading and trailing slash. `DEPLOY_ENABLED`
+gates the whole deploy job: while it is unset the job is skipped, so `main`
+stays green before hosting exists. The job also refuses to run if `APP_DIR`
+points inside the web root.
 
 **Settings → Environments → `production`:** add a required reviewer if you want
 a manual approval gate before each deploy.
@@ -141,7 +145,7 @@ forbid direct pushes.
 
 ## 5. Deploying
 
-Merging to `main` deploys. To deploy without a code change, run the
+Merging to `main` deploys, once `DEPLOY_ENABLED` is `true`. To deploy without a code change, run the
 *Deploy to production* workflow manually from the Actions tab.
 
 The workflow: builds assets → assembles the two trees → writes `.env` from

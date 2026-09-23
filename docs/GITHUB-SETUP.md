@@ -55,10 +55,17 @@ git ls-files | grep -E '^\.env$|node_modules|^vendor/'   # must print nothing
 |---|---|
 | `APP_DIR` | `/supporthive_app/` |
 | `WEB_ROOT` | `/public_html/` |
+| `DEPLOY_ENABLED` | `true` |
 
-Both need a leading **and** trailing slash. `APP_DIR` must be a directory that
-sits *beside* `public_html`, not inside it — that is the whole point of the
-two-directory layout.
+`APP_DIR` and `WEB_ROOT` each need a leading **and** trailing slash. `APP_DIR`
+must be a directory that sits *beside* `public_html`, not inside it — that is
+the whole point of the two-directory layout, and the deploy job refuses to run
+if you point it inside the web root.
+
+`DEPLOY_ENABLED` is the master switch. **Leave it unset until everything above
+is filled in and the application directory exists on the host** — the deploy
+job skips entirely while it is off, so pushes to `main` stay green. Set it to
+`true` when you are ready for the first real deploy.
 
 ## 4. Protect `main`
 
@@ -85,7 +92,7 @@ Before pushing to `main`, create the application directory on the host (cPanel �
 File Manager → the level containing `public_html` → **+ Folder** →
 `supporthive_app`). The pipeline will not create it for you.
 
-Then:
+Then set `DEPLOY_ENABLED` to `true` and push:
 
 ```bash
 git push origin main
