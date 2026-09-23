@@ -120,6 +120,7 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | 2026-09-23 | **Cash basis**: only `received` income counts toward profit | Profit never shows money that has not arrived; matches how an owner-managed business reads the dashboard. Pending sales are tracked and reported as expected income, not revenue | Accrual (implies receivables, deferred to V2); showing both (doubles every report) |
 | 2026-09-23 | **Void by status flag**, not reversing entry | Simple, readable, history intact. Risk mitigated by a central query builder | Reversing entries: correct accounting, but two extra rows for a typo fix, and V1 has no period-close concept |
 | 2026-09-23 | **Attachments in `storage/documents`**, streamed by an authenticated controller | Financial documents must not be readable by anyone holding a URL | `public/uploads` with random filenames |
+| 2026-09-23 | **Vendor/payee as free text**, not a managed table | Keeps expense entry fast, which is the spec's stated priority (§20.3). Accepted cost: vendor-level reporting is only as good as the typing, so the field type-aheads from previously used values to keep spellings converging | A `vendors` table with CRUD |
 | 2026-09-23 | **Rebrand app to LedgerHive; infrastructure names unchanged** | Zero risk, no downtime. Repo `supporthive`, DB `u400948127_supporthive`, site `myinvoicestudio.com` keep their names | Renaming repo/DB/domain |
 
 ## 6. Risks
@@ -138,12 +139,12 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 
 Raised 2026-09-23, shaping V1:
 
-- [ ] Vendors: free text or a managed table?
 - [ ] Export libraries — the only runtime dependencies V1 would take on
 - [ ] Expected transaction volume per month (drives indexing and caching)
 - [ ] Staging site before production deploys?
 
 Answered:
+- [x] Vendors - **free text**, with type-ahead from prior values
 - [x] Product naming - rebrand app to LedgerHive, leave infra names alone
 - [x] Accounting basis - **cash basis**, only `received` income counts
 - [x] Corrections - **status-flag void**, excluded from aggregates

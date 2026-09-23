@@ -89,7 +89,7 @@ Everything transactions depend on. Must exist before any money can be recorded.
 | **Categories** | Self-referencing parent for subcategories, typed expense/income, seeded with the spec's 12 starter categories. |
 | **Accounts** | Cash / bank / credit card / petty cash / other, with `opening_balance`. |
 | **Customers** | Referenced by sales. Light: name, contact, notes. |
-| **Vendors** | Spec mentions vendor/payee on expenses as free text. Recommend a table for consistent reporting — see open questions. |
+| **Vendors** | **Free text** on the expense row (decided 2026-09-23) - no table. To keep vendor reporting usable anyway, the field type-aheads from `SELECT DISTINCT vendor` over prior expenses, so repeat entries converge on one spelling instead of drifting into variants. Values are trimmed and collapsed on save. |
 
 **Done when:** shares cannot be saved in a state that doesn't total 100%, and
 the category tree renders correctly nested.

@@ -15,6 +15,7 @@ Module definitions: [MODULES.md](MODULES.md) · Decisions: [PLAN.md](PLAN.md)
 | D-2 | Cash basis - only `received` income is revenue | Every P&L aggregate filters `payment_status='received'`. Pending gets its own report. |
 | D-3 | Void by status flag | Every aggregate filters `status='posted'` - enforced in one query builder, not by memory. |
 | D-4 | Attachments in `storage/documents`, authenticated controller | `Upload` needs a non-public variant; `DocumentController@show` resolves by id. |
+| D-5 | Vendor/payee is free text, no table | Plain column on `expenses`, trimmed on save, with a type-ahead endpoint over prior values. |
 
 The ledger contract is settled, so **M3 is unblocked**.
 
@@ -48,6 +49,7 @@ The ledger contract is settled, so **M3 is unblocked**.
 | M2-3 | `categories` tree, typed expense/income | M | todo | Seed spec's 12 starter categories |
 | M2-4 | `accounts` CRUD with opening balance | M | todo | |
 | M2-5 | `customers` CRUD | S | todo | |
+| M2-7 | Vendor type-ahead endpoint | S | todo | D-5. `SELECT DISTINCT vendor` scoped + limited; keeps free-text spellings converging |
 | M2-6 | Share-validation unit tests | M | todo | Mid-period change, deactivation, 99.99% rejection |
 
 ## M3 — Ledger (critical path)
