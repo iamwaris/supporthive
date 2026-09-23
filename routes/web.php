@@ -74,6 +74,21 @@ $router->post('/transactions/{id}/void', 'TransactionController@void', ['can:wri
 $router->get('/transfers', 'TransferController@index', ['can:view']);
 $router->post('/transfers', 'TransferController@store', ['can:write']);
 
+// --- Daily entry (M4) -----------------------------------------------------
+$router->get('/expenses', 'ExpenseController@index', ['can:view']);
+$router->get('/expenses/new', 'ExpenseController@create', ['can:write']);
+$router->post('/expenses', 'ExpenseController@store', ['can:write']);
+// Type-ahead over previously used vendor names (decision D-5).
+$router->get('/expenses/vendors', 'ExpenseController@vendors', ['can:write']);
+
+$router->get('/income', 'IncomeController@index', ['can:view']);
+$router->get('/income/new', 'IncomeController@create', ['can:write']);
+$router->post('/income', 'IncomeController@store', ['can:write']);
+$router->post('/income/{id}/received', 'IncomeController@markReceived', ['can:write']);
+
+$router->get('/capital', 'CapitalController@index', ['can:view']);
+$router->post('/capital', 'CapitalController@store', ['can:write']);
+
 // Later modules land here as they are built (see docs/MODULES.md). They are
 // deliberately absent rather than stubbed: the sidebar renders an unbuilt item
 // as disabled, so nothing links into a 404.

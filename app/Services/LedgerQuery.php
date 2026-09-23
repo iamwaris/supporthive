@@ -67,6 +67,19 @@ final class LedgerQuery
         return $this;
     }
 
+    /**
+     * Money invoiced but not yet received.
+     *
+     * Deliberately separate from posted(): under a cash basis these are NOT
+     * revenue and must never reach a profit figure. They belong on their own
+     * list, and in the "expected income" tile.
+     */
+    public function pendingOnly(): self
+    {
+        $this->conditions[] = "t.status = 'pending'";
+        return $this;
+    }
+
     public function between(?string $from, ?string $to): self
     {
         if ($from !== null && $from !== '') {

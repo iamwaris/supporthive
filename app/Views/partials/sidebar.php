@@ -29,8 +29,8 @@ $groups = [
         ['key' => 'dashboard', 'label' => 'Dashboard', 'href' => '/dashboard', 'icon' => 'grid', 'show' => true, 'ready' => true],
     ],
     'Transactions' => [
-        ['key' => 'expenses', 'label' => 'Expenses', 'href' => '/expenses', 'icon' => 'receipt', 'show' => true, 'ready' => false],
-        ['key' => 'income', 'label' => 'Income', 'href' => '/income', 'icon' => 'trend', 'show' => true, 'ready' => false],
+        ['key' => 'expenses', 'label' => 'Expenses', 'href' => '/expenses', 'icon' => 'receipt', 'show' => true, 'ready' => true],
+        ['key' => 'income', 'label' => 'Income', 'href' => '/income', 'icon' => 'trend', 'show' => true, 'ready' => true],
         ['key' => 'transfers', 'label' => 'Transfers', 'href' => '/transfers', 'icon' => 'swap', 'show' => true, 'ready' => true],
         ['key' => 'ledger', 'label' => 'All Transactions', 'href' => '/transactions', 'icon' => 'list', 'show' => true, 'ready' => true],
     ],
@@ -41,7 +41,7 @@ $groups = [
     ],
     'Partners' => [
         ['key' => 'partners', 'label' => 'Partners & Profit', 'href' => '/partners', 'icon' => 'users', 'show' => true, 'ready' => true],
-        ['key' => 'capital', 'label' => 'Capital Movements', 'href' => '/capital', 'icon' => 'coins', 'show' => true, 'ready' => false],
+        ['key' => 'capital', 'label' => 'Capital Movements', 'href' => '/capital', 'icon' => 'coins', 'show' => true, 'ready' => true],
     ],
     'Reports' => [
         ['key' => 'reports', 'label' => 'Profit & Loss', 'href' => '/reports', 'icon' => 'doc', 'show' => true, 'ready' => false],

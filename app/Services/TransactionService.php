@@ -92,6 +92,17 @@ final class TransactionService
             throw new RuntimeException('A transaction must be attributed to a signed-in user.');
         }
 
+        // 'pending' means the money has not arrived. Under a cash basis it is
+        // excluded from balances and profit until it does, and only income can
+        // be in that state - an unpaid expense is a payable, deferred to V2.
+        $status = (string) ($data['status'] ?? 'posted');
+        if (!in_array($status, ['posted', 'pending'], true)) {
+            throw new InvalidArgumentException('A new transaction is either posted or pending.');
+        }
+        if ($status === 'pending' && !$type->isRevenue()) {
+            throw new InvalidArgumentException('Only income can be recorded as pending.');
+        }
+
         return (int) Database::instance()->transaction(
             static function (Database $db) use (
                 $type,
@@ -103,6 +114,7 @@ final class TransactionService
                 $partnerId,
                 $data,
                 $userId,
+                $status,
                 $writeDetail
             ): int {
                 $id = $db->insert('transactions', [
@@ -115,7 +127,10 @@ final class TransactionService
                     'partner_id' => $partnerId,
                     'description' => $description,
                     'reference_no' => self::nullIfBlank($data['reference_no'] ?? null),
-                    'status' => 'posted',
+                    'status' => $status,
+                    // Under a cash basis the date the money arrived is the one
+                    // reports use; transaction_date stays the invoice date.
+                    'received_at' => $status === 'posted' ? $date : null,
                     'transfer_group' => self::nullIfBlank($data['transfer_group'] ?? null),
                     'created_by' => $userId,
                 ]);
@@ -124,8 +139,9 @@ final class TransactionService
                     $writeDetail($id);
                 }
 
-                Audit::record('transaction.posted', 'transactions', $id, null, [
+                Audit::record('transaction.' . $status, 'transactions', $id, null, [
                     'type' => $type->value,
+                    'status' => $status,
                     'amount' => $amount,
                     'date' => $date,
                     'account_id' => $accountId,
@@ -296,6 +312,57 @@ final class TransactionService
 
             return 1;
         });
+    }
+
+    /**
+     * Mark a pending receipt as received.
+     *
+     * This is the moment the money exists as far as the books are concerned:
+     * the row moves to 'posted', which is what every balance and P&L query
+     * filters on, so it starts counting from here rather than from the
+     * invoice date.
+     */
+    public static function markReceived(int $transactionId, ?string $receivedOn = null): void
+    {
+        $db = Database::instance();
+        $transaction = $db->first('SELECT * FROM transactions WHERE id = :id', ['id' => $transactionId]);
+
+        if ($transaction === null) {
+            throw new RuntimeException('That entry no longer exists.');
+        }
+        if ((string) $transaction['status'] !== 'pending') {
+            throw new RuntimeException('Only a pending entry can be marked received.');
+        }
+
+        $userId = Auth::id();
+        if ($userId === null) {
+            throw new RuntimeException('Marking money received must be attributed to a signed-in user.');
+        }
+
+        $when = self::normaliseDate($receivedOn ?? date('Y-m-d'));
+
+        $db->transaction(static function (Database $db) use ($transactionId, $when, $userId, $transaction): void {
+            $db->update('transactions', [
+                'status' => 'posted',
+                'received_at' => $when,
+                'modified_by' => $userId,
+                'modified_at' => date('Y-m-d H:i:s'),
+            ], 'id = :id', ['id' => $transactionId]);
+
+            Audit::record(
+                'transaction.received',
+                'transactions',
+                $transactionId,
+                ['status' => 'pending'],
+                ['status' => 'posted', 'received_at' => $when, 'amount' => $transaction['amount']]
+            );
+        });
+
+        Logger::info('Pending income received', [
+            'transaction_id' => $transactionId,
+            'amount' => $transaction['amount'],
+            'received_at' => $when,
+        ]);
     }
 
     /**
