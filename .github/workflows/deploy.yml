@@ -323,9 +323,25 @@ jobs:
           set -e
           url="${APP_URL%/}"
 
-          code=$(curl -s -o /tmp/body.html -w '%{http_code}' --max-time 30 "$url/")
-          echo "GET $url/ -> $code"
-          test "$code" = "200"
+          # Follow redirects. The entry point legitimately redirects (/ ->
+          # /dashboard -> /login when signed out), so asserting a bare 200 on
+          # "/" fails on a perfectly correct response - which is exactly what
+          # happened after M1 shipped that route: the deploy transferred fine
+          # and then the smoke test reported the whole job as failed.
+          code=$(curl -sL -o /tmp/body.html -w '%{http_code}' --max-redirs 5 --max-time 30 "$url/")
+          echo "GET $url/ (following redirects) -> $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::The site did not reach a 200 from / after redirects."
+            exit 1
+          fi
+
+          # And assert a real rendered page directly, not only via redirects.
+          login=$(curl -s -o /tmp/login.html -w '%{http_code}' --max-time 30 "$url/login")
+          echo "GET $url/login -> $login"
+          if [ "$login" != "200" ]; then
+            echo "::error::The sign-in page is not reachable."
+            exit 1
+          fi
 
           deployed=$(curl -s --max-time 15 "$url/build.txt" | tr -d '[:space:]')
           echo "build.txt reports: $deployed"
@@ -348,7 +364,8 @@ jobs:
           test "$leaked" = "0"
 
           echo "Checking security headers..."
-          headers=$(curl -sI --max-time 15 "$url/")
+          # -L so the policy is checked on the page a visitor actually lands on.
+          headers=$(curl -sIL --max-redirs 5 --max-time 20 "$url/")
 
           # Presence is not enough. Hostinger's server config sets its own CSP
           # ("upgrade-insecure-requests") that overrides the application's, so
