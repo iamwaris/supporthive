@@ -90,14 +90,15 @@ relative. `APP_DIR` and `WEB_ROOT` are also accepted as secrets, but prefer
 variables: a secret is masked as `***` in the logs, which makes a wrong path
 much harder to diagnose.
 
+`APP_DIR` must sit outside every web root — the deploy job refuses to run if you
+point it inside one. On Hostinger the home directory is a good place: the domain
+folder itself carries a `DO_NOT_UPLOAD_HERE` marker.
+
 **`DEPLOY_ENABLED` must be a variable, never a secret.** GitHub does not expose
 the `secrets` context to a job-level `if:`, so as a secret it would skip every
-deploy silently, with no error to read. `APP_DIR` must sit beside `public_html`, never inside it; the deploy
-job refuses to run if you point it into the web root.
-
-`DEPLOY_ENABLED` is the master switch. While it is unset the deploy job skips
-entirely, so pushes to `main` stay green. Set it once everything above is filled
-in and the application directory exists on the host.
+deploy silently, with no error to read. It is the master switch: while unset the
+deploy job skips entirely, so pushes to `main` stay green. Set it once
+everything above is filled in and the application directory exists on the host.
 
 `RUN_MIGRATIONS` is deliberately separate. Leave it off for the first deploy,
 then turn it on once you have seen the pipeline work — and take a database
@@ -121,10 +122,10 @@ enabling until you have watched a few deploys succeed.
 
 ## 7. First deploy
 
-1. In hPanel → *Files* → **File Manager**, open `domains/<site>/` and create the
-   folder `supporthive_app`, **beside** `public_html`. The pipeline does not
-   create it — that is deliberate, so a mistyped path fails loudly instead of
-   scattering directories across your account.
+1. Create the application directory on the host, outside every web root — e.g.
+   `~/supporthive_app` at the home level. The pipeline does not create it: that
+   is deliberate, so a mistyped path fails loudly instead of scattering
+   directories across your account.
 2. Set `DEPLOY_ENABLED` to `true`.
 3. Run **Actions → Deploy to production → Run workflow**, rather than pushing.
    A manual run proves the pipeline without coupling it to a code change.
@@ -139,7 +140,7 @@ With SSH available you can simply run them yourself once:
 
 ```bash
 ssh -i ~/.ssh/supporthive_deploy -p <SSH_PORT> <SSH_USER>@<SSH_HOST>
-cd domains/<site>/supporthive_app
+cd ~/supporthive_app
 php database/migrate.php --status
 php database/migrate.php
 ```
