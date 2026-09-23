@@ -79,14 +79,20 @@ ssh -i ~/.ssh/supporthive_deploy -p <SSH_PORT> <SSH_USER>@<SSH_HOST> "pwd && ls 
 
 | Variable | Value |
 |---|---|
-| `APP_DIR` | `/home/<user>/domains/<site>/supporthive_app` |
+| `APP_DIR` | `/home/<user>/supporthive_app` |
 | `WEB_ROOT` | `/home/<user>/domains/<site>/public_html` |
 | `DEPLOY_ENABLED` | `true` — **set this last** |
 | `RUN_MIGRATIONS` | `true` to migrate on every deploy (optional) |
 | `PHP_BIN` | only if plain `php` on the host is the wrong version, e.g. `/opt/alt/php83/usr/bin/php` |
 
 Use **absolute** paths over SSH — unlike FTP, there is no chroot making them
-relative. `APP_DIR` must sit beside `public_html`, never inside it; the deploy
+relative. `APP_DIR` and `WEB_ROOT` are also accepted as secrets, but prefer
+variables: a secret is masked as `***` in the logs, which makes a wrong path
+much harder to diagnose.
+
+**`DEPLOY_ENABLED` must be a variable, never a secret.** GitHub does not expose
+the `secrets` context to a job-level `if:`, so as a secret it would skip every
+deploy silently, with no error to read. `APP_DIR` must sit beside `public_html`, never inside it; the deploy
 job refuses to run if you point it into the web root.
 
 `DEPLOY_ENABLED` is the master switch. While it is unset the deploy job skips

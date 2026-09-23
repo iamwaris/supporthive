@@ -26,8 +26,12 @@ jobs:
     if: vars.DEPLOY_ENABLED == 'true'
 
     env:
-      APP_DIR: ${{ vars.APP_DIR }}
-      WEB_ROOT: ${{ vars.WEB_ROOT }}
+      # Accept these as either a repository variable or a secret. They are
+      # paths, not credentials, so a variable is preferable - it stays readable
+      # in the logs, whereas a secret is masked as *** and makes a wrong path
+      # much harder to diagnose.
+      APP_DIR: ${{ vars.APP_DIR || secrets.APP_DIR }}
+      WEB_ROOT: ${{ vars.WEB_ROOT || secrets.WEB_ROOT }}
       SSH_PORT: ${{ secrets.SSH_PORT }}
       PHP_BIN: ${{ vars.PHP_BIN || 'php' }}
 
@@ -330,7 +334,7 @@ jobs:
             echo "### Deployment ${{ job.status }}"
             echo ""
             echo "- Commit: \`${{ github.sha }}\`"
-            echo "- App dir: \`${{ vars.APP_DIR }}\`"
-            echo "- Web root: \`${{ vars.WEB_ROOT }}\`"
+            echo "- App dir: \`$APP_DIR\`"
+            echo "- Web root: \`$WEB_ROOT\`"
             echo "- Migrations: \`${{ vars.RUN_MIGRATIONS == 'true' && 'run automatically' || 'skipped (RUN_MIGRATIONS not set)' }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
