@@ -10,7 +10,7 @@ use App\Core\Logger;
 use App\Core\Session;
 use App\Models\Budget;
 use App\Models\Category;
-use App\Services\LedgerQuery;
+use App\Services\BudgetService;
 
 /**
  * Monthly budget per category, read against the ledger live.
@@ -26,34 +26,10 @@ final class BudgetController extends Controller
     {
         [$year, $month] = $this->periodFromRequest();
 
-        $budgets = new Budget();
-        $rows = $budgets->forPeriod($year, $month);
-
-        $from = sprintf('%04d-%02d-01', $year, $month);
-        $to = date('Y-m-t', (int) strtotime($from));
-        $actuals = self::actualsByCategory($from, $to);
-
-        $summary = [];
-        foreach ($rows as $row) {
-            $categoryId = (int) $row['category_id'];
-            $spent = $actuals[$categoryId] ?? '0.00';
-            $budgetAmount = (float) $row['amount'];
-            $threshold = (int) $row['alert_threshold_pct'];
-            $utilisationPct = $budgetAmount > 0 ? round(((float) $spent / $budgetAmount) * 100, 1) : 0.0;
-
-            $summary[] = $row + [
-                'spent' => $spent,
-                'utilisation_pct' => $utilisationPct,
-                'state' => match (true) {
-                    (float) $spent > $budgetAmount => 'exceeded',
-                    $utilisationPct >= $threshold => 'warning',
-                    default => 'ok',
-                },
-            ];
-        }
+        $summary = BudgetService::summaryForPeriod($year, $month);
 
         $categories = new Category();
-        $budgetedIds = array_map(static fn (array $r): int => (int) $r['category_id'], $rows);
+        $budgetedIds = array_map(static fn (array $r): int => (int) $r['category_id'], $summary);
         $available = array_values(array_filter(
             $categories->parentsFor('expense'),
             static fn (array $c): bool => !in_array((int) $c['id'], $budgetedIds, true)
@@ -164,24 +140,5 @@ final class BudgetController extends Controller
         }
 
         return [$year, $month];
-    }
-
-    /**
-     * Posted expenses for the period, grouped by parent category — the same
-     * rollup every other category report uses, via the one query builder that
-     * applies `status = 'posted'` so a voided expense can never count here.
-     *
-     * @return array<int,string> category id => spent amount
-     */
-    private static function actualsByCategory(string $from, string $to): array
-    {
-        $rows = LedgerQuery::posted()->expensesOnly()->between($from, $to)->groupedByCategory();
-
-        $actuals = [];
-        foreach ($rows as $row) {
-            $actuals[(int) $row['category_id']] = (string) $row['total'];
-        }
-
-        return $actuals;
     }
 }

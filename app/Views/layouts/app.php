@@ -11,6 +11,7 @@
  * @var string|null               $pageTitle
  * @var string|null               $pageMeta
  * @var string|null               $pageActions  pre-rendered, escaped markup
+ * @var string|null               $pageScripts  pre-rendered <script> tags, for a page that needs a vendor library
  */
 
 declare(strict_types=1);
@@ -115,5 +116,8 @@ $nav = $nav ?? '';
 
 <script src="<?= e(asset('assets/vendor/alpine.min.js')) ?>" defer></script>
 <script src="<?= e(asset('assets/js/app.js')) ?>" defer></script>
+<?php if (!empty($pageScripts)) : ?>
+    <?= $pageScripts /* Rendered by the view; fixed vendor <script src> tags, not user input. */ ?>
+<?php endif; ?>
 </body>
 </html>

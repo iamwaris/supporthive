@@ -2,9 +2,11 @@
 
 > Status: **M1–M4 live in production** (auth, master data, the ledger,
 > daily entry). **M5 — budgets and profit distribution — built and tested,
-> pending PR/merge.** Next after that: M6 — visibility.
+> pending PR/merge. M6 dashboard (§14/§15) — built and tested, pending
+> PR/merge, stacked on M5.** Next: M6 reports (§16).
 > Owner: Muhammad Waris · Last updated: 2026-09-24
-> Source of truth for product scope: `LedgerHive_App.pdf` V1.0
+> Source of truth for product scope: `LedgerHive_App.pdf` V1.0 (now on file
+> with the assistant as of this session — §14/§15/§16 read verbatim)
 
 What we are building and why. Module breakdown lives in
 [MODULES.md](MODULES.md); per-task state in [TRACKER.md](TRACKER.md).

@@ -40,6 +40,9 @@ if (DevAuthController::isEnabled()) {
 
 // --- Application ----------------------------------------------------------
 $router->get('/dashboard', 'DashboardController@index', ['can:view']);
+$router->get('/dashboard/charts/trend', 'DashboardController@trendChart', ['can:view']);
+$router->get('/dashboard/charts/category', 'DashboardController@categoryChart', ['can:view']);
+$router->get('/dashboard/charts/budget', 'DashboardController@budgetChart', ['can:view']);
 
 // --- System ---------------------------------------------------------------
 $router->get('/settings', 'SettingsController@index', ['can:administer']);
