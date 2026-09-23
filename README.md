@@ -51,6 +51,7 @@ docs/            plan, tracker, security, deployment, design system
 |---|---|
 | [CLAUDE.md](CLAUDE.md) | **Engineering rules** — read before writing code |
 | [docs/PLAN.md](docs/PLAN.md) | Product definition, milestones, decisions, risks |
+| [docs/MODULES.md](docs/MODULES.md) | **Module plan** — build order, ledger design, dependencies |
 | [docs/TRACKER.md](docs/TRACKER.md) | Task board — update it with your work |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security mechanisms and review checklists |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Local setup, CI/CD, migrations, rollback |

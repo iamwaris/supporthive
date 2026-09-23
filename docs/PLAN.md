@@ -1,90 +1,149 @@
-# SupportHive — Development Plan
+# LedgerHive — Development Plan
 
-> Status: **scaffold complete, awaiting the app plan.**
+> Status: **foundation deployed; product spec received, planning V1 build.**
 > Owner: Muhammad Waris · Last updated: 2026-09-23
+> Source of truth for product scope: `LedgerHive_App.pdf` V1.0
 
-This is the single source of truth for *what* we are building and *why*. The
-per-task state lives in [TRACKER.md](TRACKER.md); this file holds decisions.
+What we are building and why. Module breakdown lives in
+[MODULES.md](MODULES.md); per-task state in [TRACKER.md](TRACKER.md).
 
 ---
 
 ## 1. Product definition
 
-_Fill this in when the app plan lands._
-
 | Question | Answer |
 |---|---|
-| What problem does SupportHive solve? | _TBD_ |
-| Who are the users? | _TBD (expected: customer, agent, admin)_ |
-| What is the single most important user journey? | _TBD_ |
-| What does success look like in 3 months? | _TBD_ |
-| Explicitly out of scope for v1 | _TBD_ |
+| What is it? | A business finance and expense management platform — not an expense tracker. Expenses, revenue, partner ownership, capital movements, budgets, profitability. |
+| Tagline | Know Where Your Money Goes. |
+| Who uses it? | Admin, Partner, Accountant, Data Entry — inside one company. |
+| Most important journey | Record a day's expenses in seconds, and have the dashboard and P&L stay correct without reconciliation. |
+| Currency | PKR (spec examples). Single currency in V1. |
+| Success in 3 months | Daily entry habit sustained; month-end P&L and partner statements produced from the system rather than a spreadsheet. |
+| Out of scope for V1 | Recurring expenses, approval workflows, forecasting, invoicing, receivables/payables, payroll, tax reporting, inventory, multi-company. |
+
+### Branding (spec §2)
+
+| Token | Value |
+|---|---|
+| Primary | `#0F172A` deep navy |
+| Secondary | `#475569` slate |
+| Accent | `#F59E0B` amber |
+| Success | `#10B981` emerald |
+| Danger | `#EF4444` red |
+| Background | `#F8FAFC` |
+
+The scaffold ships an indigo `brand-*` token set. Module 1 swaps those values in
+`public/assets/css/app.src.css` — components consume tokens, so nothing else
+changes.
 
 ## 2. Roles and permissions
 
-Define this before writing any feature — it determines every authorisation
-check. Table shape: role × resource × action.
+| Role | Access |
+|---|---|
+| Admin | Everything: configuration, users, corrections, reports |
+| Partner | Dashboard, transactions, own partner information |
+| Accountant | Transactions, accounts, budgets, financial reports |
+| Data Entry | Create transactions, view what they are permitted |
 
-| Role | Can read | Can create | Can update | Can delete |
-|---|---|---|---|---|
-| customer | own records | own records | own records (limited) | — |
-| agent | assigned + queue | replies | assigned records | — |
-| admin | everything | everything | everything | with audit trail |
+The spec requires **view / create / edit / approve / export per module**. A role
+column alone cannot express that, so permissions become a `role_permissions`
+table (role × module × ability), checked server-side by middleware. Hiding a
+menu item is not access control.
+
+**Conflict to resolve:** the deployed `users.role` enum is
+`admin / agent / customer` — from the generic scaffold, wrong for this product.
+Module 1 migrates it. No production data exists yet, so this is cheap now and
+expensive later.
 
 ## 3. Data model
 
-Current tables (see `database/migrations`):
+Full rationale in [MODULES.md](MODULES.md). Shape:
 
-- `users` — identity, role, status, login audit fields
-- `auth_tokens` — hashed, single-use password-reset / verification tokens
-- `rate_limits` — throttling counters
-- `audit_log` — append-only trail of security-relevant actions
-- `migrations` — runner bookkeeping
+**Ledger (source of truth)**
+- `transactions` — every money movement, exactly once
 
-Domain tables to be added once the app plan is defined. For every new table,
-decide up front: owner column, soft-delete or hard-delete, indexes for the
-queries we actually run, and retention.
+**Satellites (type-specific detail, FK to ledger, never hold amounts)**
+- `expenses`, `sales`, `partner_contributions`, `partner_withdrawals`,
+  `profit_distributions`
+
+**Master data**
+- `users`, `role_permissions`, `partners`, `partner_shares` (effective-dated),
+  `categories`, `accounts`, `customers`
+
+**Supporting**
+- `budgets`, `attachments`, `audit_log`, `rate_limits`, `migrations`, `settings`
+
+Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
+`audit_log`, `migrations`.
+
+### Rules that must hold
+
+| Rule | Enforcement |
+|---|---|
+| Money is `DECIMAL(15,2)` | Schema. Never float. |
+| Active partner shares total exactly 100% on any date | Service validation + test, blocks activation |
+| Transfers affect no P&L line | Two ledger legs, type excluded from income/expense aggregates |
+| Posted rows are voided, never deleted | `status` enum + mandatory reason + audit row |
+| Every transaction records creator and time | `created_by`, `created_at` NOT NULL |
+| Dashboard reconciles with transactions | Same table, same filters — by construction |
 
 ## 4. Milestones
 
-| # | Milestone | Contents | Exit criteria |
+| # | Milestone | Modules | Exit criteria |
 |---|---|---|---|
-| M0 | **Foundation** ✅ | Repo, structure, core classes, security baseline, CI/CD | `php scripts/preflight.php` green locally; deploy pipeline proven |
-| M1 | **Authentication** | Register, verify email, login, logout, password reset, roles, throttling | A user can complete every auth flow; all flows rate-limited and audited |
-| M2 | **Core domain** | The primary entity + list/detail/create/update, ownership rules | The main user journey works end-to-end on staging |
-| M3 | **Dashboard** | ApexCharts metrics, paginated + filterable tables | Numbers match a hand-written SQL check |
-| M4 | **Admin** | User management, role assignment, audit log viewer | Admin can run the system without touching the database |
-| M5 | **Hardening & launch** | Security review, load sanity check, backups, error monitoring | `docs/SECURITY.md` pre-launch checklist fully ticked |
+| M0 | **Foundation infra** ✅ | scaffold, CI/CD, deploy | Live, verified, green preflight |
+| M1 | **Auth & shell** | Module 1 | Roles migrated, permissions enforced, navigation in LedgerHive branding |
+| M2 | **Master data** | Module 2 | Shares cannot save unless they total 100% |
+| M3 | **Ledger** | Module 3 | Post + void work; 10k rows paginate; voids excluded from totals |
+| M4 | **Daily use** | Modules 4, 5 | Expense entry under 15s; transfers and capital excluded from P&L |
+| M5 | **Controls** | Modules 6, 7 | Budget vs actual matches hand-written SQL; allocations sum exactly to profit |
+| M6 | **Visibility** | Modules 8, 9 | Every KPI reconciles; 12 reports export |
+| M7 | **Documents & audit** | Modules 10, 11 | Receipts access-controlled; every write audited; security checklist ticked |
 
 ## 5. Architecture decisions
 
-Append a row whenever a decision is made that a future reader would otherwise
-have to guess at.
-
-| Date | Decision | Why | Alternatives rejected |
+| Date | Decision | Why | Rejected |
 |---|---|---|---|
-| 2026-09-23 | Core PHP, no framework | Client requirement; full control over the request lifecycle | Laravel (host constraints, learning overhead) |
-| 2026-09-23 | Composer for dev tools only | Fewer moving parts and a smaller supply-chain surface; the app must boot with an empty `vendor/` | Shipping `vendor/`; running `composer install` on the server |
-| 2026-09-23 | Single front controller (`public/index.php`) + explicit route table | Only one web-reachable entry point; no URL-to-file mapping to exploit | One PHP file per page |
-| 2026-09-23 | Application code lives outside the web root on the host | Source, `.env` and logs are unreachable over HTTP even if PHP stops executing | Everything in `public_html` |
-| 2026-09-23 | Vendored front-end libraries, no CDN | Keeps CSP at `'self'`; no third party can change the bytes we ship | CDN links |
-| 2026-09-23 | Server-side pagination instead of DataTables | Avoids jQuery; does not send the whole table to the browser; scales | DataTables |
-| 2026-09-23 | Deploy via GitHub Actions over SSH (rsync) to Hostinger | Hostinger's per-site FTP accounts are chrooted to `public_html` and cannot place code outside the web root; SSH can, and also runs migrations remotely | FTPS (blocked by the chroot); manual FileZilla uploads; Hostinger Git integration (less control over the build) |
+| 2026-09-23 | Core PHP, no framework | Client requirement | Laravel |
+| 2026-09-23 | Composer for dev tools only | Smaller supply-chain surface; app boots with empty `vendor/` | Shipping `vendor/` |
+| 2026-09-23 | Single front controller + explicit routes | One web-reachable entry point | File-per-page |
+| 2026-09-23 | App code outside the web root | Source and `.env` unreachable over HTTP | Everything in `public_html` |
+| 2026-09-23 | Vendored front-end libs, no CDN | CSP stays `'self'` | CDN links |
+| 2026-09-23 | Server-side pagination, no DataTables | Scales; keeps authorisation server-side | DataTables + jQuery |
+| 2026-09-23 | Deploy over SSH (rsync) to Hostinger | Per-site FTP is chrooted to `public_html` | FTPS |
+| 2026-09-23 | CSP set in `.htaccess` as well as PHP | Host overrides PHP's header | PHP only |
+| 2026-09-23 | **One ledger, satellite detail tables** | Makes "dashboard reconciles with ledger" structural rather than a discipline problem | Parallel `sales`/`expenses` tables each holding amounts |
+| 2026-09-23 | **Transfers as two legs** | Balance stays a plain `SUM()`; direction bugs become impossible | Single row with from/to accounts |
+| 2026-09-23 | **Balances derived, not stored** | A stored balance is a second truth that drifts | Running-balance column |
+| 2026-09-23 | **Effective-dated `partner_shares`** | Profit distribution needs the split *as of* a period | Percentage column on `partners` |
+| 2026-09-23 | **Service layer** added to the scaffold | Financial rules (posting, validation, distribution) belong in one testable place | Logic in controllers/models |
 
 ## 6. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Shared host has an older PHP than 8.3 | Code may not run | Resolved 2026-09-23: host runs PHP 8.3.30. `preflight.php` still asserts ≥ 8.2 |
-| Migrations drift between local and prod | Wrong schema in production | Resolved 2026-09-23: host has SSH, so `migrate.php` runs remotely. Kept opt-in via `RUN_MIGRATIONS` so a destructive change is never automatic |
-| Deploy key leaks | Full site compromise | Dedicated ed25519 key in GitHub secrets only; revocable in hPanel independently of the personal key |
-| `.env` uploaded to the web root by mistake | Total credential disclosure | `.gitignore`, deploy exclusions, and a `preflight.php` check |
-| Unbounded uploads fill the disk | Outage | Size limit in config; monitor disk; prune orphans |
+| Ledger shape changes after modules are built | Rewrite every aggregate | M3 is the critical path; settle it before M4+ |
+| Floating-point money | Silent, compounding errors | `DECIMAL(15,2)` in schema, reviewed in every migration |
+| Rounding in profit distribution | Allocations don't sum to profit | Deterministic remainder assignment, unit-tested |
+| Share history mishandled | Wrong partner paid the wrong amount | Effective-dated table + tests for mid-period changes |
+| Receipts readable by URL guess | Financial data disclosure | Serve from `storage/documents` via authenticated controller |
+| Production `DB_PASS` secret not updated after rotation | Live DB unreachable | Open item: update secret, redeploy |
+| Single developer, no review | Defects reach production | CI gates + `main` protection (not yet enabled) |
 
 ## 7. Open questions
 
-- [x] PHP version on the host — 8.3.30, confirmed 2026-09-23
-- [ ] Domain name and whether HTTPS is already provisioned?
-- [ ] Is a staging subdomain available (strongly recommended)?
-- [ ] Transactional email: host SMTP, or a provider?
-- [ ] Data retention / privacy obligations for the records we store?
+Raised 2026-09-23, shaping V1:
+
+- [ ] Product naming vs provisioned infrastructure (repo/DB/domain say SupportHive)
+- [ ] Accounting basis: does *pending* income count toward profit?
+- [ ] Corrections: status-flag void, or posted reversing entry?
+- [ ] Attachment storage location and serving model
+- [ ] Vendors: free text or a managed table?
+- [ ] Export libraries — the only runtime dependencies V1 would take on
+- [ ] Expected transaction volume per month (drives indexing and caching)
+- [ ] Staging site before production deploys?
+
+Answered:
+- [x] PHP version on host — 8.3.30 web, 8.2.30 CLI
+- [x] Domain and HTTPS — provisioned
+- [x] Currency — PKR, single currency in V1
