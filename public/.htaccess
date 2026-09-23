@@ -43,6 +43,23 @@ DirectoryIndex index.php
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
     Header always unset X-Powered-By
     Header always unset Server
+
+    # Content-Security-Policy is set HERE, not only in PHP.
+    #
+    # Hostinger's server configuration sets its own CSP
+    # ("upgrade-insecure-requests") and it overrides the one PHP sends with
+    # header(), so on that host the application's policy never reached the
+    # browser at all - verified against the origin, so it is the server and
+    # not the CDN. mod_headers runs after PHP, so unsetting and re-setting
+    # here wins.
+    #
+    # Keep this string in sync with Http::sendSecurityHeaders(). The PHP copy
+    # still matters: it covers the built-in dev server and any host where
+    # .htaccess is ignored. See docs/SECURITY.md section 3 for why
+    # 'unsafe-eval' (Alpine) and 'unsafe-inline' for styles (ApexCharts) are
+    # present, and never add 'unsafe-inline' to script-src.
+    Header always unset Content-Security-Policy
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
 </IfModule>
 
 <IfModule mod_php.c>

@@ -50,6 +50,20 @@ Both are in the CSP and are deliberate:
 `script-src 'unsafe-inline'` is never acceptable — it converts any stored-XSS
 bug into full account takeover.
 
+### The host can silently override the CSP
+
+Hostinger sets its own `Content-Security-Policy: upgrade-insecure-requests` in
+the server configuration, and it **replaces** the header PHP sends with
+`header()`. The first production deploy shipped with no effective CSP at all
+because of this, and it was invisible from the application side — confirmed by
+querying the origin directly, so it is the server and not the CDN.
+
+The policy is therefore set in `public/.htaccess` as well, via
+`Header always unset` + `Header always set`, because mod_headers runs after
+PHP. Both copies must be kept in sync. The deploy smoke test now asserts the
+live policy actually contains `default-src 'self'`, so a stripped CSP fails the
+deployment instead of passing quietly.
+
 ## 4. Secrets
 
 - Live only in `.env` (git-ignored) and GitHub Actions secrets.

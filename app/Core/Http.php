@@ -24,6 +24,12 @@ final class Http
      *
      * Never add 'unsafe-inline' to script-src. That is the one that turns a
      * stored-XSS bug into full account takeover.
+     *
+     * NOTE: some hosts (Hostinger among them) set their own CSP in the server
+     * configuration, which overrides anything sent from here. public/.htaccess
+     * therefore unsets and re-sets the same policy through mod_headers, which
+     * runs after PHP. Change both, or the production policy silently will not
+     * match this one.
      */
     public static function sendSecurityHeaders(): void
     {

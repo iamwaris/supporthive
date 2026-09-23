@@ -323,9 +323,26 @@ jobs:
 
           echo "Checking security headers..."
           headers=$(curl -sI --max-time 15 "$url/")
-          echo "$headers" | grep -qi 'content-security-policy'   || echo "::warning::CSP header missing"
+
+          # Presence is not enough. Hostinger's server config sets its own CSP
+          # ("upgrade-insecure-requests") that overrides the application's, so
+          # a header can be present and still provide no XSS protection.
+          csp=$(echo "$headers" | grep -i '^content-security-policy:' | head -1)
+          echo "  $csp"
+          if ! echo "$csp" | grep -q "default-src 'self'"; then
+            echo "::error::CSP is present but is not the application policy (no default-src 'self')."
+            echo "The host is overriding it. public/.htaccess must unset and re-set it via mod_headers."
+            exit 1
+          fi
+          if echo "$csp" | grep -q "script-src[^;]*'unsafe-inline'"; then
+            echo "::error::CSP allows 'unsafe-inline' in script-src. Refusing to accept this deployment."
+            exit 1
+          fi
+
           echo "$headers" | grep -qi 'x-content-type-options'    || echo "::warning::nosniff header missing"
+          echo "$headers" | grep -qi 'x-frame-options'           || echo "::warning::X-Frame-Options missing"
           echo "$headers" | grep -qi 'strict-transport-security' || echo "::warning::HSTS header missing"
+          echo "$headers" | grep -qi 'set-cookie:.*Secure'       || echo "::warning::session cookie is not marked Secure"
 
       - name: Deployment summary
         if: always()
