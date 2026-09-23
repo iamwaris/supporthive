@@ -17,6 +17,7 @@ if (PHP_SAPI !== 'cli') {
 require dirname(__DIR__) . '/app/bootstrap.php';
 
 use App\Core\Config;
+use App\Controllers\DevAuthController;
 use App\Core\Database;
 
 $pass = 0;
@@ -79,6 +80,13 @@ check('session lifetime is bounded', (int) Config::get('session.lifetime', 0) > 
 if ($isProduction) {
     check('APP_DEBUG is false in production', Config::get('app.debug') === false, 'set APP_DEBUG=false');
     check('SESSION_SECURE is true in production', Config::get('session.secure') === true, 'set SESSION_SECURE=true');
+    // The development quick-login is a deliberate authentication bypass. If it
+    // is ever live, anyone can sign in as an administrator without a password.
+    warn(
+        'dev quick-login is disabled',
+        !DevAuthController::isEnabled(),
+        'DEV_QUICK_LOGIN is ON - anyone reaching /login can sign in as any user. Turn it off before others get access'
+    );
 }
 
 echo "\nFilesystem\n";

@@ -29,23 +29,25 @@ $groups = [
         ['key' => 'dashboard', 'label' => 'Dashboard', 'href' => '/dashboard', 'icon' => 'grid', 'show' => true, 'ready' => true],
     ],
     'Transactions' => [
-        ['key' => 'expenses', 'label' => 'Expenses', 'href' => '/expenses', 'icon' => 'receipt', 'show' => true, 'ready' => false],
-        ['key' => 'income', 'label' => 'Income', 'href' => '/income', 'icon' => 'trend', 'show' => true, 'ready' => false],
-        ['key' => 'transfers', 'label' => 'Transfers', 'href' => '/transfers', 'icon' => 'swap', 'show' => true, 'ready' => false],
-        ['key' => 'ledger', 'label' => 'All Transactions', 'href' => '/transactions', 'icon' => 'list', 'show' => true, 'ready' => false],
+        ['key' => 'expenses', 'label' => 'Expenses', 'href' => '/expenses', 'icon' => 'receipt', 'show' => true, 'ready' => true],
+        ['key' => 'income', 'label' => 'Income', 'href' => '/income', 'icon' => 'trend', 'show' => true, 'ready' => true],
+        ['key' => 'transfers', 'label' => 'Transfers', 'href' => '/transfers', 'icon' => 'swap', 'show' => true, 'ready' => true],
+        ['key' => 'ledger', 'label' => 'All Transactions', 'href' => '/transactions', 'icon' => 'list', 'show' => true, 'ready' => true],
     ],
     'Finance' => [
-        ['key' => 'accounts', 'label' => 'Accounts', 'href' => '/accounts', 'icon' => 'card', 'show' => true, 'ready' => false],
+        ['key' => 'accounts', 'label' => 'Accounts', 'href' => '/accounts', 'icon' => 'card', 'show' => true, 'ready' => true],
+        ['key' => 'customers', 'label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'show' => true, 'ready' => true],
         ['key' => 'budgets', 'label' => 'Budgets', 'href' => '/budgets', 'icon' => 'bars', 'show' => true, 'ready' => false],
     ],
     'Partners' => [
-        ['key' => 'partners', 'label' => 'Partners & Profit', 'href' => '/partners', 'icon' => 'users', 'show' => true, 'ready' => false],
-        ['key' => 'capital', 'label' => 'Capital Movements', 'href' => '/capital', 'icon' => 'coins', 'show' => true, 'ready' => false],
+        ['key' => 'partners', 'label' => 'Partners & Profit', 'href' => '/partners', 'icon' => 'users', 'show' => true, 'ready' => true],
+        ['key' => 'capital', 'label' => 'Capital Movements', 'href' => '/capital', 'icon' => 'coins', 'show' => true, 'ready' => true],
     ],
     'Reports' => [
         ['key' => 'reports', 'label' => 'Profit & Loss', 'href' => '/reports', 'icon' => 'doc', 'show' => true, 'ready' => false],
     ],
     'System' => [
+        ['key' => 'categories', 'label' => 'Categories', 'href' => '/categories', 'icon' => 'list', 'show' => true, 'ready' => true],
         ['key' => 'users', 'label' => 'Users', 'href' => '/users', 'icon' => 'users', 'show' => $admin, 'ready' => false],
         ['key' => 'settings', 'label' => 'Settings', 'href' => '/settings', 'icon' => 'sliders', 'show' => $admin, 'ready' => true],
     ],

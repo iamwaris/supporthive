@@ -44,29 +44,33 @@ The ledger contract is settled, so **M3 is unblocked**.
 | M1-10 | Self-hosted fonts | S | done | Google Fonts is blocked by our own `font-src 'self'` |
 | M1-11 | `scripts/create-user.php` | S | done | CLI only; password from stdin, not argv |
 
-## M2 — Master data
+## M2 — Master data ✅ *(branch `feat/m2-master-data`)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M2-1 | `partners` CRUD | M | todo | |
-| M2-2 | `partner_shares` effective-dated + 100% validation | L | todo | **Acceptance criterion.** Service + tests |
-| M2-3 | `categories` tree, typed expense/income | M | todo | Seed spec's 12 starter categories |
-| M2-4 | `accounts` CRUD with opening balance | M | todo | |
-| M2-5 | `customers` CRUD | S | todo | |
-| M2-7 | Vendor type-ahead endpoint | S | todo | D-5. `SELECT DISTINCT vendor` scoped + limited; keeps free-text spellings converging |
-| M2-6 | Share-validation unit tests | M | todo | Mid-period change, deactivation, 99.99% rejection |
+| M2-1 | `partners` CRUD | M | done | Inline edit; deactivation blocked while holding a share |
+| M2-2 | `partner_shares` effective-dated + 100% validation | L | done | **Acceptance criterion met.** Integer basis points; 105% refused with "5% over", zero rows written |
+| M2-3 | `categories` tree, typed expense/income | M | done | 15 seeded; hidden not deleted; children follow the parent |
+| M2-4 | `accounts` CRUD with opening balance | M | done | `DECIMAL(15,2)`, kept as a string end to end |
+| M2-5 | `customers` CRUD | S | done | |
+| M2-6 | Share-validation tests | M | done | 17 cases incl. a verified float-failure split |
+| M2-7 | Vendor type-ahead endpoint | S | blocked | D-5. Needs the `expenses` table — moves to M4 |
+| M2-8 | Quick-login buttons for testing | S | done | Behind `DEV_QUICK_LOGIN`, off by default; every use logged |
 
-## M3 — Ledger (critical path)
+## M3 — Ledger ✅ *(branch `feat/m3-ledger`)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M3-1 | `transactions` schema + indexes | M | todo | `DECIMAL(15,2)`, `status` enum. Unblocked |
-| M3-2 | `TransactionService::post()` | L | todo | Ledger + satellite + audit in one DB transaction |
-| M3-3 | `TransactionService::void()` | M | todo | Mandatory reason, audit |
-| M3-4 | Transfers as two linked legs | M | todo | Excluded from P&L |
-| M3-5 | All Transactions screen + full filter set | L | todo | Spec §17, server-side pagination |
-| M3-6 | Ledger integrity tests | L | todo | Voids excluded; transfers net zero; 10k-row pagination |
-| M3-7 | Query builder that always applies `status='posted'` | M | todo | D-3 mitigation - stops a hand-written `SUM()` counting voids |
+| M3-1 | `transactions` schema + indexes | M | done | `DECIMAL(15,2)`, 8 indexes, 3 CHECK constraints |
+| M3-2 | `TransactionService::post()` | L | done | Ledger + optional satellite + audit in one DB transaction |
+| M3-3 | `TransactionService::void()` | M | done | Mandatory reason; voids both legs of a transfer |
+| M3-4 | Transfers as two linked legs | M | done | Verified: net zero, P&L untouched, balances exact |
+| M3-5 | All Transactions screen + full filter set | L | done | Spec §17; server-side paging capped at 200 |
+| M3-6 | Ledger integrity tests | L | done | 26 cases: voids, transfers, capital, atomicity, paging |
+| M3-7 | Query builder applying `status='posted'` | M | done | `LedgerQuery`; filter set in the constructor |
+| M3-8 | `TransactionType` as the single source of truth | M | done | direction and P&L membership live in one enum |
+| M3-9 | Nested transaction support | S | done | `postTransfer` posts two rows through `post()` |
+| M3-10 | Derived account balances | S | done | Opening + posted movements; never stored |
 
 ## M4 — Daily use
 
