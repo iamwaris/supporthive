@@ -67,14 +67,15 @@ and deploy pipeline already exist from the scaffold.
 
 | Task | Notes |
 |---|---|
-| Replace `users.role` enum | Currently `admin/agent/customer` — wrong product. Needs `admin/partner/accountant/data_entry`. |
-| Permission layer | Spec wants view/create/edit/approve/export **per module**. A four-value role enum cannot express that. Add `role_permissions` (role × module × ability). |
+| Replace `users.role` enum | Currently `admin/agent/customer` — wrong product. Becomes `admin/partner/accountant/data_entry`; only the first two are assignable in V1. Carrying all four costs nothing and avoids an `ALTER` when the third role appears. |
+| Role middleware | Two roles only in V1, so the existing `role:` middleware is sufficient. **No `role_permissions` table yet** — a permission matrix with two roles, one of which can do everything, encodes nothing. It lands with the third role. |
 | Login / logout screens | `AuthController`, rate-limited, audited. |
 | Base layout | Sidebar navigation per spec §20.1, LedgerHive palette, Lucide icons. |
 | Settings scaffold | Company name, currency, fiscal year start, approval threshold. |
 
-**Done when:** an admin can log in, a data-entry user cannot reach `/users`, and
-every login attempt appears in the audit log.
+**Done when:** an admin can log in, a **partner cannot reach any write route or
+`/users`** (verified by test, not by inspection), and every login attempt
+appears in the audit log.
 
 ---
 

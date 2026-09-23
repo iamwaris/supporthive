@@ -16,6 +16,7 @@ Module definitions: [MODULES.md](MODULES.md) · Decisions: [PLAN.md](PLAN.md)
 | D-3 | Void by status flag | Every aggregate filters `status='posted'` - enforced in one query builder, not by memory. |
 | D-4 | Attachments in `storage/documents`, authenticated controller | `Upload` needs a non-public variant; `DocumentController@show` resolves by id. |
 | D-5 | Vendor/payee is free text, no table | Plain column on `expenses`, trimmed on save, with a type-ahead endpoint over prior values. |
+| D-6 | V1 ships **admin + partner only** | Enum keeps all four values; `role_permissions` deferred until a third role exists. Partner is read-only. |
 
 The ledger contract is settled, so **M3 is unblocked**.
 
@@ -30,15 +31,15 @@ The ledger contract is settled, so **M3 is unblocked**.
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M1-1 | Migrate `users.role` → `admin/partner/accountant/data_entry` | S | todo | Scaffold enum is wrong product |
-| M1-2 | `role_permissions` table + seed | M | todo | module × ability, per spec §5 |
-| M1-3 | `permission:` middleware | M | todo | Extends existing `role:` middleware |
+| M1-1 | Migrate `users.role` → `admin/partner/accountant/data_entry` | S | todo | D-6. Only admin+partner assignable in V1 |
+| M1-2 | ~~`role_permissions` table~~ | — | deferred | D-6. Nothing to express with two roles; revisit at role #3 |
+| M1-3 | Partner read-only enforcement | S | todo | Existing `role:` middleware on every write route |
 | M1-4 | Login / logout screens | M | todo | Rate-limited, audited — primitives exist |
 | M1-5 | LedgerHive palette in `app.src.css` | S | todo | Navy/slate/amber per spec §2 |
 | M1-9 | Rebrand: `APP_NAME`, README, views, favicon | S | todo | D-1. Infra names unchanged |
 | M1-6 | App shell: sidebar nav, spec §20.1 | M | todo | Lucide icons, mobile responsive |
 | M1-7 | `settings` table + Settings screen | M | todo | Company, currency, fiscal start, approval threshold |
-| M1-8 | Permission enforcement tests | S | todo | Data Entry must not reach `/users` |
+| M1-8 | Role enforcement tests | M | todo | Partner blocked from every POST/PUT/DELETE route and `/users` |
 
 ## M2 — Master data
 

@@ -38,17 +38,27 @@ changes.
 
 ## 2. Roles and permissions
 
-| Role | Access |
-|---|---|
-| Admin | Everything: configuration, users, corrections, reports |
-| Partner | Dashboard, transactions, own partner information |
-| Accountant | Transactions, accounts, budgets, financial reports |
-| Data Entry | Create transactions, view what they are permitted |
+**V1 ships two roles** (decided 2026-09-23). The spec's four are kept in the
+enum so adding one later is data, not a schema migration.
 
-The spec requires **view / create / edit / approve / export per module**. A role
-column alone cannot express that, so permissions become a `role_permissions`
-table (role × module × ability), checked server-side by middleware. Hiding a
-menu item is not access control.
+| Role | V1 access | Status |
+|---|---|---|
+| Admin | Everything: configuration, users, all data entry, corrections, reports | **active** |
+| Partner | Read financial data and own partner statement; no data entry, no configuration | **active** |
+| Accountant | Transactions, accounts, budgets, financial reports | enum only, not assignable |
+| Data Entry | Create transactions, view what they are permitted | enum only, not assignable |
+
+**No `role_permissions` table in V1.** The spec asks for view/create/edit/
+approve/export per module, which a role column cannot express - but with two
+roles, where one can do everything and the other can only read, a permission
+matrix is machinery with nothing to express yet. Simple role middleware covers
+it. The table arrives with the third role, which is when it starts earning its
+keep.
+
+Assumption worth correcting if wrong: with no Data Entry role, **the admin
+does the daily expense entry**, and partners only look. If partners should be
+able to record expenses too, say so - it is a one-line middleware change now
+and a data migration later.
 
 **Conflict to resolve:** the deployed `users.role` enum is
 `admin / agent / customer` — from the generic scaffold, wrong for this product.
