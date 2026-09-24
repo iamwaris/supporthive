@@ -35,7 +35,7 @@ final class LedgerQuery
 
     private int $placeholderCount = 0;
 
-    private string $orderBy = 't.transaction_date DESC, t.id DESC';
+    private string $orderBy = 'COALESCE(t.received_at, t.transaction_date) DESC, t.id DESC';
 
     private function __construct(bool $postedOnly)
     {
@@ -80,13 +80,23 @@ final class LedgerQuery
         return $this;
     }
 
+    /**
+     * Date-filters on the effective date: `received_at` when set, else
+     * `transaction_date`. Cash basis means the date money arrived is the one
+     * every report and balance filters on (TransactionService::post() sets
+     * `received_at` for anything posted immediately; markReceived() sets it
+     * the day a pending invoice is confirmed) — a row's original invoice date
+     * must never keep it stuck in a month it did not actually land in.
+     * `received_at` is null for every non-income type, so this is a no-op for
+     * them: they always fall back to `transaction_date`.
+     */
     public function between(?string $from, ?string $to): self
     {
         if ($from !== null && $from !== '') {
-            $this->conditions[] = 't.transaction_date >= ' . $this->bind($this->date($from));
+            $this->conditions[] = 'COALESCE(t.received_at, t.transaction_date) >= ' . $this->bind($this->date($from));
         }
         if ($to !== null && $to !== '') {
-            $this->conditions[] = 't.transaction_date <= ' . $this->bind($this->date($to));
+            $this->conditions[] = 'COALESCE(t.received_at, t.transaction_date) <= ' . $this->bind($this->date($to));
         }
         return $this;
     }
@@ -199,7 +209,7 @@ final class LedgerQuery
     public function orderBy(string $column, string $direction = 'DESC'): self
     {
         $allowed = [
-            'date' => 't.transaction_date',
+            'date' => 'COALESCE(t.received_at, t.transaction_date)',
             'amount' => 't.amount',
             'created' => 't.created_at',
             'type' => 't.type',

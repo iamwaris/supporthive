@@ -528,4 +528,47 @@ final class LedgerTest extends TestCase
 
         self::assertContains("t.status = 'posted'", $conditions);
     }
+
+    /**
+     * Regression: markReceived() sets `received_at` to today but left
+     * `transaction_date` at the original invoice date, and every date filter
+     * in LedgerQuery filtered on `transaction_date` alone. A pending invoice
+     * from a prior period that got marked received today therefore never
+     * appeared in today's period — silently stuck under its invoice month
+     * instead of the month the money actually arrived, contradicting the
+     * cash-basis rule this app is built around (D-2).
+     */
+    public function testMarkingAPendingInvoiceReceivedCountsItInThePeriodItWasReceivedIn(): void
+    {
+        $invoiceDate = date('Y-m-d', strtotime('-2 months'));
+        $id = TransactionService::post([
+            'type' => TransactionType::Income,
+            'amount' => '999.00',
+            'account_id' => $this->bankId,
+            'category_id' => $this->incomeCategoryId,
+            'transaction_date' => $invoiceDate,
+            'description' => 'LT pending invoice',
+            'status' => 'pending',
+        ]);
+
+        $receivedToday = date('Y-m-d');
+        TransactionService::markReceived($id, $receivedToday);
+
+        $thisMonthFrom = date('Y-m-01');
+        $thisMonthTo = date('Y-m-t');
+
+        $rows = LedgerQuery::posted()->revenueOnly()->between($thisMonthFrom, $thisMonthTo)->page(1, 200);
+        $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
+
+        self::assertContains($id, $ids, 'a just-received invoice must count in the period it was received in');
+
+        // And it must NOT still be counted under its original invoice month,
+        // which is what the pre-fix behaviour did.
+        $invoiceMonthFrom = date('Y-m-01', strtotime($invoiceDate));
+        $invoiceMonthTo = date('Y-m-t', strtotime($invoiceDate));
+        $staleRows = LedgerQuery::posted()->revenueOnly()->between($invoiceMonthFrom, $invoiceMonthTo)->page(1, 200);
+        $staleIds = array_map(static fn (array $row): int => (int) $row['id'], $staleRows);
+
+        self::assertNotContains($id, $staleIds, 'a received invoice must not double-count under its invoice month');
+    }
 }
