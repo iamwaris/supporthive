@@ -80,6 +80,10 @@ final class BudgetTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'BG %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'BG %']);
         $db->delete('users', 'email = :e', ['e' => 'budget-tester@test.local']);
+        $db->run(
+            'DELETE a FROM audit_log a JOIN branches b ON b.id = a.branch_id WHERE b.name LIKE :n',
+            ['n' => 'BG %']
+        );
         $db->delete('branches', 'name LIKE :n', ['n' => 'BG %']);
     }
 

@@ -94,6 +94,10 @@ final class ReportServiceTest extends TestCase
         $db->delete('partners', 'name LIKE :n', ['n' => 'RS %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'RS %']);
         $db->delete('users', 'email = :e', ['e' => 'report-tester@test.local']);
+        $db->run(
+            'DELETE a FROM audit_log a JOIN branches b ON b.id = a.branch_id WHERE b.name LIKE :n',
+            ['n' => 'RS %']
+        );
         $db->delete('branches', 'name LIKE :n', ['n' => 'RS %']);
     }
 

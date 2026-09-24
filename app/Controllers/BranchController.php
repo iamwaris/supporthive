@@ -10,6 +10,7 @@ use App\Core\Database;
 use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
+use App\Services\Audit;
 
 /**
  * Branch administration — super admin only (multi-branch retrofit, decision
@@ -175,6 +176,7 @@ final class BranchController extends Controller
         Logger::security('Branch created', [
             'branch_id' => $branchId, 'name' => $name, 'admin_user_id' => $adminId, 'by' => $createdBy,
         ]);
+        Audit::record('branch.created', 'branches', $branchId, null, ['name' => $name, 'admin_user_id' => $adminId]);
 
         Session::flash(
             'success',
@@ -211,6 +213,13 @@ final class BranchController extends Controller
         Logger::security($wasActive ? 'Branch locked' : 'Branch unlocked', [
             'branch_id' => $branchId, 'name' => $branch['name'], 'by' => Auth::id(),
         ]);
+        Audit::record(
+            $wasActive ? 'branch.locked' : 'branch.unlocked',
+            'branches',
+            $branchId,
+            ['is_active' => $branch['is_active']],
+            ['is_active' => $wasActive ? 0 : 1]
+        );
         Session::flash(
             'success',
             (string) $branch['name'] . ($wasActive ? ' locked. Its users can no longer sign in.' : ' unlocked.')
@@ -277,6 +286,7 @@ final class BranchController extends Controller
         });
 
         Logger::security('Branch deleted', ['branch_id' => $branchId, 'name' => $name, 'by' => $deletedBy]);
+        Audit::record('branch.deleted', 'branches', $branchId, ['name' => $name], null);
         Session::flash('success', $name . ' and everything in it has been permanently deleted.');
         Http::redirect('/admin/branches');
     }

@@ -8,6 +8,7 @@ use App\Core\Controller;
 use App\Core\Http;
 use App\Core\Session;
 use App\Models\Category;
+use App\Services\Audit;
 
 final class CategoryController extends Controller
 {
@@ -69,13 +70,15 @@ final class CategoryController extends Controller
             Http::redirect('/categories');
         }
 
-        $categories->create([
+        $categoryData = [
             'name' => $clean['name'],
             'type' => $clean['type'],
             'parent_id' => $parentId,
             'is_active' => 1,
             'sort_order' => (int) ($clean['sort_order'] ?? 500),
-        ]);
+        ];
+        $id = $categories->create($categoryData);
+        Audit::record('category.created', 'categories', $id, null, $categoryData);
 
         Session::flash('success', $clean['name'] . ' added.');
         Http::redirect('/categories');
@@ -100,6 +103,13 @@ final class CategoryController extends Controller
 
         $nowActive = (int) $category['is_active'] === 1 ? 0 : 1;
         $categories->updateById($id, ['is_active' => $nowActive]);
+        Audit::record(
+            'category.toggled',
+            'categories',
+            $id,
+            ['is_active' => $category['is_active']],
+            ['is_active' => $nowActive]
+        );
 
         // Deactivating a parent hides its children from selection too, so they
         // follow it rather than being left orphaned but selectable.

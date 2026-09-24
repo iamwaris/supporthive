@@ -143,6 +143,13 @@ final class BranchIsolationTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'BI %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'BI %']);
         $db->delete('users', 'email LIKE :e', ['e' => 'bi-tester-%@test.local']);
+        // Audit::record() now stamps branch_id (fixed alongside M7-3's audit
+        // wiring), so any audited action in this test left a row FK-tied to
+        // the fixture branch — it must go before the branch does.
+        $db->run(
+            'DELETE a FROM audit_log a JOIN branches b ON b.id = a.branch_id WHERE b.name LIKE :n',
+            ['n' => 'BI-%']
+        );
         $db->delete('branches', 'name LIKE :n', ['n' => 'BI-%']);
     }
 

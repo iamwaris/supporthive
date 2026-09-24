@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Core\Auth;
 use App\Core\Model;
 use App\Core\Upload;
+use App\Services\Audit;
 
 /**
  * A receipt, invoice or payment proof linked to a transaction (Module 10).
@@ -37,13 +38,21 @@ final class Attachment extends Model
         $stored = Upload::storePrivate($file, 'attachments');
         $originalName = trim((string) ($file['name'] ?? ''));
 
-        $this->create([
+        $name = $originalName === '' ? $stored['filename'] : mb_substr($originalName, 0, 255);
+        $id = $this->create([
             'transaction_id' => $transactionId,
-            'original_filename' => $originalName === '' ? $stored['filename'] : mb_substr($originalName, 0, 255),
+            'original_filename' => $name,
             'stored_filename' => $stored['filename'],
             'mime' => $stored['mime'],
             'size' => $stored['size'],
             'uploaded_by' => Auth::id(),
+        ]);
+
+        Audit::record('attachment.created', 'attachments', $id, null, [
+            'transaction_id' => $transactionId,
+            'original_filename' => $name,
+            'mime' => $stored['mime'],
+            'size' => $stored['size'],
         ]);
     }
 

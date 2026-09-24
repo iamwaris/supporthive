@@ -10,6 +10,7 @@ use App\Core\Logger;
 use App\Core\Session;
 use App\Models\Budget;
 use App\Models\Category;
+use App\Services\Audit;
 use App\Services\BudgetService;
 
 /**
@@ -85,15 +86,17 @@ final class BudgetController extends Controller
             Http::redirect($back);
         }
 
-        $budgets->createFor([
+        $budgetData = [
             'year' => $budgetYear,
             'month' => $budgetMonth,
             'category_id' => $categoryId,
             'amount' => (string) $clean['amount'],
             'alert_threshold_pct' => (int) ($clean['alert_threshold_pct'] ?? 80),
-        ]);
+        ];
+        $id = $budgets->createFor($budgetData);
 
         Logger::info('Budget created', ['year' => $budgetYear, 'month' => $budgetMonth, 'category_id' => $categoryId]);
+        Audit::record('budget.created', 'budgets', $id, null, $budgetData);
         Session::flash('success', (string) $category['name'] . ' budget set.');
         Http::redirect($back);
     }
@@ -116,12 +119,15 @@ final class BudgetController extends Controller
             'alert_threshold_pct' => 'nullable|int|between:1,100',
         ], $back);
 
-        $budgets->updateById($id, [
+        $after = [
             'amount' => (string) $clean['amount'],
             'alert_threshold_pct' => (int) ($clean['alert_threshold_pct'] ?? 80),
-        ]);
+        ];
+        $budgets->updateById($id, $after);
 
         Logger::info('Budget updated', ['budget_id' => $id]);
+        $diff = Audit::diff($existing, $after);
+        Audit::record('budget.updated', 'budgets', $id, $diff['before'], $diff['after']);
         Session::flash('success', 'Budget updated.');
         Http::redirect($back);
     }

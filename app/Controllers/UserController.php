@@ -11,6 +11,7 @@ use App\Core\Logger;
 use App\Core\Session;
 use App\Models\User;
 use App\Services\Access;
+use App\Services\Audit;
 
 /**
  * In-app user management, admin only (`can:administer`), scoped to the
@@ -73,6 +74,13 @@ final class UserController extends Controller
         ]);
 
         Logger::security('User created', ['user_id' => $id, 'role' => $clean['role'], 'by' => Auth::id()]);
+        Audit::record(
+            'user.created',
+            'users',
+            $id,
+            null,
+            ['name' => $name, 'email' => $email, 'role' => $clean['role']]
+        );
         Session::flash(
             'success',
             $name . ' created. Login: ' . $email . ' / temporary password: ' . $tempPassword
@@ -102,9 +110,12 @@ final class UserController extends Controller
             Http::redirect('/users');
         }
 
-        $users->updateById($id, ['name' => trim((string) $clean['name']), 'role' => $clean['role']]);
+        $after = ['name' => trim((string) $clean['name']), 'role' => $clean['role']];
+        $users->updateById($id, $after);
 
         Logger::security('User updated', ['user_id' => $id, 'role' => $clean['role'], 'by' => Auth::id()]);
+        $diff = Audit::diff(['name' => $target['name'], 'role' => $target['role']], $after);
+        Audit::record('user.updated', 'users', $id, $diff['before'], $diff['after']);
         Session::flash('success', 'User updated.');
         Http::redirect('/users');
     }
@@ -136,6 +147,13 @@ final class UserController extends Controller
         $users->updateById($id, ['status' => $wasActive ? 'suspended' : 'active']);
 
         Logger::security($wasActive ? 'User suspended' : 'User reactivated', ['user_id' => $id, 'by' => Auth::id()]);
+        Audit::record(
+            $wasActive ? 'user.suspended' : 'user.reactivated',
+            'users',
+            $id,
+            ['status' => $target['status']],
+            ['status' => $wasActive ? 'suspended' : 'active']
+        );
         Session::flash('success', (string) $target['name'] . ($wasActive ? ' suspended.' : ' reactivated.'));
         Http::redirect('/users');
     }
@@ -167,6 +185,7 @@ final class UserController extends Controller
         $users->updateById($id, ['password_hash' => Auth::hash($tempPassword), 'must_change_password' => 1]);
 
         Logger::security('User password reset', ['user_id' => $id, 'by' => Auth::id()]);
+        Audit::record('user.password_reset', 'users', $id, null, null);
         Session::flash(
             'success',
             'New temporary password for ' . (string) $target['name'] . ': ' . $tempPassword

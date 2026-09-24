@@ -96,6 +96,10 @@ final class AttachmentTest extends TestCase
         $db->delete('categories', 'name = :n', ['n' => 'ATT Expense Cat']);
         $db->delete('accounts', 'name = :n', ['n' => 'ATT Bank']);
         $db->delete('users', 'email LIKE :e', ['e' => 'att-tester-%@test.local']);
+        $db->run(
+            'DELETE a FROM audit_log a JOIN branches b ON b.id = a.branch_id WHERE b.name LIKE :n',
+            ['n' => 'ATT-%']
+        );
         $db->delete('branches', 'name LIKE :n', ['n' => 'ATT-%']);
     }
 

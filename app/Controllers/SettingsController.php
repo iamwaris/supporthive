@@ -8,6 +8,7 @@ use App\Core\Controller;
 use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
+use App\Services\Audit;
 use App\Services\Settings;
 
 final class SettingsController extends Controller
@@ -33,6 +34,8 @@ final class SettingsController extends Controller
             'budget_alert_pct' => 'required|int|between:1,100',
         ], '/settings');
 
+        $before = Settings::all();
+
         foreach ($clean as $key => $value) {
             Settings::set($key, (string) $value);
         }
@@ -40,6 +43,8 @@ final class SettingsController extends Controller
         // Settings change how money is presented and when alerts fire, so the
         // change itself is a security-relevant event.
         Logger::security('Settings updated', ['keys' => array_keys($clean)]);
+        $diff = Audit::diff($before, $clean);
+        Audit::record('settings.updated', 'settings', null, $diff['before'], $diff['after']);
 
         Session::flash('success', 'Settings saved.');
         Http::redirect('/settings');

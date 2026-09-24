@@ -33,6 +33,11 @@ final class Audit
     ): void {
         Database::instance()->insert('audit_log', [
             'user_id' => Auth::id(),
+            // NULL for a super admin action (no active branch) — see the
+            // branches_and_tenant_scope migration's note on this column.
+            // Every branch-scoped action must carry it, or an eventual
+            // per-branch audit viewer has no column to scope its query on.
+            'branch_id' => Auth::branchId(),
             'action' => $action,
             'entity_type' => $entityType,
             'entity_id' => $entityId,

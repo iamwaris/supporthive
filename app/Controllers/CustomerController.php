@@ -8,6 +8,7 @@ use App\Core\Controller;
 use App\Core\Http;
 use App\Core\Session;
 use App\Models\Customer;
+use App\Services\Audit;
 
 final class CustomerController extends Controller
 {
@@ -32,14 +33,16 @@ final class CustomerController extends Controller
             'notes' => 'nullable|max:2000',
         ], '/customers');
 
-        (new Customer())->createFor([
+        $customerData = [
             'name' => $clean['name'],
             'contact_name' => $clean['contact_name'],
             'email' => $clean['email'],
             'phone' => $clean['phone'],
             'is_active' => 1,
             'notes' => $clean['notes'],
-        ]);
+        ];
+        $id = (new Customer())->createFor($customerData);
+        Audit::record('customer.created', 'customers', $id, null, $customerData);
 
         Session::flash('success', $clean['name'] . ' added.');
         Http::redirect('/customers');
@@ -50,8 +53,9 @@ final class CustomerController extends Controller
     {
         $id = (int) ($params['id'] ?? 0);
         $customers = new Customer();
+        $before = $customers->find($id);
 
-        if ($customers->find($id) === null) {
+        if ($before === null) {
             Http::abort(404);
         }
 
@@ -64,14 +68,18 @@ final class CustomerController extends Controller
             'notes' => 'nullable|max:2000',
         ], '/customers');
 
-        $customers->updateById($id, [
+        $after = [
             'name' => $clean['name'],
             'contact_name' => $clean['contact_name'],
             'email' => $clean['email'],
             'phone' => $clean['phone'],
             'is_active' => (int) $clean['is_active'],
             'notes' => $clean['notes'],
-        ]);
+        ];
+        $customers->updateById($id, $after);
+
+        $diff = Audit::diff($before, $after);
+        Audit::record('customer.updated', 'customers', $id, $diff['before'], $diff['after']);
 
         Session::flash('success', 'Customer updated.');
         Http::redirect('/customers');

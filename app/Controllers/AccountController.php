@@ -9,6 +9,7 @@ use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
 use App\Models\Account;
+use App\Services\Audit;
 
 final class AccountController extends Controller
 {
@@ -45,7 +46,7 @@ final class AccountController extends Controller
             Http::redirect('/accounts');
         }
 
-        $id = $accounts->createFor([
+        $accountData = [
             'name' => $clean['name'],
             'type' => $clean['type'],
             // Kept as a string so the exact decimal reaches the DECIMAL column
@@ -56,9 +57,11 @@ final class AccountController extends Controller
             'reference' => $clean['reference'],
             'is_active' => 1,
             'notes' => $clean['notes'],
-        ]);
+        ];
+        $id = $accounts->createFor($accountData);
 
         Logger::info('Account created', ['account_id' => $id]);
+        Audit::record('account.created', 'accounts', $id, null, $accountData);
         Session::flash('success', $clean['name'] . ' added.');
         Http::redirect('/accounts');
     }
@@ -68,8 +71,9 @@ final class AccountController extends Controller
     {
         $id = (int) ($params['id'] ?? 0);
         $accounts = new Account();
+        $before = $accounts->find($id);
 
-        if ($accounts->find($id) === null) {
+        if ($before === null) {
             Http::abort(404);
         }
 
@@ -89,7 +93,7 @@ final class AccountController extends Controller
             Http::redirect('/accounts');
         }
 
-        $accounts->updateById($id, [
+        $after = [
             'name' => $clean['name'],
             'type' => $clean['type'],
             'opening_balance' => (string) $clean['opening_balance'],
@@ -98,9 +102,12 @@ final class AccountController extends Controller
             'reference' => $clean['reference'],
             'is_active' => (int) $clean['is_active'],
             'notes' => $clean['notes'],
-        ]);
+        ];
+        $accounts->updateById($id, $after);
 
         Logger::info('Account updated', ['account_id' => $id]);
+        $diff = Audit::diff($before, $after);
+        Audit::record('account.updated', 'accounts', $id, $diff['before'], $diff['after']);
         Session::flash('success', 'Account updated.');
         Http::redirect('/accounts');
     }

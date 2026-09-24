@@ -9,6 +9,7 @@ use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
 use App\Models\Partner;
+use App\Services\Audit;
 use App\Services\ShareService;
 use InvalidArgumentException;
 use RuntimeException;
@@ -54,16 +55,18 @@ final class PartnerController extends Controller
             Http::redirect('/partners');
         }
 
-        $id = $partners->createFor([
+        $partnerData = [
             'name' => $clean['name'],
             'email' => $clean['email'],
             'phone' => $clean['phone'],
             'join_date' => date('Y-m-d', (int) strtotime((string) $clean['join_date'])),
             'status' => 'active',
             'notes' => $clean['notes'],
-        ]);
+        ];
+        $id = $partners->createFor($partnerData);
 
         Logger::info('Partner created', ['partner_id' => $id]);
+        Audit::record('partner.created', 'partners', $id, null, $partnerData);
         Session::flash('success', $clean['name'] . ' added. Ownership shares are set separately.');
         Http::redirect('/partners');
     }
@@ -73,8 +76,9 @@ final class PartnerController extends Controller
     {
         $id = (int) ($params['id'] ?? 0);
         $partners = new Partner();
+        $before = $partners->find($id);
 
-        if ($partners->find($id) === null) {
+        if ($before === null) {
             Http::abort(404);
         }
 
@@ -103,16 +107,19 @@ final class PartnerController extends Controller
             Http::redirect('/partners');
         }
 
-        $partners->updateById($id, [
+        $after = [
             'name' => $clean['name'],
             'email' => $clean['email'],
             'phone' => $clean['phone'],
             'join_date' => date('Y-m-d', (int) strtotime((string) $clean['join_date'])),
             'status' => $clean['status'],
             'notes' => $clean['notes'],
-        ]);
+        ];
+        $partners->updateById($id, $after);
 
         Logger::info('Partner updated', ['partner_id' => $id]);
+        $diff = Audit::diff($before, $after);
+        Audit::record('partner.updated', 'partners', $id, $diff['before'], $diff['after']);
         Session::flash('success', 'Partner updated.');
         Http::redirect('/partners');
     }
@@ -180,6 +187,11 @@ final class PartnerController extends Controller
             Session::flash('error', 'The split could not be saved. Nothing was changed.');
             Http::redirect('/partners');
         }
+
+        Audit::record('partner_shares.activated', 'partner_shares', null, null, [
+            'effective_from' => $effectiveFrom,
+            'shares' => $shares,
+        ]);
 
         Session::forget('_old');
         $when = date('j M Y', (int) strtotime($effectiveFrom));
