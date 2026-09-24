@@ -108,6 +108,24 @@ $router->post(
     ['can:distribute']
 );
 
+// --- Reports (M6) -----------------------------------------------------------
+// Read-only, spec §16: same visibility as the dashboard, everything through
+// the existing aggregation layer (LedgerQuery / BudgetService /
+// ProfitDistributionService / TransactionService::accountBalance()).
+$router->get('/reports', 'ReportController@index', ['can:view']);
+$router->get('/reports/profit-loss', 'ReportController@profitLoss', ['can:view']);
+$router->get('/reports/income', 'ReportController@income', ['can:view']);
+$router->get('/reports/expenses', 'ReportController@expenses', ['can:view']);
+$router->get('/reports/expense-by-category', 'ReportController@expenseByCategory', ['can:view']);
+$router->get('/reports/budget-vs-actual', 'ReportController@budgetVsActual', ['can:view']);
+$router->get('/reports/cash-flow', 'ReportController@cashFlow', ['can:view']);
+$router->get('/reports/account-balances', 'ReportController@accountBalances', ['can:view']);
+$router->get('/reports/partner-statement', 'ReportController@partnerStatement', ['can:view']);
+$router->get('/reports/partner-contributions', 'ReportController@partnerContributions', ['can:view']);
+$router->get('/reports/partner-withdrawals', 'ReportController@partnerWithdrawals', ['can:view']);
+$router->get('/reports/profit-distribution', 'ReportController@profitDistribution', ['can:view']);
+$router->get('/reports/daily-transactions', 'ReportController@dailyTransactions', ['can:view']);
+
 // Later modules land here as they are built (see docs/MODULES.md). They are
 // deliberately absent rather than stubbed: the sidebar renders an unbuilt item
 // as disabled, so nothing links into a 404.

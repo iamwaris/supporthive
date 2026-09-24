@@ -5,7 +5,8 @@
     "license": "proprietary",
     "require": {
         "php": ">=8.1",
-        "ext-bcmath": "*"
+        "ext-bcmath": "*",
+        "dompdf/dompdf": "^3.1"
     },
     "require-dev": {
         "squizlabs/php_codesniffer": "^3.9",

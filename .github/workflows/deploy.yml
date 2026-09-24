@@ -99,6 +99,20 @@ jobs:
           find app config routes database public scripts -name '*.php' -print0 \
             | xargs -0 -n1 -P4 php -l > /dev/null
 
+      # dompdf (decision 2026-09-24, docs/PLAN.md) is the one runtime Composer
+      # dependency this app takes on, so unlike everything else here, the
+      # built vendor/ has to actually ship to production — --no-dev leaves
+      # phpcs/phpstan/phpunit out of what gets uploaded.
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install production Composer dependencies
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -122,7 +136,11 @@ jobs:
           mkdir -p release/app_private release/public
 
           cp -r app config routes database scripts release/app_private/
-          cp composer.json release/app_private/
+          cp composer.json composer.lock release/app_private/
+          # Production-only vendor/, built by "Install production Composer
+          # dependencies" above (--no-dev: no phpcs/phpstan/phpunit shipped).
+          test -d vendor || { echo "::error::vendor/ was not built. The composer install step must run first."; exit 1; }
+          cp -r vendor release/app_private/
           mkdir -p release/app_private/storage/logs release/app_private/storage/cache
           # Deny-all guard in case the private directory is ever exposed.
           cp .htaccess release/app_private/.htaccess

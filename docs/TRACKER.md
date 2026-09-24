@@ -109,7 +109,7 @@ passing) and awaiting PR review and merge. Next after that: **M6 — visibility.
 | M5-5 | Profit distribution + approval flow | L | done | `calculate → approve → distribute`, each a separate audited action; posts through `TransactionService::post()` |
 | M5-6 | Rounding-remainder tests | M | done | Largest-remainder method in bcmath cents; exact-sum, tie-break-by-id and mid-period-split cases all pass |
 
-## M6 — Visibility *(dashboard done; reports next)*
+## M6 — Visibility *(dashboard + reports + exports done)*
 
 Spec PDF received 2026-09-24 (was missing from the repo — §14/§15/§16 now
 extracted verbatim rather than guessed). §14 lists exactly 12 dashboard
@@ -122,10 +122,10 @@ widgets, §15 lists 8 chart types, §16 lists 12 reports.
 | M6-3 | Chart JSON endpoints | M | done | `/dashboard/charts/{trend,category,budget}`; no inline script data |
 | M6-4 | ApexCharts wiring, spec §15 | M | done | 3 of the 8 §15 chart types live on the dashboard (the ones §14 asks for); the rest (profit trend, revenue trend, partner allocation, account balance trend) belong on report screens, next |
 | M6-8 | KPI reconciliation tests | M | done | `DashboardServiceTest` + `BudgetServiceTest`, each figure checked against an independent LedgerQuery/SQL read |
-| M6-5 | 12 reports with filters | L | todo | Spec §16, verbatim: P&L, monthly income, monthly expenses, expense by category, budget vs actual, cash flow, account balances, partner statement, partner contributions, partner withdrawals, profit distribution, daily transaction report |
-| M6-9 | Expected-income report (pending sales) | S | todo | D-2 - pending stays visible, just not revenue. Not a separate §16 report by name — fold into the relevant income/cash-flow report |
-| M6-6 | CSV export | M | todo | Native PHP, no dependency |
-| M6-7 | PDF export | M | todo | Needs library decision — first real runtime Composer dependency, must be recorded in PLAN.md before adding it |
+| M6-5 | 12 reports with filters | L | done | `ReportController` + `ReportService`, `app/Views/pages/reports/*`; every figure via LedgerQuery/BudgetService/ProfitDistributionService, none hand-rolled |
+| M6-9 | Expected-income report (pending sales) | S | done | Folded into the Monthly Income report (separate "Expected income" section) and the Cash Flow report ("Expected, not counted" line) |
+| M6-6 | CSV export | M | done | `App\Core\Csv::download()`, native `fputcsv`, streamed with UTF-8 BOM; every report has an Export CSV link that preserves its filters |
+| M6-7 | PDF export | M | done | `dompdf/dompdf` (decision 2026-09-24, `docs/PLAN.md`) via `App\Core\Pdf` + `app/Views/pdf/report.php`; deploy pipeline now ships a production `vendor/` (`composer install --no-dev`) since this is the app's first runtime Composer dependency |
 
 ## M7 — Documents & audit
 
@@ -164,3 +164,5 @@ widgets, §15 lists 8 chart types, §16 lists 12 reports.
 | 2026-09-23 | Hostinger overrides PHP's CSP header; policy duplicated in `public/.htaccess`. Keep both in sync. |
 | 2026-09-23 | Scaffold's generic `agent/customer` roles are wrong for this product — migrate in M1 before any data exists. |
 | 2026-09-23 | Spec's suggested structure has `views/` at root and `app/Services` + `app/Repositories`. Keeping views in `app/Views` (scaffold convention, outside web root) and adding `app/Services`. Repositories deferred until a model outgrows `app/Models`. |
+| 2026-09-24 | Partner role widened from read-only to `canWriteTransactions` (record/edit/void transactions) at owner's request. Master data (`canManageMasterData`) and profit distribution (`canDistributeProfit`) stay admin-only. `App\Services\Access::canWriteTransactions()` + `tests/Unit/AccessTest.php` updated; no route changes needed since `['can:write']` already delegates to that method. |
+| 2026-09-24 | **Bug fix:** "Mark received" flipped a pending invoice to `status='posted'` and set `received_at`, but `LedgerQuery::between()` (and `DashboardService::revenueExpenseTrend()`'s raw SQL, and `ReportService::totalsByPartner()`) filtered only on `transaction_date` — so a received invoice stayed parked under its original invoice month instead of counting in the period it was actually received, contradicting cash-basis decision D-2. Fixed at the source: `LedgerQuery::between()`/default order now filter on `COALESCE(t.received_at, t.transaction_date)`, which is a no-op for every non-income type since only income ever sets `received_at`. Regression test: `tests/Feature/LedgerTest.php::testMarkingAPendingInvoiceReceivedCountsItInThePeriodItWasReceivedIn`. |

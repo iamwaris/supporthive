@@ -48,7 +48,7 @@ enum so adding one later is data, not a schema migration.
 | Role | V1 access | Status |
 |---|---|---|
 | Admin | Everything: configuration, users, all data entry, corrections, reports | **active** |
-| Partner | Read financial data and own partner statement; no data entry, no configuration | **active** |
+| Partner | Read financial data and own partner statement; can record/edit/void transactions (widened 2026-09-24); no master-data configuration, no profit distribution | **active** |
 | Accountant | Transactions, accounts, budgets, financial reports | enum only, not assignable |
 | Data Entry | Create transactions, view what they are permitted | enum only, not assignable |
 
@@ -59,14 +59,19 @@ matrix is machinery with nothing to express yet. Simple role middleware covers
 it. The table arrives with the third role, which is when it starts earning its
 keep.
 
-**Confirmed 2026-09-23:** with no Data Entry role, the admin does the daily
-expense entry and partners are read-only. Revisiting this later means a
-migration once transactions carry a `created_by` history, so it is recorded
-rather than left as an assumption.
+**Confirmed 2026-09-23, revised 2026-09-24:** with no Data Entry role, partners
+were initially read-only so only the admin recorded transactions. Widened
+2026-09-24 at the owner's request: partners can now record, edit and void
+transactions like admin/accountant/data-entry — `created_by` on every
+transaction already gives per-user history, so this was a one-line policy
+change rather than a migration.
 
 Where this is enforced: `App\Services\Access::canWriteTransactions()`, which
-returns false for `partner` and is asserted in `tests/Unit/AccessTest.php`.
-Changing the policy means changing that one function and its test.
+returns true for `admin`, `partner`, `accountant` and `data_entry`, and is
+asserted in `tests/Unit/AccessTest.php`. Master data
+(`canManageMasterData()`) and profit distribution (`canDistributeProfit()`)
+remain admin-only. Changing the policy further means changing the relevant
+function and its test.
 
 **Conflict to resolve:** the deployed `users.role` enum is
 `admin / agent / customer` — from the generic scaffold, wrong for this product.
@@ -140,6 +145,8 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | 2026-09-23 | **Attachments in `storage/documents`**, streamed by an authenticated controller | Financial documents must not be readable by anyone holding a URL | `public/uploads` with random filenames |
 | 2026-09-23 | **Vendor/payee as free text**, not a managed table | Keeps expense entry fast, which is the spec's stated priority (§20.3). Accepted cost: vendor-level reporting is only as good as the typing, so the field type-aheads from previously used values to keep spellings converging | A `vendors` table with CRUD |
 | 2026-09-23 | **Rebrand app to LedgerHive; infrastructure names unchanged** | Zero risk, no downtime. Repo `supporthive`, DB `u400948127_supporthive`, site `myinvoicestudio.com` keep their names | Renaming repo/DB/domain |
+| 2026-09-24 | **Partner role can write transactions** (record/edit/void), widened from read-only, at owner's request | Owner wants partners entering their own day-to-day transactions, not only admin | Keeping partners read-only |
+| 2026-09-24 | **dompdf for PDF export (M6-7)** — the first and only runtime Composer dependency V1 takes on | Pure-PHP (no native extensions to keep working on the host), renders the same HTML/CSS the report views already use rather than a second hand-built layout per report, MIT-licensed, widely deployed | mPDF (similar weight, no reuse advantage for this app's Latin-only reports); TCPDF (lower-level cell/text API — report layouts would have to be hand-built, not reused from the views) |
 
 ## 6. Risks
 
@@ -157,7 +164,6 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 
 Raised 2026-09-23, shaping V1:
 
-- [ ] Export libraries — the only runtime dependencies V1 would take on
 - [ ] Expected transaction volume per month (drives indexing and caching)
 - [ ] Staging site before production deploys?
 
@@ -170,3 +176,4 @@ Answered:
 - [x] PHP version on host — 8.3.30 web, 8.2.30 CLI
 - [x] Domain and HTTPS — provisioned
 - [x] Currency — PKR, single currency in V1
+- [x] Export libraries — **dompdf** for PDF (native `fputcsv` covers CSV, no dependency)
