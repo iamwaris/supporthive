@@ -103,17 +103,34 @@ server, and a much smaller supply-chain surface.
 
 ## Workflow
 
-1. Branch from `main`: `feat/…`, `fix/…`, `chore/…`. Never commit to `main`.
-2. Update `docs/TRACKER.md` when a task starts and when it lands.
-3. Before pushing: `composer check` and `npm run build`.
-4. Open a PR — the template's security checklist is mandatory.
-5. CI must be green; `main` deploys to production automatically.
+Decision 2026-09-24: commit directly to `main`, no feature branches or PR
+review gate. The solo-owner/no-review reality made the PR step pure
+overhead; the security and quality checklists it used to carry now live in
+Definition of Done below and still apply to every change, just self-checked
+before pushing rather than posted for review.
+
+1. Update `docs/TRACKER.md` when a task starts and when it lands.
+2. Before pushing: `composer check` and `npm run build`; walk the security
+   and quality items in Definition of Done.
+3. Push to `main`. CI runs automatically as a safety net (lint, static
+   analysis, tests, secret scan) — it does not gate the deploy, so treat a
+   red CI run on `main` as urgent, not informational.
+4. `main` deploys to production automatically on every push.
 
 ## Definition of done
 
 - [ ] Works on localhost against a fresh migration run
 - [ ] `composer check` clean; `php scripts/preflight.php` has no new failures
-- [ ] Inputs validated, output escaped, CSRF on writes, authorisation verified
+- [ ] All SQL uses bound parameters — no interpolation anywhere
+- [ ] All output escaped with `e()`; any exception is commented and justified
+- [ ] State changes are POST and CSRF-protected
+- [ ] Inputs validated via `Validator`; only `validated()` reaches persistence
+- [ ] Authorisation checked server-side **and record ownership verified**
+- [ ] New anonymous endpoints are rate-limited
+- [ ] No secrets in code, comments, logs or fixtures
 - [ ] Responsive at 375 px, 768 px, 1280 px; keyboard navigable
+- [ ] Empty, loading and error states handled
+- [ ] Migration added for any schema change, safely re-runnable
 - [ ] Errors handled and logged; no debug output left behind
+- [ ] Tests added or updated for anything with branching logic; a bug fix gets a regression test
 - [ ] `docs/TRACKER.md` updated

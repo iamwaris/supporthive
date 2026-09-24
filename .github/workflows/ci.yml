@@ -121,7 +121,10 @@ jobs:
             exit 1
           fi
 
-          if git grep -lI -- '-----BEGIN .*PRIVATE KEY-----' | grep -v '^.github/'; then
+          # docs/GITHUB-SETUP.md instructs the reader to paste a key including
+          # these marker lines - that is the literal string, never a real key.
+          if git grep -lI -- '-----BEGIN .*PRIVATE KEY-----' \
+              | grep -v '^.github/' | grep -v '^docs/GITHUB-SETUP.md$'; then
             echo "::error::A private key is committed. Revoke it immediately, then remove it from history."
             exit 1
           fi
