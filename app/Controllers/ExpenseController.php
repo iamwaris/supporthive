@@ -10,6 +10,7 @@ use App\Core\Http;
 use App\Core\Session;
 use App\Domain\TransactionType;
 use App\Models\Account;
+use App\Models\Attachment;
 use App\Models\Category;
 use App\Models\Expense;
 use App\Services\LedgerQuery;
@@ -117,10 +118,21 @@ final class ExpenseController extends Controller
         Session::forget('_old');
 
         $symbol = Settings::string('currency_symbol', 'Rs');
-        Session::flash(
-            'success',
-            $symbol . ' ' . number_format((float) $clean['amount'], 2) . ' expense recorded (#' . $id . ').'
-        );
+        $message = $symbol . ' ' . number_format((float) $clean['amount'], 2) . ' expense recorded (#' . $id . ').';
+
+        $receipt = $_FILES['receipt'] ?? null;
+        if (is_array($receipt) && ($receipt['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            try {
+                /** @var array{name:string,type:string,tmp_name:string,error:int,size:int} $receipt */
+                (new Attachment())->attachUpload($id, $receipt);
+                $message .= ' Receipt attached.';
+            } catch (RuntimeException $e) {
+                Session::flash('error', 'Expense recorded, but the receipt was not saved: ' . $e->getMessage());
+                Http::redirect(isset($_POST['add_another']) ? '/expenses/new' : '/expenses');
+            }
+        }
+
+        Session::flash('success', $message);
 
         // Save-and-add-another keeps a repetitive session moving.
         Http::redirect(isset($_POST['add_another']) ? '/expenses/new' : '/expenses');

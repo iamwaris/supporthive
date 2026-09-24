@@ -79,6 +79,12 @@ $router->post('/customers/{id}', 'CustomerController@update', ['can:master']);
 // the write ability, which today means admin only.
 $router->get('/transactions', 'TransactionController@index', ['can:view']);
 $router->post('/transactions/{id}/void', 'TransactionController@void', ['can:write']);
+$router->post('/transactions/{id}/documents', 'DocumentController@store', ['can:write']);
+
+// --- Attachments (M7) -------------------------------------------------------
+// Receipts, invoices, payment proofs. Streamed by an authenticated controller
+// from storage/documents, never from a public path (decision D-4).
+$router->get('/documents/{id}', 'DocumentController@show', ['can:view']);
 
 $router->get('/transfers', 'TransferController@index', ['can:view']);
 $router->post('/transfers', 'TransferController@store', ['can:write']);

@@ -13,7 +13,9 @@ use RuntimeException;
  *  - the real MIME type is read from the file contents, never from the client;
  *  - the stored filename is generated, never derived from the user's name;
  *  - the extension is chosen from an allow-list keyed by the detected type;
- *  - files land in public/uploads, where .htaccess forbids PHP execution.
+ *  - files land in public/uploads, where .htaccess forbids PHP execution -
+ *    or, via storePrivate(), under storage/documents, outside the web root
+ *    entirely, for anything an authenticated controller must gate (D-4).
  */
 final class Upload
 {
@@ -31,6 +33,28 @@ final class Upload
      * @return array{path:string,filename:string,mime:string,size:int}
      */
     public static function store(array $file, string $subdirectory = ''): array
+    {
+        return self::write(PUBLIC_PATH . '/uploads', 'uploads', $file, $subdirectory);
+    }
+
+    /**
+     * Same rules as store(), but written under storage/documents — outside
+     * PUBLIC_PATH entirely, so nothing here is reachable by a guessed URL.
+     * Financial attachments (decision D-4) use this; nothing else should.
+     *
+     * @param array{name:string,type:string,tmp_name:string,error:int,size:int} $file
+     * @return array{path:string,filename:string,mime:string,size:int}
+     */
+    public static function storePrivate(array $file, string $subdirectory = ''): array
+    {
+        return self::write(STORAGE_PATH . '/documents', 'documents', $file, $subdirectory);
+    }
+
+    /**
+     * @param array{name:string,type:string,tmp_name:string,error:int,size:int} $file
+     * @return array{path:string,filename:string,mime:string,size:int}
+     */
+    private static function write(string $baseDir, string $publicPrefix, array $file, string $subdirectory): array
     {
         if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
             throw new RuntimeException(self::errorMessage((int) $file['error']));
@@ -63,7 +87,7 @@ final class Upload
         }
 
         $subdirectory = trim(preg_replace('/[^a-z0-9\/_-]/i', '', $subdirectory) ?? '', '/');
-        $directory = PUBLIC_PATH . '/uploads' . ($subdirectory !== '' ? '/' . $subdirectory : '');
+        $directory = $baseDir . ($subdirectory !== '' ? '/' . $subdirectory : '');
 
         if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
             throw new RuntimeException('Upload directory is not writable.');
@@ -79,7 +103,7 @@ final class Upload
         chmod($destination, 0644);
 
         return [
-            'path'     => 'uploads' . ($subdirectory !== '' ? '/' . $subdirectory : '') . '/' . $filename,
+            'path'     => $publicPrefix . ($subdirectory !== '' ? '/' . $subdirectory : '') . '/' . $filename,
             'filename' => $filename,
             'mime'     => $mime,
             'size'     => (int) $file['size'],

@@ -17,6 +17,8 @@ config/local.php
 /public/uploads/*
 !/public/uploads/.gitkeep
 !/public/uploads/.htaccess
+/storage/documents/*
+!/storage/documents/.gitkeep
 
 # ---- Dependencies / tooling ----
 /vendor/

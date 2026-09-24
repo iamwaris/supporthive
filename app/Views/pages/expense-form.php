@@ -36,7 +36,7 @@ $hasCategories = $tree !== [];
         </ul>
     </div>
 <?php else : ?>
-<form method="post" action="<?= e(url('/expenses')) ?>" novalidate
+<form method="post" action="<?= e(url('/expenses')) ?>" enctype="multipart/form-data" novalidate
       x-data="{
           vendor: <?= e(json_encode(old('vendor'), JSON_THROW_ON_ERROR)) ?>,
           suggestions: [],
@@ -170,6 +170,15 @@ $hasCategories = $tree !== [];
                     </label>
                     <input id="reference_no" name="reference_no" type="text" maxlength="80"
                            value="<?= e(old('reference_no')) ?>" class="input money">
+                </div>
+
+                <div>
+                    <label for="receipt" class="label">
+                        Receipt <span class="font-normal text-slate-400">optional</span>
+                    </label>
+                    <input id="receipt" name="receipt" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"
+                           class="input file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-slate-700">
+                    <p class="help">JPG, PNG, WebP or PDF</p>
                 </div>
             </div>
 

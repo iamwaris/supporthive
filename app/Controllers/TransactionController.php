@@ -9,6 +9,7 @@ use App\Core\Http;
 use App\Core\Session;
 use App\Domain\TransactionType;
 use App\Models\Account;
+use App\Models\Attachment;
 use App\Models\Category;
 use App\Models\Partner;
 use App\Services\LedgerQuery;
@@ -67,12 +68,18 @@ final class TransactionController extends Controller
             TransactionType::ProfitDistribution,
         ])->totalAmount();
 
+        $rows = $query->page($page, self::PER_PAGE);
+        $attachments = (new Attachment())->forTransactions(
+            array_map(static fn (array $row): int => (int) $row['id'], $rows)
+        );
+
         $this->view('pages/transactions', [
             'title' => 'All Transactions',
             'nav' => 'ledger',
             'pageTitle' => 'All Transactions',
             'pageMeta' => $total === 1 ? '1 entry' : number_format($total) . ' entries',
-            'rows' => $query->page($page, self::PER_PAGE),
+            'rows' => $rows,
+            'attachments' => $attachments,
             'total' => $total,
             'page' => $page,
             'pages' => $pages,

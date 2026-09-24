@@ -17,6 +17,7 @@
  * @var list<array{parent:array<string,mixed>,children:list<array<string,mixed>>}> $incomeCategories
  * @var list<array<string,mixed>>  $partners
  * @var array<string,string>       $types
+ * @var array<int,list<array<string,mixed>>> $attachments keyed by transaction_id
  * @var array<string,mixed>|null   $authUser
  */
 
@@ -202,7 +203,7 @@ $pageUrl = static function (int $target) use ($filters): string {
                     <?php endif; ?>
                 </tr>
             </thead>
-            <tbody x-data="{ openId: null }">
+            <tbody x-data="{ openId: null, attachId: null }">
                 <?php if ($rows === []) : ?>
                     <tr>
                         <td class="td" colspan="8">
@@ -259,6 +260,14 @@ $pageUrl = static function (int $target) use ($filters): string {
                             <?php if (!empty($row['transfer_group'])) : ?>
                                 <p class="text-[11px] text-slate-400">part of a transfer &middot; nets to zero in P&amp;L</p>
                             <?php endif; ?>
+                            <?php foreach ($attachments[$rowId] ?? [] as $file) : ?>
+                                <p class="mt-0.5 text-[11px]">
+                                    <a href="<?= e(url('/documents/' . (int) $file['id'])) ?>" target="_blank"
+                                       rel="noopener" class="text-brand-700 hover:underline">
+                                        Attachment: <?= e((string) $file['original_filename']) ?>
+                                    </a>
+                                </p>
+                            <?php endforeach; ?>
                         </td>
                         <td class="td">
                             <span class="<?= $typeBadge[(string) $row['type']] ?? 'badge-mute' ?>">
@@ -278,7 +287,12 @@ $pageUrl = static function (int $target) use ($filters): string {
                             <?= e($signed) ?>
                         </td>
                         <?php if ($canWrite) : ?>
-                            <td class="td text-right">
+                            <td class="td text-right whitespace-nowrap">
+                                <button type="button"
+                                        x-on:click="attachId = attachId === <?= $rowId ?> ? null : <?= $rowId ?>"
+                                        class="rounded-md px-2 py-1 text-[11.5px] font-medium text-slate-600 hover:bg-slate-100">
+                                    Attach
+                                </button>
                                 <?php if (!$isVoid) : ?>
                                     <button type="button"
                                             x-on:click="openId = openId === <?= $rowId ?> ? null : <?= $rowId ?>"
@@ -291,6 +305,26 @@ $pageUrl = static function (int $target) use ($filters): string {
                             </td>
                         <?php endif; ?>
                     </tr>
+
+                    <?php if ($canWrite) : ?>
+                        <tr x-show="attachId === <?= $rowId ?>" x-cloak>
+                            <td class="border-b border-slate-100 bg-slate-50 px-3.5 py-4" colspan="8">
+                                <form method="post" action="<?= e(url('/transactions/' . $rowId . '/documents')) ?>"
+                                      enctype="multipart/form-data" class="flex flex-wrap items-end gap-3">
+                                    <?= csrf_field() ?>
+                                    <div class="min-w-64 flex-1">
+                                        <label for="document-<?= $rowId ?>" class="label">Attach a receipt or proof</label>
+                                        <input id="document-<?= $rowId ?>" name="document" type="file"
+                                               required accept="image/jpeg,image/png,image/webp,application/pdf"
+                                               class="input file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-slate-700">
+                                    </div>
+                                    <button type="submit" class="btn-primary">Upload</button>
+                                    <button type="button" x-on:click="attachId = null" class="btn-secondary">Cancel</button>
+                                    <p class="help w-full">JPG, PNG, WebP or PDF.</p>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
 
                     <?php if ($canWrite && !$isVoid) : ?>
                         <tr x-show="openId === <?= $rowId ?>" x-cloak>

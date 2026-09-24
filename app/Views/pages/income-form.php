@@ -32,7 +32,7 @@ $hasCategories = $tree !== [];
         </ul>
     </div>
 <?php else : ?>
-<form method="post" action="<?= e(url('/income')) ?>" novalidate
+<form method="post" action="<?= e(url('/income')) ?>" enctype="multipart/form-data" novalidate
       x-data="{ status: '<?= e(old('payment_status', 'received')) ?>' }">
     <?= csrf_field() ?>
 
@@ -149,6 +149,16 @@ $hasCategories = $tree !== [];
                     <?php if (isset($errors['invoice_no'][0])) : ?>
                         <p class="error"><?= e($errors['invoice_no'][0]) ?></p>
                     <?php endif; ?>
+                </div>
+
+                <div>
+                    <label for="attachment" class="label">
+                        Attachment <span class="font-normal text-slate-400">optional</span>
+                    </label>
+                    <input id="attachment" name="attachment" type="file"
+                           accept="image/jpeg,image/png,image/webp,application/pdf"
+                           class="input file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-slate-700">
+                    <p class="help">JPG, PNG, WebP or PDF</p>
                 </div>
             </div>
 

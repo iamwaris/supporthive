@@ -10,6 +10,7 @@ use App\Core\Http;
 use App\Core\Session;
 use App\Domain\TransactionType;
 use App\Models\Account;
+use App\Models\Attachment;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Sale;
@@ -107,7 +108,7 @@ final class IncomeController extends Controller
         $isPending = $clean['payment_status'] === 'pending';
 
         try {
-            TransactionService::post([
+            $id = TransactionService::post([
                 'type' => TransactionType::Income,
                 'amount' => (string) $clean['amount'],
                 'account_id' => (int) $clean['account_id'],
@@ -131,12 +132,23 @@ final class IncomeController extends Controller
         $amount = Settings::string('currency_symbol', 'Rs')
             . ' ' . number_format((float) $clean['amount'], 2);
 
-        Session::flash(
-            'success',
-            $isPending
-                ? $amount . ' recorded as expected income. It will not count as revenue until received.'
-                : $amount . ' income recorded.'
-        );
+        $message = $isPending
+            ? $amount . ' recorded as expected income. It will not count as revenue until received.'
+            : $amount . ' income recorded.';
+
+        $attachment = $_FILES['attachment'] ?? null;
+        if (is_array($attachment) && ($attachment['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            try {
+                /** @var array{name:string,type:string,tmp_name:string,error:int,size:int} $attachment */
+                (new Attachment())->attachUpload($id, $attachment);
+                $message .= ' Attachment saved.';
+            } catch (RuntimeException $e) {
+                Session::flash('error', 'Income recorded, but the attachment was not saved: ' . $e->getMessage());
+                Http::redirect(isset($_POST['add_another']) ? '/income/new' : '/income');
+            }
+        }
+
+        Session::flash('success', $message);
 
         Http::redirect(isset($_POST['add_another']) ? '/income/new' : '/income');
     }
