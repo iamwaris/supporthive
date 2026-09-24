@@ -36,7 +36,9 @@ Verified on production, not just by build hash: all 6 migrations applied,
 14 tables, every new route exists and requires auth, CSP intact, no secrets
 web-reachable, `transactions` table empty (no test data leaked from local).
 
-Next: **M5 — budgets and profit distribution.**
+M5 — budgets and profit distribution — is built on `feat/m5-budgets-profit-distribution`,
+verified locally (migration applied, `composer check` clean, 15 new tests
+passing) and awaiting PR review and merge. Next after that: **M6 — visibility.**
 
 ## M1 — Auth & shell ✅ *(merged to `main`, deployed)*
 
@@ -96,30 +98,34 @@ Next: **M5 — budgets and profit distribution.**
 | M4-8 | Vendor type-ahead endpoint | S | done | Was M2-7, blocked on `expenses` table; built here |
 | M4-9 | `markReceived()` flow | M | done | Pending → posted; starts counting from the received date |
 
-## M5 — Controls
+## M5 — Controls ✅ *(built, pending deploy — see Now)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M5-1 | `budgets` schema + CRUD | M | todo | Unique on year+month+category |
-| M5-2 | Budget vs actual view | M | todo | Live from ledger |
-| M5-3 | Threshold + exceeded alerts | S | todo | Configurable, default 80% |
-| M5-4 | Profit calculation service | L | todo | Distributable profit for a period |
-| M5-5 | Profit distribution + approval flow | L | todo | Calculated vs distributed |
-| M5-6 | Rounding-remainder tests | M | todo | Allocations must sum exactly to profit |
+| M5-1 | `budgets` schema + CRUD | M | done | Unique on `(year, month, category_id)`; top-level expense categories only |
+| M5-2 | Budget vs actual view | M | done | `LedgerQuery::groupedByCategory()`, same rollup every other report uses |
+| M5-3 | Threshold + exceeded alerts | S | done | Configurable per budget, default 80%; `ok`/`warning`/`exceeded` badges |
+| M5-4 | Profit calculation service | L | done | `ProfitDistributionService`; cash-basis P&L over the period, split read as of period end |
+| M5-5 | Profit distribution + approval flow | L | done | `calculate → approve → distribute`, each a separate audited action; posts through `TransactionService::post()` |
+| M5-6 | Rounding-remainder tests | M | done | Largest-remainder method in bcmath cents; exact-sum, tie-break-by-id and mid-period-split cases all pass |
 
-## M6 — Visibility
+## M6 — Visibility *(dashboard done; reports next)*
+
+Spec PDF received 2026-09-24 (was missing from the repo — §14/§15/§16 now
+extracted verbatim rather than guessed). §14 lists exactly 12 dashboard
+widgets, §15 lists 8 chart types, §16 lists 12 reports.
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
-| M6-1 | Dashboard KPI aggregates | L | todo | SQL only, bounded query count |
-| M6-2 | Dashboard widgets, spec §14 | L | todo | |
-| M6-3 | Chart JSON endpoints | M | todo | No inline script data — CSP |
-| M6-4 | ApexCharts wiring, spec §15 | M | todo | Vendored already |
-| M6-5 | 12 reports with filters | L | todo | Spec §16 |
-| M6-9 | Expected-income report (pending sales) | S | todo | D-2 - pending stays visible, just not revenue |
+| M6-1 | Dashboard KPI aggregates | L | done | `DashboardService` + `BudgetService`; every figure a bounded SQL aggregate |
+| M6-2 | Dashboard widgets, spec §14 | L | done | All 12: Today's/Monthly Expenses, Monthly Revenue, Net Profit, Budget Used/Remaining, Account Balance, Revenue vs Expenses, Expense by Category, Budget vs Actual, Recent Transactions, Alerts |
+| M6-3 | Chart JSON endpoints | M | done | `/dashboard/charts/{trend,category,budget}`; no inline script data |
+| M6-4 | ApexCharts wiring, spec §15 | M | done | 3 of the 8 §15 chart types live on the dashboard (the ones §14 asks for); the rest (profit trend, revenue trend, partner allocation, account balance trend) belong on report screens, next |
+| M6-8 | KPI reconciliation tests | M | done | `DashboardServiceTest` + `BudgetServiceTest`, each figure checked against an independent LedgerQuery/SQL read |
+| M6-5 | 12 reports with filters | L | todo | Spec §16, verbatim: P&L, monthly income, monthly expenses, expense by category, budget vs actual, cash flow, account balances, partner statement, partner contributions, partner withdrawals, profit distribution, daily transaction report |
+| M6-9 | Expected-income report (pending sales) | S | todo | D-2 - pending stays visible, just not revenue. Not a separate §16 report by name — fold into the relevant income/cash-flow report |
 | M6-6 | CSV export | M | todo | Native PHP, no dependency |
-| M6-7 | PDF export | M | todo | Needs library decision |
-| M6-8 | KPI reconciliation tests | M | todo | Dashboard == filtered ledger |
+| M6-7 | PDF export | M | todo | Needs library decision — first real runtime Composer dependency, must be recorded in PLAN.md before adding it |
 
 ## M7 — Documents & audit
 

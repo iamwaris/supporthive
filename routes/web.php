@@ -40,6 +40,9 @@ if (DevAuthController::isEnabled()) {
 
 // --- Application ----------------------------------------------------------
 $router->get('/dashboard', 'DashboardController@index', ['can:view']);
+$router->get('/dashboard/charts/trend', 'DashboardController@trendChart', ['can:view']);
+$router->get('/dashboard/charts/category', 'DashboardController@categoryChart', ['can:view']);
+$router->get('/dashboard/charts/budget', 'DashboardController@budgetChart', ['can:view']);
 
 // --- System ---------------------------------------------------------------
 $router->get('/settings', 'SettingsController@index', ['can:administer']);
@@ -88,6 +91,22 @@ $router->post('/income/{id}/received', 'IncomeController@markReceived', ['can:wr
 
 $router->get('/capital', 'CapitalController@index', ['can:view']);
 $router->post('/capital', 'CapitalController@store', ['can:write']);
+
+// --- Budgets & profit distribution (M5) ------------------------------------
+$router->get('/budgets', 'BudgetController@index', ['can:view']);
+$router->post('/budgets', 'BudgetController@store', ['can:master']);
+$router->post('/budgets/{id}', 'BudgetController@update', ['can:master']);
+
+// Reading a distribution batch is financial data; calculating, approving and
+// paying one out needs the distribute ability, which today means admin only.
+$router->get('/profit-distributions', 'ProfitDistributionController@index', ['can:view']);
+$router->post('/profit-distributions', 'ProfitDistributionController@calculate', ['can:distribute']);
+$router->post('/profit-distributions/{batch}/approve', 'ProfitDistributionController@approve', ['can:distribute']);
+$router->post(
+    '/profit-distributions/{batch}/distribute',
+    'ProfitDistributionController@distribute',
+    ['can:distribute']
+);
 
 // Later modules land here as they are built (see docs/MODULES.md). They are
 // deliberately absent rather than stubbed: the sidebar renders an unbuilt item

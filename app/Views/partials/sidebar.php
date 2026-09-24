@@ -37,11 +37,12 @@ $groups = [
     'Finance' => [
         ['key' => 'accounts', 'label' => 'Accounts', 'href' => '/accounts', 'icon' => 'card', 'show' => true, 'ready' => true],
         ['key' => 'customers', 'label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'show' => true, 'ready' => true],
-        ['key' => 'budgets', 'label' => 'Budgets', 'href' => '/budgets', 'icon' => 'bars', 'show' => true, 'ready' => false],
+        ['key' => 'budgets', 'label' => 'Budgets', 'href' => '/budgets', 'icon' => 'bars', 'show' => true, 'ready' => true],
     ],
     'Partners' => [
         ['key' => 'partners', 'label' => 'Partners & Profit', 'href' => '/partners', 'icon' => 'users', 'show' => true, 'ready' => true],
         ['key' => 'capital', 'label' => 'Capital Movements', 'href' => '/capital', 'icon' => 'coins', 'show' => true, 'ready' => true],
+        ['key' => 'profit-distribution', 'label' => 'Profit Distribution', 'href' => '/profit-distributions', 'icon' => 'doc', 'show' => true, 'ready' => true],
     ],
     'Reports' => [
         ['key' => 'reports', 'label' => 'Profit & Loss', 'href' => '/reports', 'icon' => 'doc', 'show' => true, 'ready' => false],
