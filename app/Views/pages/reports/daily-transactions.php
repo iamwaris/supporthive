@@ -31,7 +31,7 @@ $typeBadge = [
     <form method="get" action="<?= e(url('/reports/daily-transactions')) ?>" class="card flex flex-wrap items-end gap-3 px-5 py-4">
         <div>
             <label for="f-date" class="label">Date</label>
-            <input id="f-date" name="date" type="date" value="<?= e($date) ?>" class="input" onchange="this.form.submit()">
+            <input id="f-date" name="date" type="date" value="<?= e($date) ?>" class="input" x-on:change="$el.form.submit()">
         </div>
         <noscript><button type="submit" class="btn-secondary">Go</button></noscript>
         <a href="<?= e(url('/reports/daily-transactions') . '?' . http_build_query(['date' => $date, 'format' => 'csv'])) ?>"

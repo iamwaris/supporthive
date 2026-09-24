@@ -30,7 +30,7 @@ $labelFor = static fn (string $state): string => match ($state) {
     <form method="get" action="<?= e(url('/reports/budget-vs-actual')) ?>" class="card flex flex-wrap items-end gap-3 px-5 py-4">
         <div>
             <label for="f-month" class="label">Month</label>
-            <input id="f-month" name="month" type="month" value="<?= e($monthValue) ?>" class="input" onchange="this.form.submit()">
+            <input id="f-month" name="month" type="month" value="<?= e($monthValue) ?>" class="input" x-on:change="$el.form.submit()">
         </div>
         <noscript><button type="submit" class="btn-secondary">Go</button></noscript>
         <a href="<?= e(url('/reports/budget-vs-actual') . '?' . http_build_query(['month' => $monthValue, 'format' => 'csv'])) ?>"

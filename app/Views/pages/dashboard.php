@@ -47,7 +47,7 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
     <div>
         <label for="dash-month" class="label">Month</label>
         <input id="dash-month" name="month" type="month" value="<?= e($monthValue) ?>" class="input"
-               onchange="this.form.submit()">
+               x-on:change="$el.form.submit()">
     </div>
     <noscript><button type="submit" class="btn-secondary">Go</button></noscript>
     <p class="ml-auto text-[11px] text-slate-500">Today's Expenses and Account Balance are always as of right now.</p>

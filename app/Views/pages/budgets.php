@@ -45,7 +45,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
     <form method="get" action="<?= e(url('/budgets')) ?>" class="card flex flex-wrap items-end gap-3 px-5 py-4">
         <div>
             <label for="f-month" class="label">Month</label>
-            <select id="f-month" name="month" class="input" onchange="this.form.submit()">
+            <select id="f-month" name="month" class="input" x-on:change="$el.form.submit()">
                 <?php foreach ($months as $num => $label) : ?>
                     <option value="<?= $num ?>" <?= $num === $month ? 'selected' : '' ?>><?= e($label) ?></option>
                 <?php endforeach; ?>
@@ -54,7 +54,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
         <div>
             <label for="f-year" class="label">Year</label>
             <input id="f-year" name="year" type="number" min="2020" max="2100" value="<?= e((string) $year) ?>"
-                   class="input w-24" onchange="this.form.submit()">
+                   class="input w-24" x-on:change="$el.form.submit()">
         </div>
         <noscript><button type="submit" class="btn-secondary">Go</button></noscript>
     </form>
