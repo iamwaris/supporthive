@@ -32,13 +32,15 @@ final class Access
     /**
      * May this role create, edit or void financial records?
      *
-     * Partners are read-only in V1: with no data-entry role, the admin records
-     * the day's transactions and partners look at the result. Widening this is
-     * a one-line change here plus a test.
+     * Partners can record and void transactions alongside admin, accountant
+     * and data-entry (decision 2026-09-24: widened from read-only). Master
+     * data (accounts, categories, partners, customers, budgets) and profit
+     * distribution stay admin-only — see canManageMasterData() and
+     * canDistributeProfit().
      */
     public static function canWriteTransactions(string $role): bool
     {
-        return in_array($role, [self::ADMIN, self::ACCOUNTANT, self::DATA_ENTRY], true);
+        return in_array($role, [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY], true);
     }
 
     /** May this role change master data — partners, categories, accounts? */

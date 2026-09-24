@@ -22,10 +22,10 @@ final class AccessTest extends TestCase
         self::assertTrue(Access::canViewFinancials(Access::ADMIN));
     }
 
-    public function testPartnerIsReadOnly(): void
+    public function testPartnerCanWriteTransactionsButNotMasterDataOrAdmin(): void
     {
         self::assertTrue(Access::canViewFinancials(Access::PARTNER), 'partners must be able to read');
-        self::assertFalse(Access::canWriteTransactions(Access::PARTNER));
+        self::assertTrue(Access::canWriteTransactions(Access::PARTNER), 'partners record/edit/void transactions');
         self::assertFalse(Access::canManageMasterData(Access::PARTNER));
         self::assertFalse(Access::canAdminister(Access::PARTNER));
         self::assertFalse(Access::canDistributeProfit(Access::PARTNER));
