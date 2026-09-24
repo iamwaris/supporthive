@@ -25,7 +25,10 @@ ini_set('log_errors', '1');
 ini_set('error_log', STORAGE_PATH . '/logs/php-error.log');
 
 // --- Autoloading -----------------------------------------------------------
-// Composer is a dev-tool dependency only; the app must boot without vendor/.
+// Everything except PDF export (dompdf, decided 2026-09-24 — see
+// docs/PLAN.md) still needs no runtime Composer dependency, so the app keeps
+// booting from this manual App\ autoloader if vendor/ is ever missing; only
+// App\Core\Pdf would fail in that case.
 if (is_file(BASE_PATH . '/vendor/autoload.php')) {
     require BASE_PATH . '/vendor/autoload.php';
 } else {

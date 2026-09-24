@@ -45,7 +45,7 @@ $groups = [
         ['key' => 'profit-distribution', 'label' => 'Profit Distribution', 'href' => '/profit-distributions', 'icon' => 'doc', 'show' => true, 'ready' => true],
     ],
     'Reports' => [
-        ['key' => 'reports', 'label' => 'Profit & Loss', 'href' => '/reports', 'icon' => 'doc', 'show' => true, 'ready' => false],
+        ['key' => 'reports', 'label' => 'Reports', 'href' => '/reports', 'icon' => 'doc', 'show' => true, 'ready' => true],
     ],
     'System' => [
         ['key' => 'categories', 'label' => 'Categories', 'href' => '/categories', 'icon' => 'list', 'show' => true, 'ready' => true],

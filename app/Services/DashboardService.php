@@ -108,14 +108,18 @@ final class DashboardService
         $months = max(1, min($months, 24));
         $start = date('Y-m-01', (int) strtotime('-' . ($months - 1) . ' months'));
 
+        // Grouped by the effective date (received_at when set, else
+        // transaction_date) for the same reason LedgerQuery::between() is:
+        // cash basis means the month money arrived is the one every figure
+        // reports against, not the month it was invoiced.
         $rows = Database::instance()->all(
-            "SELECT DATE_FORMAT(t.transaction_date, '%Y-%m') AS ym,
+            "SELECT DATE_FORMAT(COALESCE(t.received_at, t.transaction_date), '%Y-%m') AS ym,
                     COALESCE(SUM(CASE WHEN t.type = 'income'  THEN t.amount END), 0) AS revenue,
                     COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0) AS expense
              FROM transactions t
              WHERE t.status = 'posted'
                AND t.type IN ('income', 'expense')
-               AND t.transaction_date >= :start
+               AND COALESCE(t.received_at, t.transaction_date) >= :start
              GROUP BY ym
              ORDER BY ym",
             ['start' => $start]
