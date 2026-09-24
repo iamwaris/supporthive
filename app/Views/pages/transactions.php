@@ -305,15 +305,15 @@ $pageUrl = static function (int $target) use ($filters): string {
                                         <input id="reason-<?= $rowId ?>" name="void_reason" type="text"
                                                required maxlength="255" class="input"
                                                placeholder="e.g. duplicate of entry #4418">
-                                        <p class="help">
-                                            The row is kept with this reason. Nothing is deleted.
-                                            <?php if (!empty($row['transfer_group'])) : ?>
-                                                <strong class="font-medium text-bad-text">Both legs of the transfer will be voided.</strong>
-                                            <?php endif; ?>
-                                        </p>
                                     </div>
                                     <button type="submit" class="btn-primary">Void transaction</button>
                                     <button type="button" x-on:click="openId = null" class="btn-secondary">Cancel</button>
+                                    <p class="help w-full">
+                                        The row is kept with this reason. Nothing is deleted.
+                                        <?php if (!empty($row['transfer_group'])) : ?>
+                                            <strong class="font-medium text-bad-text">Both legs of the transfer will be voided.</strong>
+                                        <?php endif; ?>
+                                    </p>
                                 </form>
                             </td>
                         </tr>
