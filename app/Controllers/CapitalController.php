@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Auth;
 use App\Core\Controller;
 use App\Core\Database;
 use App\Core\Http;
@@ -107,6 +108,11 @@ final class CapitalController extends Controller
      */
     private function perPartnerTotals(): array
     {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read capital movements.');
+        }
+
         return Database::instance()->all(
             "SELECT p.id,
                     p.name,
@@ -117,8 +123,10 @@ final class CapitalController extends Controller
                     ON t.partner_id = p.id
                    AND t.status = 'posted'
                    AND t.type IN ('partner_contribution', 'partner_withdrawal')
+             WHERE p.branch_id = :branch
              GROUP BY p.id, p.name
-             ORDER BY p.name"
+             ORDER BY p.name",
+            ['branch' => $branchId]
         );
     }
 }

@@ -110,10 +110,16 @@ final class Router
     /**
      * Enforce an ability from the access policy. Unknown abilities and unknown
      * roles both deny — a typo must never widen access.
+     *
+     * requireActiveBranch() (rather than the plain requireLogin() this used
+     * to call) is what makes every can:* route branch-gated for free: a
+     * super admin with no branch chosen yet is redirected to pick one
+     * instead of reaching a route that would otherwise run every query
+     * with no branch context at all.
      */
     private function requireAbility(string $ability): void
     {
-        Auth::requireLogin();
+        Auth::requireActiveBranch();
 
         $user = Auth::user();
         $role = (string) ($user['role'] ?? '');

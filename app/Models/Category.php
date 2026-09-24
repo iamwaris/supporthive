@@ -26,9 +26,9 @@ final class Category extends Model
     public function tree(string $type): array
     {
         $rows = $this->db()->all(
-            'SELECT * FROM categories WHERE type = :type
+            'SELECT * FROM categories WHERE branch_id = :branch AND type = :type
              ORDER BY COALESCE(parent_id, id), parent_id IS NOT NULL, sort_order, name',
-            ['type' => $type]
+            ['branch' => $this->requireBranchId(), 'type' => $type]
         );
 
         $parents = [];
@@ -55,9 +55,9 @@ final class Category extends Model
     {
         return $this->db()->all(
             'SELECT id, name FROM categories
-             WHERE type = :type AND parent_id IS NULL AND is_active = 1
+             WHERE branch_id = :branch AND type = :type AND parent_id IS NULL AND is_active = 1
              ORDER BY sort_order, name',
-            ['type' => $type]
+            ['branch' => $this->requireBranchId(), 'type' => $type]
         );
     }
 
@@ -68,10 +68,10 @@ final class Category extends Model
      */
     public function exists(string $name, string $type, ?int $parentId, ?int $exceptId = null): bool
     {
-        $sql = 'SELECT COUNT(*) FROM categories WHERE name = :name AND type = :type AND ';
+        $sql = 'SELECT COUNT(*) FROM categories WHERE branch_id = :branch AND name = :name AND type = :type AND ';
         $sql .= $parentId === null ? 'parent_id IS NULL' : 'parent_id = :parent';
 
-        $params = ['name' => $name, 'type' => $type];
+        $params = ['branch' => $this->requireBranchId(), 'name' => $name, 'type' => $type];
         if ($parentId !== null) {
             $params['parent'] = $parentId;
         }
@@ -87,12 +87,20 @@ final class Category extends Model
     /** Children follow their parent's active state, so none is left selectable under a hidden parent. */
     public function setChildrenActive(int $parentId, int $isActive): void
     {
-        $this->db()->update('categories', ['is_active' => $isActive], 'parent_id = :parent', ['parent' => $parentId]);
+        $this->db()->update(
+            'categories',
+            ['is_active' => $isActive],
+            'parent_id = :parent AND branch_id = :branch',
+            ['parent' => $parentId, 'branch' => $this->requireBranchId()]
+        );
     }
 
     /** A subcategory cannot itself have children: one level only. */
     public function isParent(int $id): bool
     {
-        return $this->db()->value('SELECT parent_id FROM categories WHERE id = :id', ['id' => $id]) === null;
+        return $this->db()->value(
+            'SELECT parent_id FROM categories WHERE id = :id AND branch_id = :branch',
+            ['id' => $id, 'branch' => $this->requireBranchId()]
+        ) === null;
     }
 }

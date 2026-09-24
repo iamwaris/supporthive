@@ -25,9 +25,9 @@ final class Budget extends Model
             'SELECT b.*, c.name AS category_name
              FROM budgets b
              JOIN categories c ON c.id = b.category_id
-             WHERE b.year = :year AND b.month = :month
+             WHERE b.branch_id = :branch AND b.year = :year AND b.month = :month
              ORDER BY c.name ASC',
-            ['year' => $year, 'month' => $month]
+            ['branch' => $this->requireBranchId(), 'year' => $year, 'month' => $month]
         );
     }
 
@@ -40,8 +40,9 @@ final class Budget extends Model
     /** The unique key this enforces, checked early for a field-level message instead of a database error page. */
     public function existsFor(int $year, int $month, int $categoryId, ?int $exceptId = null): bool
     {
-        $sql = 'SELECT COUNT(*) FROM budgets WHERE year = :year AND month = :month AND category_id = :category';
-        $params = ['year' => $year, 'month' => $month, 'category' => $categoryId];
+        $sql = 'SELECT COUNT(*) FROM budgets
+                WHERE branch_id = :branch AND year = :year AND month = :month AND category_id = :category';
+        $params = ['branch' => $this->requireBranchId(), 'year' => $year, 'month' => $month, 'category' => $categoryId];
 
         if ($exceptId !== null) {
             $sql .= ' AND id <> :id';

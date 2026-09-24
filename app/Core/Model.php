@@ -4,10 +4,23 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use RuntimeException;
+
 /**
  * Thin base model. Subclasses declare $table and $fillable; writes are filtered
  * through $fillable so a rogue form field can never reach a column like `role`
  * or `is_admin`.
+ *
+ * Every table this backs is branch-scoped (multi-branch retrofit, decision
+ * 2026-09-25): find()/updateById()/deleteById()/count()/paginate() all AND in
+ * `branch_id = :branch_id` from Auth::branchId(), and create() stamps it onto
+ * every insert. This is also what CLAUDE.md rule 5 ("verify ownership") means
+ * for a master-data record — find($id) alone used to let any signed-in user
+ * reach any row by id; it cannot any more; a Branch B id is simply not found
+ * from a Branch A session.
+ *
+ * A handful of tables (users, branches themselves) are not branch-scoped;
+ * their models bypass this by setting $tenantScoped = false.
  */
 abstract class Model
 {
@@ -15,6 +28,7 @@ abstract class Model
     /** @var list<string> */
     protected array $fillable = [];
     protected string $primaryKey = 'id';
+    protected bool $tenantScoped = true;
 
     protected function db(): Database
     {
@@ -25,12 +39,13 @@ abstract class Model
     public function find(int $id): ?array
     {
         $sql = sprintf(
-            'SELECT * FROM %s WHERE %s = :id LIMIT 1',
+            'SELECT * FROM %s WHERE %s = :id%s LIMIT 1',
             Database::identifier($this->table),
-            Database::identifier($this->primaryKey)
+            Database::identifier($this->primaryKey),
+            $this->tenantScoped ? ' AND branch_id = :branch_id' : ''
         );
 
-        return $this->db()->first($sql, ['id' => $id]);
+        return $this->db()->first($sql, $this->withBranch(['id' => $id]));
     }
 
     /** @return list<array<string,mixed>> */
@@ -46,43 +61,76 @@ abstract class Model
 
         return $this->db()->all(
             sprintf(
-                'SELECT * FROM %s ORDER BY %s %s LIMIT :limit OFFSET :offset',
+                'SELECT * FROM %s%s ORDER BY %s %s LIMIT :limit OFFSET :offset',
                 Database::identifier($this->table),
+                $this->tenantScoped ? ' WHERE branch_id = :branch_id' : '',
                 Database::identifier($orderBy),
                 $direction
             ),
-            ['limit' => $perPage, 'offset' => $offset]
+            $this->withBranch(['limit' => $perPage, 'offset' => $offset])
         );
     }
 
     public function count(string $where = '1', array $params = []): int
     {
+        $where = $this->tenantScoped ? '(' . $where . ') AND branch_id = :branch_id' : $where;
+
         return (int) $this->db()->value(
             sprintf('SELECT COUNT(*) FROM %s WHERE %s', Database::identifier($this->table), $where),
-            $params
+            $this->tenantScoped ? $this->withBranch($params) : $params
         );
     }
 
     /** @param array<string,mixed> $data */
     public function create(array $data): int
     {
-        return $this->db()->insert($this->table, $this->filter($data));
+        $data = $this->filter($data);
+        if ($this->tenantScoped) {
+            $data['branch_id'] = $this->requireBranchId();
+        }
+
+        return $this->db()->insert($this->table, $data);
     }
 
     /** @param array<string,mixed> $data */
     public function updateById(int $id, array $data): int
     {
-        return $this->db()->update(
-            $this->table,
-            $this->filter($data),
-            Database::identifier($this->primaryKey) . ' = :id',
-            ['id' => $id]
-        );
+        $where = Database::identifier($this->primaryKey) . ' = :id'
+            . ($this->tenantScoped ? ' AND branch_id = :branch_id' : '');
+
+        return $this->db()->update($this->table, $this->filter($data), $where, $this->withBranch(['id' => $id]));
     }
 
     public function deleteById(int $id): int
     {
-        return $this->db()->delete($this->table, Database::identifier($this->primaryKey) . ' = :id', ['id' => $id]);
+        $where = Database::identifier($this->primaryKey) . ' = :id'
+            . ($this->tenantScoped ? ' AND branch_id = :branch_id' : '');
+
+        return $this->db()->delete($this->table, $where, $this->withBranch(['id' => $id]));
+    }
+
+    /**
+     * @param array<string,mixed> $params
+     * @return array<string,mixed>
+     */
+    private function withBranch(array $params): array
+    {
+        if ($this->tenantScoped) {
+            $params['branch_id'] = $this->requireBranchId();
+        }
+
+        return $params;
+    }
+
+    /** Exposed to subclasses that run their own hand-written SQL and need the same guard. */
+    protected function requireBranchId(): int
+    {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read or write a branch-scoped table.');
+        }
+
+        return $branchId;
     }
 
     /**

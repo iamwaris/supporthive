@@ -11,6 +11,7 @@ use App\Services\LedgerQuery;
 use App\Services\TransactionService;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\BranchFixture;
 
 /**
  * Spec §29 acceptance criterion: "Dashboard totals reconcile with
@@ -21,6 +22,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class DashboardServiceTest extends TestCase
 {
+    private int $branchId;
     private int $userId;
     private int $bankId;
     private int $cashId;
@@ -34,16 +36,21 @@ final class DashboardServiceTest extends TestCase
 
         $db = Database::instance();
 
+        $this->branchId = BranchFixture::create('DB');
+
         $this->userId = $db->insert('users', [
             'name' => 'DB Tester',
             'email' => 'dashboard-tester@test.local',
             'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
             'role' => 'admin',
+            'branch_id' => $this->branchId,
             'status' => 'active',
         ]);
         $_SESSION['_auth_user_id'] = $this->userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         $this->bankId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'DB Bank',
             'type' => 'bank',
             'opening_balance' => '1000.00',
@@ -51,6 +58,7 @@ final class DashboardServiceTest extends TestCase
             'is_active' => 1,
         ]);
         $this->cashId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'DB Cash',
             'type' => 'cash',
             'opening_balance' => '500.00',
@@ -58,11 +66,13 @@ final class DashboardServiceTest extends TestCase
             'is_active' => 1,
         ]);
         $this->expenseCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'DB Expense Cat',
             'type' => 'expense',
             'is_active' => 1,
         ]);
         $this->incomeCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'DB Income Cat',
             'type' => 'income',
             'is_active' => 1,
@@ -87,6 +97,7 @@ final class DashboardServiceTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'DB %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'DB %']);
         $db->delete('users', 'email = :e', ['e' => 'dashboard-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'DB %']);
     }
 
     private function postExpense(string $amount, string $date): void

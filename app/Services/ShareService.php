@@ -145,14 +145,15 @@ final class ShareService
 
         $from = self::normaliseDate($effectiveFrom);
         $db = Database::instance();
+        $branchId = self::requireBranchId();
 
         self::assertPartnersAreActive(array_keys($shares));
 
         // A split already dated on or after this one would have to be
         // recalculated, which is a decision for a person, not a default.
         $later = $db->value(
-            'SELECT MIN(effective_from) FROM partner_shares WHERE effective_from >= :from',
-            ['from' => $from]
+            'SELECT MIN(effective_from) FROM partner_shares WHERE branch_id = :branch AND effective_from >= :from',
+            ['branch' => $branchId, 'from' => $from]
         );
         if ($later !== null) {
             throw new RuntimeException(
@@ -160,17 +161,18 @@ final class ShareService
             );
         }
 
-        $db->transaction(static function (Database $db) use ($shares, $from): void {
+        $db->transaction(static function (Database $db) use ($shares, $from, $branchId): void {
             $closeOn = date('Y-m-d', (int) strtotime($from . ' -1 day'));
 
             $db->run(
                 'UPDATE partner_shares SET effective_to = :closeOn
-                 WHERE effective_to IS NULL AND effective_from < :from',
-                ['closeOn' => $closeOn, 'from' => $from]
+                 WHERE branch_id = :branch AND effective_to IS NULL AND effective_from < :from',
+                ['closeOn' => $closeOn, 'branch' => $branchId, 'from' => $from]
             );
 
             foreach ($shares as $partnerId => $basisPoints) {
                 $db->insert('partner_shares', [
+                    'branch_id' => $branchId,
                     'partner_id' => (int) $partnerId,
                     'share_bp' => $basisPoints,
                     'effective_from' => $from,
@@ -199,8 +201,9 @@ final class ShareService
         $rows = Database::instance()->all(
             'SELECT partner_id, share_bp
              FROM partner_shares
-             WHERE effective_from <= :on AND (effective_to IS NULL OR effective_to >= :on2)',
-            ['on' => $on, 'on2' => $on]
+             WHERE branch_id = :branch
+               AND effective_from <= :on AND (effective_to IS NULL OR effective_to >= :on2)',
+            ['branch' => self::requireBranchId(), 'on' => $on, 'on2' => $on]
         );
 
         $split = [];
@@ -244,7 +247,9 @@ final class ShareService
                     p.id AS partner_id, p.name AS partner_name
              FROM partner_shares ps
              JOIN partners p ON p.id = ps.partner_id
-             ORDER BY ps.effective_from DESC, p.name ASC'
+             WHERE ps.branch_id = :branch
+             ORDER BY ps.effective_from DESC, p.name ASC',
+            ['branch' => self::requireBranchId()]
         );
 
         $splits = [];
@@ -279,8 +284,10 @@ final class ShareService
             $params['p' . $index] = (int) $id;
         }
 
+        $params['branch'] = self::requireBranchId();
         $found = Database::instance()->all(
-            'SELECT id, name, status FROM partners WHERE id IN (' . implode(', ', $placeholders) . ')',
+            'SELECT id, name, status FROM partners
+             WHERE branch_id = :branch AND id IN (' . implode(', ', $placeholders) . ')',
             $params
         );
 
@@ -295,6 +302,16 @@ final class ShareService
                 );
             }
         }
+    }
+
+    private static function requireBranchId(): int
+    {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read or write ownership shares.');
+        }
+
+        return $branchId;
     }
 
     private static function normaliseDate(string $date): string

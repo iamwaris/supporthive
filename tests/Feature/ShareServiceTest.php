@@ -9,6 +9,7 @@ use App\Services\ShareService;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\BranchFixture;
 
 /**
  * Ownership shares decide who gets paid, and "active shares must total exactly
@@ -19,14 +20,29 @@ final class ShareServiceTest extends TestCase
 {
     /** @var list<int> */
     private array $partnerIds = [];
+    private int $branchId;
 
     protected function setUp(): void
     {
+        $_SESSION = [];
         $this->cleanUp();
+
+        $this->branchId = BranchFixture::create('SS');
+        $userId = Database::instance()->insert('users', [
+            'name' => 'Share Tester',
+            'email' => 'share-tester@test.local',
+            'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
+            'role' => 'admin',
+            'branch_id' => $this->branchId,
+            'status' => 'active',
+        ]);
+        $_SESSION['_auth_user_id'] = $userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         $db = Database::instance();
         foreach (['Test Partner A', 'Test Partner B', 'Test Partner C'] as $name) {
             $this->partnerIds[] = $db->insert('partners', [
+                'branch_id' => $this->branchId,
                 'name' => $name,
                 'join_date' => '2024-01-01',
                 'status' => 'active',
@@ -38,6 +54,7 @@ final class ShareServiceTest extends TestCase
     {
         $this->cleanUp();
         $this->partnerIds = [];
+        $_SESSION = [];
     }
 
     private function cleanUp(): void
@@ -45,6 +62,8 @@ final class ShareServiceTest extends TestCase
         $db = Database::instance();
         // partner_shares cascades from partners.
         $db->delete('partners', 'name LIKE :n', ['n' => 'Test Partner%']);
+        $db->delete('users', 'email = :e', ['e' => 'share-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'SS %']);
     }
 
     // ---------------------------------------------------------------- parsing
@@ -119,6 +138,7 @@ final class ShareServiceTest extends TestCase
     {
         [$a, $b, $c] = $this->partnerIds;
         $d = Database::instance()->insert('partners', [
+            'branch_id' => $this->branchId,
             'name' => 'Test Partner D',
             'join_date' => '2024-01-01',
             'status' => 'active',

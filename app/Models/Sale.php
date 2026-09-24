@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Core\Auth;
 use App\Core\Database;
+use RuntimeException;
 
 /**
  * Income detail: which customer, which invoice.
@@ -28,11 +30,16 @@ final class Sale
     /** Invoice numbers should not silently repeat; the caller decides what to do about it. */
     public static function invoiceExists(string $invoiceNo): bool
     {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot check invoice numbers.');
+        }
+
         return (int) Database::instance()->value(
             'SELECT COUNT(*) FROM sales s
              JOIN transactions t ON t.id = s.transaction_id
-             WHERE s.invoice_no = :inv AND t.status <> \'void\'',
-            ['inv' => trim($invoiceNo)]
+             WHERE t.branch_id = :branch AND s.invoice_no = :inv AND t.status <> \'void\'',
+            ['branch' => $branchId, 'inv' => trim($invoiceNo)]
         ) > 0;
     }
 }

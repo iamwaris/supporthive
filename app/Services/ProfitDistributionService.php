@@ -94,8 +94,10 @@ final class ProfitDistributionService
             $allocations,
             $userId
         ): void {
+            $branchId = self::requireBranchId();
             foreach ($allocations as $partnerId => $amount) {
                 $db->insert('profit_distributions', [
+                    'branch_id' => $branchId,
                     'batch_id' => $batchId,
                     'period_start' => $start,
                     'period_end' => $end,
@@ -141,7 +143,7 @@ final class ProfitDistributionService
                 'status' => 'approved',
                 'approved_by' => $userId,
                 'approved_at' => date('Y-m-d H:i:s'),
-            ], 'batch_id = :b', ['b' => $batchId]);
+            ], 'batch_id = :b AND branch_id = :branch', ['b' => $batchId, 'branch' => self::requireBranchId()]);
 
             Audit::record('profit_distribution.approved', 'profit_distributions', null, null, ['batch_id' => $batchId]);
         });
@@ -217,8 +219,10 @@ final class ProfitDistributionService
                     SUM(calculated_amount) AS total_amount,
                     MIN(created_at) AS created_at
              FROM profit_distributions
+             WHERE branch_id = :branch
              GROUP BY batch_id, period_start, period_end, status
-             ORDER BY period_end DESC, created_at DESC'
+             ORDER BY period_end DESC, created_at DESC',
+            ['branch' => self::requireBranchId()]
         );
     }
 
@@ -229,9 +233,9 @@ final class ProfitDistributionService
             'SELECT pd.*, p.name AS partner_name
              FROM profit_distributions pd
              JOIN partners p ON p.id = pd.partner_id
-             WHERE pd.batch_id = :b
+             WHERE pd.batch_id = :b AND pd.branch_id = :branch
              ORDER BY p.name ASC',
-            ['b' => $batchId]
+            ['b' => $batchId, 'branch' => self::requireBranchId()]
         );
     }
 
@@ -288,9 +292,20 @@ final class ProfitDistributionService
     private static function batchExistsFor(string $start, string $end): bool
     {
         return (int) Database::instance()->value(
-            'SELECT COUNT(*) FROM profit_distributions WHERE period_start = :s AND period_end = :e',
-            ['s' => $start, 'e' => $end]
+            'SELECT COUNT(*) FROM profit_distributions
+             WHERE branch_id = :branch AND period_start = :s AND period_end = :e',
+            ['branch' => self::requireBranchId(), 's' => $start, 'e' => $end]
         ) > 0;
+    }
+
+    private static function requireBranchId(): int
+    {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read or write profit distributions.');
+        }
+
+        return $branchId;
     }
 
     /** @param list<array<string,mixed>> $rows */

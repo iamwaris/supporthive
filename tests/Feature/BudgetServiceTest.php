@@ -9,6 +9,7 @@ use App\Domain\TransactionType;
 use App\Services\BudgetService;
 use App\Services\TransactionService;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\BranchFixture;
 
 /**
  * Spec §25: Budget Remaining = budget - actual, Budget Utilization =
@@ -19,6 +20,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class BudgetServiceTest extends TestCase
 {
+    private int $branchId;
     private int $bankId;
     private int $expenseCategoryId;
     private int $userId;
@@ -30,16 +32,21 @@ final class BudgetServiceTest extends TestCase
 
         $db = Database::instance();
 
+        $this->branchId = BranchFixture::create('BS');
+
         $this->userId = $db->insert('users', [
             'name' => 'BS Tester',
             'email' => 'budgetservice-tester@test.local',
             'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
             'role' => 'admin',
+            'branch_id' => $this->branchId,
             'status' => 'active',
         ]);
         $_SESSION['_auth_user_id'] = $this->userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         $this->bankId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'BS Bank',
             'type' => 'bank',
             'opening_balance' => '0.00',
@@ -47,6 +54,7 @@ final class BudgetServiceTest extends TestCase
             'is_active' => 1,
         ]);
         $this->expenseCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'BS Expense Cat',
             'type' => 'expense',
             'is_active' => 1,
@@ -72,11 +80,13 @@ final class BudgetServiceTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'BS %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'BS %']);
         $db->delete('users', 'email = :e', ['e' => 'budgetservice-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'BS %']);
     }
 
     public function testUtilisationAndRemainingMatchTheSpecFormula(): void
     {
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026,
             'month' => 9,
             'category_id' => $this->expenseCategoryId,
@@ -105,14 +115,15 @@ final class BudgetServiceTest extends TestCase
     public function testStateCrossesFromOkToWarningToExceededAtTheRightThresholds(): void
     {
         $categoryB = Database::instance()->insert('categories', [
-            'name' => 'BS Expense Cat B', 'type' => 'expense', 'is_active' => 1,
+            'branch_id' => $this->branchId, 'name' => 'BS Expense Cat B', 'type' => 'expense', 'is_active' => 1,
         ]);
         $categoryC = Database::instance()->insert('categories', [
-            'name' => 'BS Expense Cat C', 'type' => 'expense', 'is_active' => 1,
+            'branch_id' => $this->branchId, 'name' => 'BS Expense Cat C', 'type' => 'expense', 'is_active' => 1,
         ]);
 
         foreach ([$this->expenseCategoryId, $categoryB, $categoryC] as $categoryId) {
             Database::instance()->insert('budgets', [
+                'branch_id' => $this->branchId,
                 'year' => 2026, 'month' => 9, 'category_id' => $categoryId,
                 'amount' => '1000.00', 'alert_threshold_pct' => 80,
             ]);
@@ -144,14 +155,16 @@ final class BudgetServiceTest extends TestCase
     public function testTotalsSumAcrossEveryBudgetedCategory(): void
     {
         $categoryB = Database::instance()->insert('categories', [
-            'name' => 'BS Expense Cat B', 'type' => 'expense', 'is_active' => 1,
+            'branch_id' => $this->branchId, 'name' => 'BS Expense Cat B', 'type' => 'expense', 'is_active' => 1,
         ]);
 
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026, 'month' => 9, 'category_id' => $this->expenseCategoryId,
             'amount' => '1000.00', 'alert_threshold_pct' => 80,
         ]);
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026, 'month' => 9, 'category_id' => $categoryB,
             'amount' => '500.00', 'alert_threshold_pct' => 80,
         ]);
@@ -176,21 +189,24 @@ final class BudgetServiceTest extends TestCase
     public function testAlertsExcludeOkBudgetsAndRankExceededFirst(): void
     {
         $categoryB = Database::instance()->insert('categories', [
-            'name' => 'BS Expense Cat B', 'type' => 'expense', 'is_active' => 1,
+            'branch_id' => $this->branchId, 'name' => 'BS Expense Cat B', 'type' => 'expense', 'is_active' => 1,
         ]);
         $categoryC = Database::instance()->insert('categories', [
-            'name' => 'BS Expense Cat C', 'type' => 'expense', 'is_active' => 1,
+            'branch_id' => $this->branchId, 'name' => 'BS Expense Cat C', 'type' => 'expense', 'is_active' => 1,
         ]);
 
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026, 'month' => 9, 'category_id' => $this->expenseCategoryId,
             'amount' => '1000.00', 'alert_threshold_pct' => 80,
         ]);
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026, 'month' => 9, 'category_id' => $categoryB,
             'amount' => '1000.00', 'alert_threshold_pct' => 80,
         ]);
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026, 'month' => 9, 'category_id' => $categoryC,
             'amount' => '1000.00', 'alert_threshold_pct' => 80,
         ]);

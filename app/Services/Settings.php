@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Core\Auth;
 use App\Core\Database;
+use RuntimeException;
 
 /**
  * Application settings, stored in the database rather than .env.
@@ -57,11 +58,16 @@ final class Settings
      */
     public static function set(string $key, string $value): void
     {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot change settings.');
+        }
+
         Database::instance()->run(
-            'INSERT INTO settings (setting_key, setting_value, updated_by)
-             VALUES (:k, :v, :u)
+            'INSERT INTO settings (branch_id, setting_key, setting_value, updated_by)
+             VALUES (:b, :k, :v, :u)
              ON DUPLICATE KEY UPDATE setting_value = :v2, updated_by = :u2',
-            ['k' => $key, 'v' => $value, 'u' => Auth::id(), 'v2' => $value, 'u2' => Auth::id()]
+            ['b' => $branchId, 'k' => $key, 'v' => $value, 'u' => Auth::id(), 'v2' => $value, 'u2' => Auth::id()]
         );
 
         self::$cache = null;
@@ -94,7 +100,20 @@ final class Settings
 
         self::$cache = [];
 
-        $rows = Database::instance()->all('SELECT setting_key, setting_value, value_type FROM settings');
+        // No active branch — e.g. a super admin on the branch picker, which
+        // every page (including this one) reads company_name/currency from
+        // via the sidebar. Falling back to defaults rather than throwing
+        // keeps that screen renderable; get()/string()/int() already accept
+        // a default for exactly this reason.
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            return;
+        }
+
+        $rows = Database::instance()->all(
+            'SELECT setting_key, setting_value, value_type FROM settings WHERE branch_id = :branch',
+            ['branch' => $branchId]
+        );
         foreach ($rows as $row) {
             self::$cache[(string) $row['setting_key']] = [
                 'value' => $row['setting_value'] === null ? null : (string) $row['setting_value'],

@@ -31,16 +31,44 @@ final class AccessTest extends TestCase
         self::assertFalse(Access::canDistributeProfit(Access::PARTNER));
     }
 
-    public function testOnlyAdminMayDistributeProfit(): void
+    public function testOnlyAdminOrSuperAdminMayDistributeProfit(): void
     {
         foreach (Access::ALL as $role) {
-            if ($role === Access::ADMIN) {
+            if (in_array($role, [Access::ADMIN, Access::SUPER_ADMIN], true)) {
                 continue;
             }
             self::assertFalse(
                 Access::canDistributeProfit($role),
                 "{$role} must not be able to record a payout"
             );
+        }
+    }
+
+    /**
+     * Super admin is not assignable in-app (Access::ASSIGNABLE) — granted by
+     * direct DB action only — but once it has switched into a branch
+     * (Auth::branchId() non-null) it operates as a full admin of that
+     * branch, plus the one ability specific to it: managing branches
+     * themselves.
+     */
+    public function testSuperAdminOperatesAsAFullAdminPlusManagingBranches(): void
+    {
+        self::assertTrue(Access::canWriteTransactions(Access::SUPER_ADMIN));
+        self::assertTrue(Access::canManageMasterData(Access::SUPER_ADMIN));
+        self::assertTrue(Access::canAdminister(Access::SUPER_ADMIN));
+        self::assertTrue(Access::canDistributeProfit(Access::SUPER_ADMIN));
+        self::assertTrue(Access::canViewFinancials(Access::SUPER_ADMIN));
+        self::assertTrue(Access::canManageBranches(Access::SUPER_ADMIN));
+        self::assertNotContains(Access::SUPER_ADMIN, Access::ASSIGNABLE);
+    }
+
+    public function testOnlySuperAdminMayManageBranches(): void
+    {
+        foreach (Access::ALL as $role) {
+            if ($role === Access::SUPER_ADMIN) {
+                continue;
+            }
+            self::assertFalse(Access::canManageBranches($role), "{$role} must not be able to manage branches");
         }
     }
 
@@ -58,6 +86,7 @@ final class AccessTest extends TestCase
             self::assertFalse(Access::canAdminister($role));
             self::assertFalse(Access::canDistributeProfit($role));
             self::assertFalse(Access::canViewFinancials($role));
+            self::assertFalse(Access::canManageBranches($role));
         }
     }
 

@@ -12,6 +12,7 @@ use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;
+use Tests\Support\BranchFixture;
 
 /**
  * Ledger invariants.
@@ -25,6 +26,7 @@ use RuntimeException;
  */
 final class LedgerTest extends TestCase
 {
+    private int $branchId;
     private int $userId;
     private int $bankId;
     private int $cashId;
@@ -39,18 +41,24 @@ final class LedgerTest extends TestCase
 
         $db = Database::instance();
 
+        $this->branchId = BranchFixture::create('LT');
+
         $this->userId = $db->insert('users', [
             'name' => 'Ledger Tester',
             'email' => 'ledger-tester@test.local',
             'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
             'role' => 'admin',
+            'branch_id' => $this->branchId,
             'status' => 'active',
         ]);
 
-        // Auth::id() reads the session, and posting is attributed to a user.
+        // Auth::id()/branchId() read the session, and posting is attributed
+        // to a user within a branch.
         $_SESSION['_auth_user_id'] = $this->userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         $this->bankId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'LT Bank',
             'type' => 'bank',
             'opening_balance' => '1000.00',
@@ -58,6 +66,7 @@ final class LedgerTest extends TestCase
             'is_active' => 1,
         ]);
         $this->cashId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'LT Cash',
             'type' => 'cash',
             'opening_balance' => '0.00',
@@ -66,17 +75,20 @@ final class LedgerTest extends TestCase
         ]);
 
         $this->expenseCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'LT Expense Cat',
             'type' => 'expense',
             'is_active' => 1,
         ]);
         $this->incomeCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'LT Income Cat',
             'type' => 'income',
             'is_active' => 1,
         ]);
 
         $this->partnerId = $db->insert('partners', [
+            'branch_id' => $this->branchId,
             'name' => 'LT Partner',
             'join_date' => '2024-01-01',
             'status' => 'active',
@@ -105,6 +117,7 @@ final class LedgerTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'LT %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'LT %']);
         $db->delete('users', 'email = :e', ['e' => 'ledger-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'LT %']);
     }
 
     private function postExpense(string $amount, string $date = '2026-09-10'): int

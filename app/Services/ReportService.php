@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Auth;
 use App\Core\Database;
 use App\Domain\TransactionType;
 use App\Models\Account;
+use RuntimeException;
 
 /**
  * Aggregation for the reports screens, spec §16.
@@ -132,17 +134,22 @@ final class ReportService
      */
     public static function totalsByPartner(TransactionType $type, string $from, string $to): array
     {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read reports.');
+        }
+
         return Database::instance()->all(
             'SELECT p.id AS partner_id, p.name AS partner_name,
                     SUM(t.amount) AS total, COUNT(*) AS entries
              FROM transactions t
              JOIN partners p ON p.id = t.partner_id
-             WHERE t.status = \'posted\' AND t.type = :type
+             WHERE t.branch_id = :branch AND t.status = \'posted\' AND t.type = :type
                AND COALESCE(t.received_at, t.transaction_date) >= :from
                AND COALESCE(t.received_at, t.transaction_date) <= :to
              GROUP BY p.id, p.name
              ORDER BY total DESC',
-            ['type' => $type->value, 'from' => $from, 'to' => $to]
+            ['branch' => $branchId, 'type' => $type->value, 'from' => $from, 'to' => $to]
         );
     }
 }

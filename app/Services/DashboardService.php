@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Auth;
 use App\Core\Database;
 use App\Models\Account;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Every figure on the dashboard, spec §14.
@@ -112,17 +114,23 @@ final class DashboardService
         // transaction_date) for the same reason LedgerQuery::between() is:
         // cash basis means the month money arrived is the one every figure
         // reports against, not the month it was invoiced.
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read the dashboard.');
+        }
+
         $rows = Database::instance()->all(
             "SELECT DATE_FORMAT(COALESCE(t.received_at, t.transaction_date), '%Y-%m') AS ym,
                     COALESCE(SUM(CASE WHEN t.type = 'income'  THEN t.amount END), 0) AS revenue,
                     COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0) AS expense
              FROM transactions t
              WHERE t.status = 'posted'
+               AND t.branch_id = :branch
                AND t.type IN ('income', 'expense')
                AND COALESCE(t.received_at, t.transaction_date) >= :start
              GROUP BY ym
              ORDER BY ym",
-            ['start' => $start]
+            ['branch' => $branchId, 'start' => $start]
         );
 
         $byMonth = [];

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Auth;
 use App\Core\Database;
 use App\Domain\TransactionType;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Every read of the ledger goes through here.
@@ -20,6 +22,12 @@ use InvalidArgumentException;
  * So the filter is applied in the constructor and there is no way to drop it
  * except includeVoided(), which has to be called by name. A hand-written
  * SUM() over `transactions` is a review failure; this is what to use instead.
+ *
+ * The same unconditional treatment applies to `branch_id` (multi-branch
+ * retrofit, decision 2026-09-25): every instance is scoped to
+ * `Auth::branchId()` from construction, with no method to opt out of it —
+ * unlike `status`, there is no legitimate reason any screen would ever need
+ * to see another branch's rows.
  *
  * Filters are accumulated as bound parameters. Column names are fixed literals
  * in this file and never come from input, because an identifier cannot be
@@ -39,6 +47,12 @@ final class LedgerQuery
 
     private function __construct(bool $postedOnly)
     {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot query the ledger.');
+        }
+        $this->conditions[] = 't.branch_id = ' . $this->bind($branchId);
+
         if ($postedOnly) {
             $this->conditions[] = "t.status = 'posted'";
         }

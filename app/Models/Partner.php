@@ -18,14 +18,18 @@ final class Partner extends Model
     public function allOrdered(): array
     {
         return $this->db()->all(
-            "SELECT * FROM partners ORDER BY FIELD(status, 'active', 'inactive'), name ASC"
+            "SELECT * FROM partners WHERE branch_id = :branch ORDER BY FIELD(status, 'active', 'inactive'), name ASC",
+            ['branch' => $this->requireBranchId()]
         );
     }
 
     /** @return list<array<string,mixed>> */
     public function active(): array
     {
-        return $this->db()->all("SELECT * FROM partners WHERE status = 'active' ORDER BY name ASC");
+        return $this->db()->all(
+            "SELECT * FROM partners WHERE branch_id = :branch AND status = 'active' ORDER BY name ASC",
+            ['branch' => $this->requireBranchId()]
+        );
     }
 
     /** @param array<string,mixed> $data */
@@ -36,8 +40,8 @@ final class Partner extends Model
 
     public function nameExists(string $name, ?int $exceptId = null): bool
     {
-        $sql = 'SELECT COUNT(*) FROM partners WHERE name = :name';
-        $params = ['name' => $name];
+        $sql = 'SELECT COUNT(*) FROM partners WHERE branch_id = :branch AND name = :name';
+        $params = ['branch' => $this->requireBranchId(), 'name' => $name];
 
         if ($exceptId !== null) {
             $sql .= ' AND id <> :id';

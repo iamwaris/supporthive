@@ -10,6 +10,7 @@ use App\Services\LedgerQuery;
 use App\Services\ReportService;
 use App\Services\TransactionService;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\BranchFixture;
 
 /**
  * Every ReportService figure is asserted against an independent, hand-built
@@ -19,6 +20,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class ReportServiceTest extends TestCase
 {
+    private int $branchId;
     private int $userId;
     private int $bankId;
     private int $expenseCategoryId;
@@ -32,16 +34,21 @@ final class ReportServiceTest extends TestCase
 
         $db = Database::instance();
 
+        $this->branchId = BranchFixture::create('RS');
+
         $this->userId = $db->insert('users', [
             'name' => 'RS Tester',
             'email' => 'report-tester@test.local',
             'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
             'role' => 'admin',
+            'branch_id' => $this->branchId,
             'status' => 'active',
         ]);
         $_SESSION['_auth_user_id'] = $this->userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         $this->bankId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'RS Bank',
             'type' => 'bank',
             'opening_balance' => '1000.00',
@@ -49,16 +56,19 @@ final class ReportServiceTest extends TestCase
             'is_active' => 1,
         ]);
         $this->expenseCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'RS Expense Cat',
             'type' => 'expense',
             'is_active' => 1,
         ]);
         $this->incomeCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'RS Income Cat',
             'type' => 'income',
             'is_active' => 1,
         ]);
         $this->partnerId = $db->insert('partners', [
+            'branch_id' => $this->branchId,
             'name' => 'RS Partner',
             'status' => 'active',
             'join_date' => '2026-01-01',
@@ -84,6 +94,7 @@ final class ReportServiceTest extends TestCase
         $db->delete('partners', 'name LIKE :n', ['n' => 'RS %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'RS %']);
         $db->delete('users', 'email = :e', ['e' => 'report-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'RS %']);
     }
 
     private function postExpense(string $amount, string $date): void

@@ -28,7 +28,10 @@ final class Account extends Model
     /** @return list<array<string,mixed>> */
     public function allOrdered(): array
     {
-        return $this->db()->all('SELECT * FROM accounts ORDER BY is_active DESC, name ASC');
+        return $this->db()->all(
+            'SELECT * FROM accounts WHERE branch_id = :branch ORDER BY is_active DESC, name ASC',
+            ['branch' => $this->requireBranchId()]
+        );
     }
 
     /** @param array<string,mixed> $data */
@@ -39,8 +42,8 @@ final class Account extends Model
 
     public function nameExists(string $name, ?int $exceptId = null): bool
     {
-        $sql = 'SELECT COUNT(*) FROM accounts WHERE name = :name';
-        $params = ['name' => $name];
+        $sql = 'SELECT COUNT(*) FROM accounts WHERE branch_id = :branch AND name = :name';
+        $params = ['branch' => $this->requireBranchId(), 'name' => $name];
 
         if ($exceptId !== null) {
             $sql .= ' AND id <> :id';

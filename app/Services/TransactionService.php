@@ -118,6 +118,7 @@ final class TransactionService
                 $writeDetail
             ): int {
                 $id = $db->insert('transactions', [
+                    'branch_id' => self::requireBranchId(),
                     'transaction_date' => $date,
                     'type' => $type->value,
                     'direction' => $type->direction(),
@@ -244,7 +245,10 @@ final class TransactionService
         }
 
         $db = Database::instance();
-        $transaction = $db->first('SELECT * FROM transactions WHERE id = :id', ['id' => $transactionId]);
+        $transaction = $db->first(
+            'SELECT * FROM transactions WHERE id = :id AND branch_id = :branch',
+            ['id' => $transactionId, 'branch' => self::requireBranchId()]
+        );
 
         if ($transaction === null) {
             throw new RuntimeException('That transaction no longer exists.');
@@ -276,8 +280,9 @@ final class TransactionService
 
             if ($group !== null) {
                 $rows = $db->all(
-                    "SELECT id FROM transactions WHERE transfer_group = :g AND status = 'posted'",
-                    ['g' => $group]
+                    "SELECT id FROM transactions
+                     WHERE transfer_group = :g AND status = 'posted' AND branch_id = :branch",
+                    ['g' => $group, 'branch' => (int) $transaction['branch_id']]
                 );
 
                 foreach ($rows as $row) {
@@ -325,7 +330,10 @@ final class TransactionService
     public static function markReceived(int $transactionId, ?string $receivedOn = null): void
     {
         $db = Database::instance();
-        $transaction = $db->first('SELECT * FROM transactions WHERE id = :id', ['id' => $transactionId]);
+        $transaction = $db->first(
+            'SELECT * FROM transactions WHERE id = :id AND branch_id = :branch',
+            ['id' => $transactionId, 'branch' => self::requireBranchId()]
+        );
 
         if ($transaction === null) {
             throw new RuntimeException('That entry no longer exists.');
@@ -376,7 +384,10 @@ final class TransactionService
     {
         $db = Database::instance();
 
-        $opening = $db->value('SELECT opening_balance FROM accounts WHERE id = :id', ['id' => $accountId]);
+        $opening = $db->value(
+            'SELECT opening_balance FROM accounts WHERE id = :id AND branch_id = :branch',
+            ['id' => $accountId, 'branch' => self::requireBranchId()]
+        );
         if ($opening === null) {
             throw new RuntimeException('No such account.');
         }
@@ -399,6 +410,16 @@ final class TransactionService
     }
 
     // ---------------------------------------------------------------- guards
+
+    private static function requireBranchId(): int
+    {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read or write the ledger.');
+        }
+
+        return $branchId;
+    }
 
     private static function resolveType(TransactionType|string $type): TransactionType
     {
@@ -451,8 +472,8 @@ final class TransactionService
     private static function assertAccountUsable(int $accountId): void
     {
         $account = Database::instance()->first(
-            'SELECT id, name, is_active FROM accounts WHERE id = :id',
-            ['id' => $accountId]
+            'SELECT id, name, is_active FROM accounts WHERE id = :id AND branch_id = :branch',
+            ['id' => $accountId, 'branch' => self::requireBranchId()]
         );
 
         if ($account === null) {
@@ -467,8 +488,8 @@ final class TransactionService
     private static function assertCategoryMatchesType(int $categoryId, TransactionType $type): void
     {
         $category = Database::instance()->first(
-            'SELECT id, name, type, is_active FROM categories WHERE id = :id',
-            ['id' => $categoryId]
+            'SELECT id, name, type, is_active FROM categories WHERE id = :id AND branch_id = :branch',
+            ['id' => $categoryId, 'branch' => self::requireBranchId()]
         );
 
         if ($category === null) {

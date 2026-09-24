@@ -11,6 +11,7 @@ use App\Services\LedgerQuery;
 use App\Services\TransactionService;
 use PDOException;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\BranchFixture;
 
 /**
  * Module 6's "Done when": budget-vs-actual for a month equals a hand-written
@@ -19,6 +20,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class BudgetTest extends TestCase
 {
+    private int $branchId;
     private int $bankId;
     private int $expenseCategoryId;
     private int $userId;
@@ -30,16 +32,21 @@ final class BudgetTest extends TestCase
 
         $db = Database::instance();
 
+        $this->branchId = BranchFixture::create('BG');
+
         $this->userId = $db->insert('users', [
             'name' => 'Budget Tester',
             'email' => 'budget-tester@test.local',
             'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
             'role' => 'admin',
+            'branch_id' => $this->branchId,
             'status' => 'active',
         ]);
         $_SESSION['_auth_user_id'] = $this->userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         $this->bankId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'BG Bank',
             'type' => 'bank',
             'opening_balance' => '0.00',
@@ -47,6 +54,7 @@ final class BudgetTest extends TestCase
             'is_active' => 1,
         ]);
         $this->expenseCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'BG Expense Cat',
             'type' => 'expense',
             'is_active' => 1,
@@ -72,6 +80,7 @@ final class BudgetTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'BG %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'BG %']);
         $db->delete('users', 'email = :e', ['e' => 'budget-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'BG %']);
     }
 
     private function postExpense(string $amount, string $date): void
@@ -106,6 +115,7 @@ final class BudgetTest extends TestCase
 
         $this->expectException(PDOException::class);
         Database::instance()->insert('budgets', [
+            'branch_id' => $this->branchId,
             'year' => 2026,
             'month' => 9,
             'category_id' => $this->expenseCategoryId,

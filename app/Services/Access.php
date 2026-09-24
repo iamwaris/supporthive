@@ -15,6 +15,13 @@ namespace App\Services;
  * schema so adding them later is data rather than a migration, and they are
  * answered here already so a half-configured user cannot fall through to
  * "allowed" by accident.
+ *
+ * `super_admin` (decision 2026-09-25, multi-branch retrofit) is not
+ * assignable in-app either — it is granted by direct DB action only, since
+ * there is no user-management UI yet to assign it from. It answers true to
+ * every admin-shaped ability here because once it has switched into a branch
+ * (`Auth::branchId()` non-null) it operates as a full admin of that branch;
+ * `canManageBranches()` is the one ability specific to it.
  */
 final class Access
 {
@@ -22,12 +29,13 @@ final class Access
     public const PARTNER = 'partner';
     public const ACCOUNTANT = 'accountant';
     public const DATA_ENTRY = 'data_entry';
+    public const SUPER_ADMIN = 'super_admin';
 
     /** Roles an administrator may actually assign in V1. */
     public const ASSIGNABLE = [self::ADMIN, self::PARTNER];
 
     /** Every role the schema permits, assignable or not. */
-    public const ALL = [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY];
+    public const ALL = [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY, self::SUPER_ADMIN];
 
     /**
      * May this role create, edit or void financial records?
@@ -40,31 +48,41 @@ final class Access
      */
     public static function canWriteTransactions(string $role): bool
     {
-        return in_array($role, [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY], true);
+        return in_array(
+            $role,
+            [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY, self::SUPER_ADMIN],
+            true
+        );
     }
 
     /** May this role change master data — partners, categories, accounts? */
     public static function canManageMasterData(string $role): bool
     {
-        return $role === self::ADMIN;
+        return in_array($role, [self::ADMIN, self::SUPER_ADMIN], true);
     }
 
     /** May this role manage users, settings and other configuration? */
     public static function canAdminister(string $role): bool
     {
-        return $role === self::ADMIN;
+        return in_array($role, [self::ADMIN, self::SUPER_ADMIN], true);
     }
 
     /** May this role approve or record a profit distribution? */
     public static function canDistributeProfit(string $role): bool
     {
-        return $role === self::ADMIN;
+        return in_array($role, [self::ADMIN, self::SUPER_ADMIN], true);
     }
 
     /** May this role read financial data at all? */
     public static function canViewFinancials(string $role): bool
     {
         return in_array($role, self::ALL, true);
+    }
+
+    /** May this role create/list branches and switch between them? Super admin only. */
+    public static function canManageBranches(string $role): bool
+    {
+        return $role === self::SUPER_ADMIN;
     }
 
     /**

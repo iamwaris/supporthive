@@ -13,6 +13,7 @@ use App\Services\TransactionService;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\BranchFixture;
 
 /**
  * This is the module that decides who gets paid, so every documented "Done
@@ -29,6 +30,7 @@ final class ProfitDistributionServiceTest extends TestCase
 {
     /** @var list<int> */
     private array $partnerIds = [];
+    private int $branchId;
     private int $bankId;
     private int $incomeCategoryId;
     private int $expenseCategoryId;
@@ -41,17 +43,22 @@ final class ProfitDistributionServiceTest extends TestCase
 
         $db = Database::instance();
 
+        $this->branchId = BranchFixture::create('PD');
+
         $this->userId = $db->insert('users', [
             'name' => 'PD Tester',
             'email' => 'pd-tester@test.local',
             'password_hash' => password_hash('unused-in-this-test', PASSWORD_DEFAULT),
             'role' => 'admin',
+            'branch_id' => $this->branchId,
             'status' => 'active',
         ]);
         $_SESSION['_auth_user_id'] = $this->userId;
+        $_SESSION['_active_branch_id'] = $this->branchId;
 
         foreach (['PD Partner A', 'PD Partner B', 'PD Partner C'] as $name) {
             $this->partnerIds[] = $db->insert('partners', [
+                'branch_id' => $this->branchId,
                 'name' => $name,
                 'join_date' => '2024-01-01',
                 'status' => 'active',
@@ -59,6 +66,7 @@ final class ProfitDistributionServiceTest extends TestCase
         }
 
         $this->bankId = $db->insert('accounts', [
+            'branch_id' => $this->branchId,
             'name' => 'PD Bank',
             'type' => 'bank',
             'opening_balance' => '0.00',
@@ -66,11 +74,13 @@ final class ProfitDistributionServiceTest extends TestCase
             'is_active' => 1,
         ]);
         $this->incomeCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'PD Income Cat',
             'type' => 'income',
             'is_active' => 1,
         ]);
         $this->expenseCategoryId = $db->insert('categories', [
+            'branch_id' => $this->branchId,
             'name' => 'PD Expense Cat',
             'type' => 'expense',
             'is_active' => 1,
@@ -103,6 +113,7 @@ final class ProfitDistributionServiceTest extends TestCase
         $db->delete('categories', 'name LIKE :n', ['n' => 'PD %']);
         $db->delete('accounts', 'name LIKE :n', ['n' => 'PD %']);
         $db->delete('users', 'email = :e', ['e' => 'pd-tester@test.local']);
+        $db->delete('branches', 'name LIKE :n', ['n' => 'PD %']);
     }
 
     private function postIncome(string $amount, string $date): void

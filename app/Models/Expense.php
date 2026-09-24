@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Core\Auth;
 use App\Core\Database;
+use RuntimeException;
 
 /**
  * Expense detail: the vendor and any note.
@@ -42,14 +44,20 @@ final class Expense
         $term = self::tidyVendor($term) ?? '';
         $limit = max(1, min($limit, 20));
 
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read vendor history.');
+        }
+
         $sql = 'SELECT e.vendor, COUNT(*) AS uses
                 FROM expenses e
                 JOIN transactions t ON t.id = e.transaction_id
-                WHERE e.vendor IS NOT NULL
+                WHERE t.branch_id = :branch
+                  AND e.vendor IS NOT NULL
                   AND e.vendor <> \'\'
                   AND t.status <> \'void\'';
 
-        $params = [];
+        $params = ['branch' => $branchId];
         if ($term !== '') {
             $sql .= ' AND e.vendor LIKE :term';
             $params['term'] = $term . '%';

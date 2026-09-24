@@ -46,19 +46,32 @@ final class DevAuthController extends Controller
         return Config::get('security.dev_quick_login') === true;
     }
 
-    /** @return list<array<string,mixed>> */
+    /**
+     * Test accounts to offer. Scoped to the active branch when one is set
+     * (the normal case), so the picker does not mix names across branches;
+     * a super admin with no branch chosen yet sees every account, since
+     * picking who to become is exactly what this screen is for them.
+     *
+     * @return list<array<string,mixed>>
+     */
     public static function testAccounts(): array
     {
         if (!self::isEnabled()) {
             return [];
         }
 
-        return Database::instance()->all(
-            "SELECT id, name, email, role FROM users
-             WHERE status = 'active'
-             ORDER BY FIELD(role, 'admin', 'partner', 'accountant', 'data_entry'), name
-             LIMIT 8"
-        );
+        $branchId = Auth::branchId();
+        $sql = "SELECT id, name, email, role FROM users WHERE status = 'active'";
+        $params = [];
+
+        if ($branchId !== null) {
+            $sql .= ' AND branch_id = :branch';
+            $params['branch'] = $branchId;
+        }
+
+        $sql .= " ORDER BY FIELD(role, 'super_admin', 'admin', 'partner', 'accountant', 'data_entry'), name LIMIT 8";
+
+        return Database::instance()->all($sql, $params);
     }
 
     public function login(): void
