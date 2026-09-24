@@ -104,6 +104,30 @@ final class Auth
         Logger::security('Logout', ['user_id' => $id]);
     }
 
+    /**
+     * Set a new password for the signed-in user and clear the forced-change
+     * flag. Rotates the session id — a changed password is exactly the kind
+     * of privilege-adjacent event login()/logout() already rotate for.
+     */
+    public static function updatePassword(string $newPassword): void
+    {
+        $userId = self::id();
+        if ($userId === null) {
+            throw new RuntimeException('Changing password requires a signed-in user.');
+        }
+
+        Database::instance()->update(
+            'users',
+            ['password_hash' => self::hash($newPassword), 'must_change_password' => 0],
+            'id = :id',
+            ['id' => $userId]
+        );
+
+        Session::regenerate();
+        self::$cached = null;
+        Logger::security('Password changed', ['user_id' => $userId]);
+    }
+
     /** The branch the current session is operating within, or null (super admin, none chosen yet). */
     public static function branchId(): ?int
     {
@@ -190,7 +214,8 @@ final class Auth
             return null;
         }
         self::$cached = Database::instance()->first(
-            'SELECT id, name, email, role, status, branch_id, created_at FROM users WHERE id = :id LIMIT 1',
+            'SELECT id, name, email, role, status, branch_id, must_change_password, created_at
+             FROM users WHERE id = :id LIMIT 1',
             ['id' => $id]
         );
         return self::$cached;
@@ -202,12 +227,26 @@ final class Auth
         return $user !== null && in_array((string) ($user['role'] ?? ''), $roles, true);
     }
 
-    /** Gate for protected routes. */
+    /**
+     * Gate for protected routes.
+     *
+     * Also enforces a forced password change: any account created (or
+     * reset) with must_change_password=1 — scripts/create-user.php sets
+     * this on every account it touches — is redirected to the change
+     * screen before it can reach anything else, /logout excepted. The
+     * screen itself is excluded by path so this cannot loop.
+     */
     public static function requireLogin(): void
     {
         if (!self::check()) {
             Session::flash('error', 'Please sign in to continue.');
             Http::redirect('/login');
+        }
+
+        $user = self::user();
+        $exempt = in_array(Http::path(), ['/account/password', '/logout'], true);
+        if ($user !== null && (int) ($user['must_change_password'] ?? 0) === 1 && !$exempt) {
+            Http::redirect('/account/password');
         }
     }
 

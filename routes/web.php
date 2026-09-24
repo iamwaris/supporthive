@@ -27,6 +27,12 @@ $router->get('/login', 'AuthController@showLogin', ['guest']);
 $router->post('/login', 'AuthController@login', ['guest']);
 $router->post('/logout', 'AuthController@logout', ['auth']);
 
+// Reachable regardless of role or active branch — Auth::requireLogin()
+// excludes this path from the forced-password-change redirect, since a
+// super admin with no branch yet must still be able to reach it.
+$router->get('/account/password', 'ProfileController@password', ['auth']);
+$router->post('/account/password', 'ProfileController@updatePassword', ['auth']);
+
 // --- Quick login (testing) ------------------------------------------------
 // Registered ONLY while DEV_QUICK_LOGIN is on, so with the switch off this URL
 // does not exist and returns 404 rather than merely hiding its button. The

@@ -138,10 +138,10 @@ if ($authUser !== null && ($authUser['name'] ?? '') !== '') {
         <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500 font-display text-xs font-bold text-ink">
             <?= e($initials) ?>
         </div>
-        <div class="min-w-0 flex-1">
+        <a href="<?= e(url('/account/password')) ?>" class="min-w-0 flex-1 hover:opacity-80">
             <p class="truncate text-xs font-medium text-white"><?= e((string) ($authUser['name'] ?? 'Signed out')) ?></p>
             <p class="text-[11px] text-slate-400"><?= e(ucfirst(str_replace('_', ' ', $role))) ?></p>
-        </div>
+        </a>
         <form method="post" action="<?= e(url('/logout')) ?>">
             <?= csrf_field() ?>
             <button type="submit" aria-label="Sign out"

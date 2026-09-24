@@ -85,14 +85,22 @@ if (mb_strlen($password) < $minLength) {
 $db = Database::instance();
 $existing = $db->first('SELECT id FROM users WHERE email = :email LIMIT 1', ['email' => $email]);
 
+// Every password this script sets is one only the operator has typed, never
+// the account's own owner — the account must change it on first login.
 if ($existing !== null) {
     $db->update(
         'users',
-        ['name' => $name, 'role' => $role, 'status' => 'active', 'password_hash' => Auth::hash($password)],
+        [
+            'name' => $name,
+            'role' => $role,
+            'status' => 'active',
+            'password_hash' => Auth::hash($password),
+            'must_change_password' => 1,
+        ],
         'id = :id',
         ['id' => $existing['id']]
     );
-    echo "Updated existing user #{$existing['id']} ({$email}) as {$role}.\n";
+    echo "Updated existing user #{$existing['id']} ({$email}) as {$role}. Must change password on next login.\n";
     exit(0);
 }
 
@@ -102,7 +110,8 @@ $id = $db->insert('users', [
     'password_hash' => Auth::hash($password),
     'role' => $role,
     'status' => 'active',
+    'must_change_password' => 1,
     'email_verified_at' => date('Y-m-d H:i:s'),
 ]);
 
-echo "Created user #{$id} ({$email}) as {$role}.\n";
+echo "Created user #{$id} ({$email}) as {$role}. Must change password on first login.\n";
