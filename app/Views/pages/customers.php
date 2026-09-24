@@ -35,7 +35,7 @@ $canEdit = Access::canManageMasterData((string) ($authUser['role'] ?? ''));
                     <?php endif; ?>
                 </tr>
             </thead>
-            <tbody>
+            <tbody x-data="{ openId: null }">
                 <?php if ($customers === []) : ?>
                     <tr>
                         <td class="td" colspan="4">
@@ -51,7 +51,7 @@ $canEdit = Access::canManageMasterData((string) ($authUser['role'] ?? ''));
                     $id = (int) $customer['id'];
                     $isActive = (int) $customer['is_active'] === 1;
                     ?>
-                    <tr x-data="{ editing: false }">
+                    <tr>
                         <td class="td">
                             <p class="font-medium text-ink"><?= e((string) $customer['name']) ?></p>
                             <?php if (!empty($customer['email'])) : ?>
@@ -69,14 +69,14 @@ $canEdit = Access::canManageMasterData((string) ($authUser['role'] ?? ''));
                         </td>
                         <?php if ($canEdit) : ?>
                             <td class="td text-right">
-                                <button type="button" x-on:click="editing = !editing"
+                                <button type="button" x-on:click="openId = openId === <?= $id ?> ? null : <?= $id ?>"
                                         class="rounded-md px-2 py-1 text-[11.5px] font-medium text-brand-700 hover:bg-brand-50">Edit</button>
                             </td>
                         <?php endif; ?>
                     </tr>
 
                     <?php if ($canEdit) : ?>
-                        <tr x-show="editing" x-cloak>
+                        <tr x-show="openId === <?= $id ?>" x-cloak>
                             <td class="border-b border-slate-100 bg-slate-50 px-3.5 py-4" colspan="4">
                                 <form method="post" action="<?= e(url('/customers/' . $id)) ?>" class="grid gap-3 sm:grid-cols-2">
                                     <?= csrf_field() ?>
@@ -114,7 +114,7 @@ $canEdit = Access::canManageMasterData((string) ($authUser['role'] ?? ''));
                                     </div>
                                     <div class="flex items-center gap-2 sm:col-span-2">
                                         <button type="submit" class="btn-primary">Save changes</button>
-                                        <button type="button" x-on:click="editing = false" class="btn-secondary">Cancel</button>
+                                        <button type="button" x-on:click="openId = null" class="btn-secondary">Cancel</button>
                                     </div>
                                 </form>
                             </td>

@@ -202,7 +202,7 @@ $pageUrl = static function (int $target) use ($filters): string {
                     <?php endif; ?>
                 </tr>
             </thead>
-            <tbody>
+            <tbody x-data="{ openId: null }">
                 <?php if ($rows === []) : ?>
                     <tr>
                         <td class="td" colspan="8">
@@ -235,7 +235,8 @@ $pageUrl = static function (int $target) use ($filters): string {
                         ? (string) $row['parent_category_name'] . ' · ' . (string) $row['category_name']
                         : (string) ($row['category_name'] ?? '');
                     ?>
-                    <tr class="<?= $isVoid ? 'bg-bad-bg/40' : '' ?>" x-data="{ voiding: false }">
+                    <?php $rowId = (int) $row['id']; ?>
+                    <tr class="<?= $isVoid ? 'bg-bad-bg/40' : '' ?>">
                         <td class="td money whitespace-nowrap <?= $isVoid ? 'text-slate-400' : 'text-slate-500' ?>">
                             <?= e(date('j M Y', (int) strtotime((string) $row['transaction_date']))) ?>
                         </td>
@@ -279,7 +280,8 @@ $pageUrl = static function (int $target) use ($filters): string {
                         <?php if ($canWrite) : ?>
                             <td class="td text-right">
                                 <?php if (!$isVoid) : ?>
-                                    <button type="button" x-on:click="voiding = !voiding"
+                                    <button type="button"
+                                            x-on:click="openId = openId === <?= $rowId ?> ? null : <?= $rowId ?>"
                                             class="rounded-md px-2 py-1 text-[11.5px] font-medium text-bad-text hover:bg-bad-bg">
                                         Void
                                     </button>
@@ -291,16 +293,16 @@ $pageUrl = static function (int $target) use ($filters): string {
                     </tr>
 
                     <?php if ($canWrite && !$isVoid) : ?>
-                        <tr x-show="voiding" x-cloak>
+                        <tr x-show="openId === <?= $rowId ?>" x-cloak>
                             <td class="border-b border-slate-100 bg-bad-bg px-3.5 py-4" colspan="8">
-                                <form method="post" action="<?= e(url('/transactions/' . (int) $row['id'] . '/void')) ?>"
+                                <form method="post" action="<?= e(url('/transactions/' . $rowId . '/void')) ?>"
                                       class="flex flex-wrap items-end gap-3">
                                     <?= csrf_field() ?>
                                     <div class="min-w-64 flex-1">
-                                        <label for="reason-<?= (int) $row['id'] ?>" class="label">
+                                        <label for="reason-<?= $rowId ?>" class="label">
                                             Why is this being voided?
                                         </label>
-                                        <input id="reason-<?= (int) $row['id'] ?>" name="void_reason" type="text"
+                                        <input id="reason-<?= $rowId ?>" name="void_reason" type="text"
                                                required maxlength="255" class="input"
                                                placeholder="e.g. duplicate of entry #4418">
                                         <p class="help">
@@ -311,7 +313,7 @@ $pageUrl = static function (int $target) use ($filters): string {
                                         </p>
                                     </div>
                                     <button type="submit" class="btn-primary">Void transaction</button>
-                                    <button type="button" x-on:click="voiding = false" class="btn-secondary">Cancel</button>
+                                    <button type="button" x-on:click="openId = null" class="btn-secondary">Cancel</button>
                                 </form>
                             </td>
                         </tr>

@@ -5,6 +5,12 @@
 @source "../../../app/Views/**/*.php";
 @source "../../../public/assets/js/**/*.js";
 
+/* Alpine sets this attribute on load and removes it once initialised; the
+   hiding rule itself is the app's responsibility, not Alpine's. Without it,
+   every x-cloak element (mobile nav, the void/mark-received reveal rows)
+   flashes visible for one frame before Alpine's x-show catches up. */
+[x-cloak] { display: none !important; }
+
 /* ---------------------------------------------------------------------------
    Fonts, self-hosted.
    The CSP is font-src 'self', so Google Fonts is not an option — a <link> to

@@ -91,7 +91,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
                             <?php endif; ?>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody x-data="{ openId: null }">
                         <?php if ($budgets === []) : ?>
                             <tr>
                                 <td class="td" colspan="6">
@@ -113,7 +113,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
                                 default => 'bg-ok-text',
                             };
     ?>
-                            <tr x-data="{ editing: false }">
+                            <tr>
                                 <td class="td font-medium text-ink"><?= e((string) $row['category_name']) ?></td>
                                 <td class="td money text-right text-slate-600"><?= e($money($row['amount'])) ?></td>
                                 <td class="td money text-right text-slate-600"><?= e($money($row['spent'])) ?></td>
@@ -128,14 +128,14 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
                                 <td class="td"><span class="<?= $badgeFor($state) ?>"><?= e($labelFor($state)) ?></span></td>
                                 <?php if ($canEdit) : ?>
                                     <td class="td text-right">
-                                        <button type="button" x-on:click="editing = !editing"
+                                        <button type="button" x-on:click="openId = openId === <?= $id ?> ? null : <?= $id ?>"
                                                 class="rounded-md px-2 py-1 text-[11.5px] font-medium text-brand-700 hover:bg-brand-50">Edit</button>
                                     </td>
                                 <?php endif; ?>
                             </tr>
 
                             <?php if ($canEdit) : ?>
-                                <tr x-show="editing" x-cloak>
+                                <tr x-show="openId === <?= $id ?>" x-cloak>
                                     <td class="border-b border-slate-100 bg-slate-50 px-3.5 py-4" colspan="6">
                                         <form method="post" action="<?= e(url('/budgets/' . $id)) ?>" class="flex flex-wrap items-end gap-3">
                                             <?= csrf_field() ?>
@@ -150,7 +150,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
                                                        value="<?= e((string) $row['alert_threshold_pct']) ?>" class="input w-24">
                                             </div>
                                             <button type="submit" class="btn-primary">Save</button>
-                                            <button type="button" x-on:click="editing = false" class="btn-secondary">Cancel</button>
+                                            <button type="button" x-on:click="openId = null" class="btn-secondary">Cancel</button>
                                         </form>
                                     </td>
                                 </tr>

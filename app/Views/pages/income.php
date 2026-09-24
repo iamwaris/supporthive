@@ -146,9 +146,10 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
                         <?php endif; ?>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody x-data="{ openId: null }">
                     <?php foreach ($pendingRows as $row) : ?>
-                        <tr x-data="{ receiving: false }">
+                        <?php $rowId = (int) $row['id']; ?>
+                        <tr>
                             <td class="td money whitespace-nowrap text-slate-500">
                                 <?= e(date('j M Y', (int) strtotime((string) $row['transaction_date']))) ?>
                             </td>
@@ -162,25 +163,27 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
                             <td class="td money text-right font-medium text-slate-600"><?= e($money($row['amount'])) ?></td>
                             <?php if ($canWrite) : ?>
                                 <td class="td text-right">
-                                    <button type="button" x-on:click="receiving = !receiving" class="btn-secondary">
+                                    <button type="button"
+                                            x-on:click="openId = openId === <?= $rowId ?> ? null : <?= $rowId ?>"
+                                            class="btn-secondary">
                                         Mark received
                                     </button>
                                 </td>
                             <?php endif; ?>
                         </tr>
                         <?php if ($canWrite) : ?>
-                            <tr x-show="receiving" x-cloak>
+                            <tr x-show="openId === <?= $rowId ?>" x-cloak>
                                 <td class="border-b border-slate-100 bg-ok-bg px-3.5 py-4" colspan="5">
-                                    <form method="post" action="<?= e(url('/income/' . (int) $row['id'] . '/received')) ?>"
+                                    <form method="post" action="<?= e(url('/income/' . $rowId . '/received')) ?>"
                                           class="flex flex-wrap items-end gap-3">
                                         <?= csrf_field() ?>
                                         <div>
-                                            <label for="rcv-<?= (int) $row['id'] ?>" class="label">Received on</label>
-                                            <input id="rcv-<?= (int) $row['id'] ?>" name="received_at" type="date"
+                                            <label for="rcv-<?= $rowId ?>" class="label">Received on</label>
+                                            <input id="rcv-<?= $rowId ?>" name="received_at" type="date"
                                                    value="<?= e(date('Y-m-d')) ?>" class="input">
                                         </div>
                                         <button type="submit" class="btn-primary">Confirm received</button>
-                                        <button type="button" x-on:click="receiving = false" class="btn-secondary">Cancel</button>
+                                        <button type="button" x-on:click="openId = null" class="btn-secondary">Cancel</button>
                                         <p class="w-full text-[11px] text-slate-600">
                                             This starts counting towards revenue and the account balance from today.
                                         </p>

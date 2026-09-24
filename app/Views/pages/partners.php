@@ -82,7 +82,7 @@ $hasSplit = $currentTotalBp > 0;
                     <?php endif; ?>
                 </tr>
             </thead>
-            <tbody>
+            <tbody x-data="{ openId: null }">
                 <?php if ($partners === []) : ?>
                     <tr>
                         <td class="td" colspan="<?= $canEdit ? 5 : 4 ?>">
@@ -100,7 +100,7 @@ $hasSplit = $currentTotalBp > 0;
                     $isActive = (string) $partner['status'] === 'active';
                     $initials = strtoupper(mb_substr((string) $partner['name'], 0, 2));
                     ?>
-                    <tr x-data="{ editing: false }">
+                    <tr>
                         <td class="td">
                             <div class="flex items-center gap-2.5">
                                 <span class="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg font-display text-[11px] font-bold <?= $isActive ? 'bg-ink text-brand-400' : 'bg-slate-200 text-slate-500' ?>">
@@ -129,7 +129,7 @@ $hasSplit = $currentTotalBp > 0;
                         </td>
                         <?php if ($canEdit) : ?>
                             <td class="td text-right">
-                                <button type="button" x-on:click="editing = !editing"
+                                <button type="button" x-on:click="openId = openId === <?= $id ?> ? null : <?= $id ?>"
                                         class="rounded-md px-2 py-1 text-[11.5px] font-medium text-brand-700 hover:bg-brand-50">
                                     Edit
                                 </button>
@@ -138,7 +138,7 @@ $hasSplit = $currentTotalBp > 0;
                     </tr>
 
                     <?php if ($canEdit) : ?>
-                        <tr x-show="editing" x-cloak>
+                        <tr x-show="openId === <?= $id ?>" x-cloak>
                             <td class="border-b border-slate-100 bg-slate-50 px-3.5 py-4" colspan="5">
                                 <form method="post" action="<?= e(url('/partners/' . $id)) ?>" class="grid gap-3 sm:grid-cols-2">
                                     <?= csrf_field() ?>
@@ -179,7 +179,7 @@ $hasSplit = $currentTotalBp > 0;
                                     </div>
                                     <div class="flex items-center gap-2 sm:col-span-2">
                                         <button type="submit" class="btn-primary">Save changes</button>
-                                        <button type="button" x-on:click="editing = false" class="btn-secondary">Cancel</button>
+                                        <button type="button" x-on:click="openId = null" class="btn-secondary">Cancel</button>
                                     </div>
                                 </form>
                             </td>
