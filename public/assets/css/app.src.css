@@ -7,7 +7,7 @@
 
 /* ---------------------------------------------------------------------------
    Fonts, self-hosted.
-   The CSP is font-src 'self',so Google Fonts is not an option — a <link> to
+   The CSP is font-src 'self', so Google Fonts is not an option — a <link> to
    fonts.googleapis.com is blocked and the page silently falls back to system
    faces. `npm run vendor` copies these from @fontsource.
    --------------------------------------------------------------------------- */
