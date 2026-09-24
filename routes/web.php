@@ -135,12 +135,13 @@ $router->get('/reports/daily-transactions', 'ReportController@dailyTransactions'
 // --- Branch administration (multi-branch retrofit) --------------------------
 // Super admin only, and deliberately NOT gated by can:view/etc — those all
 // require an active branch (Router::requireAbility() -> requireActiveBranch())
-// and a super admin browsing this screen has none yet. role:super_admin fails
-// closed on every other role the same way can:* does.
+// and super admin never has one (decision 2026-09-26: manages branches, never
+// operates inside one). role:super_admin fails closed on every other role the
+// same way can:* does.
 $router->get('/admin/branches', 'BranchController@index', ['role:super_admin']);
 $router->post('/admin/branches', 'BranchController@store', ['role:super_admin']);
-$router->post('/admin/branches/{id}/switch', 'BranchController@switchTo', ['role:super_admin']);
-$router->post('/admin/branches/exit', 'BranchController@exit', ['role:super_admin']);
+$router->post('/admin/branches/{id}/toggle', 'BranchController@toggleActive', ['role:super_admin']);
+$router->post('/admin/branches/{id}/delete', 'BranchController@destroy', ['role:super_admin']);
 
 // Later modules land here as they are built (see docs/MODULES.md). They are
 // deliberately absent rather than stubbed: the sidebar renders an unbuilt item

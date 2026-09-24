@@ -36,7 +36,10 @@ final class Auth
     {
         $db = Database::instance();
         $user = $db->first(
-            'SELECT id, email, password_hash, status FROM users WHERE email = :email LIMIT 1',
+            'SELECT u.id, u.email, u.password_hash, u.status, u.branch_id, b.is_active AS branch_active
+             FROM users u
+             LEFT JOIN branches b ON b.id = u.branch_id
+             WHERE u.email = :email LIMIT 1',
             ['email' => $email]
         );
 
@@ -54,6 +57,17 @@ final class Auth
 
         if (($user['status'] ?? 'active') !== 'active') {
             Logger::security('Login blocked: inactive account', ['user_id' => $user['id']]);
+            return false;
+        }
+
+        // Locked by a super admin. Checked after the password so this can
+        // never be used to probe whether an email/password pair is valid —
+        // a wrong password always fails first, regardless of branch state.
+        if ($user['branch_id'] !== null && (int) ($user['branch_active'] ?? 0) !== 1) {
+            Logger::security(
+                'Login blocked: branch locked',
+                ['user_id' => $user['id'], 'branch_id' => $user['branch_id']]
+            );
             return false;
         }
 
@@ -136,60 +150,42 @@ final class Auth
     }
 
     /**
-     * Gate for every branch-scoped route. A signed-in user with no active
-     * branch is a super admin who hasn't picked one yet — send them to the
+     * Gate for every branch-scoped route.
+     *
+     * A signed-in user with no active branch is a super admin — the only
+     * role that ever has none, since super admin manages branches
+     * (create/lock/delete) and never operates inside one. Sent to the
      * branch picker rather than 403, since that is the expected next step
      * for that identity, not a permissions failure.
+     *
+     * A branch-scoped user's branch is fixed at login and re-verified as
+     * still active on every request here: a super admin locking a branch
+     * mid-session must take effect immediately, not just block the next
+     * login.
      */
     public static function requireActiveBranch(): void
     {
         self::requireLogin();
-        if (self::branchId() === null) {
+
+        $branchId = self::branchId();
+        if ($branchId === null) {
             Http::redirect('/admin/branches');
         }
-    }
 
-    /**
-     * Switch the session's active branch.
-     *
-     * A branch-scoped user (anyone but super_admin) may only ever switch to
-     * their OWN branch_id — this is defense in depth against a crafted
-     * request, not the normal path (their branch is already set at login
-     * and this method should not normally be reachable for them at all).
-     * Rotates the session id, the same treatment login()/logout() give any
-     * privilege-adjacent change.
-     */
-    public static function switchBranch(int $branchId): void
-    {
-        $user = self::user();
-        if ($user === null) {
-            throw new RuntimeException('Switching branch requires a signed-in user.');
-        }
-
-        $branch = Database::instance()->first(
-            'SELECT id FROM branches WHERE id = :id AND is_active = 1',
+        $active = Database::instance()->value(
+            'SELECT is_active FROM branches WHERE id = :id',
             ['id' => $branchId]
         );
-        if ($branch === null) {
-            throw new RuntimeException('That branch does not exist or is not active.');
+        if ((int) ($active ?? 0) !== 1) {
+            Logger::security(
+                'Session ended: branch locked mid-session',
+                ['user_id' => self::id(), 'branch_id' => $branchId]
+            );
+            self::logout();
+            Session::start();
+            Session::flash('error', 'This branch has been locked. Contact your administrator.');
+            Http::redirect('/login');
         }
-
-        if ((string) $user['role'] !== 'super_admin' && (int) ($user['branch_id'] ?? 0) !== $branchId) {
-            Logger::security('Branch switch denied', ['user_id' => $user['id'], 'requested_branch' => $branchId]);
-            throw new RuntimeException('You are not a member of that branch.');
-        }
-
-        Session::regenerate();
-        Session::set(self::BRANCH_SESSION_KEY, $branchId);
-        self::$cached = null;
-        Logger::security('Branch switched', ['user_id' => $user['id'], 'branch_id' => $branchId]);
-    }
-
-    /** Clears the active branch — a super admin stepping back out to the branch list. */
-    public static function exitBranch(): void
-    {
-        Session::forget(self::BRANCH_SESSION_KEY);
-        self::$cached = null;
     }
 
     public static function check(): bool

@@ -12,8 +12,6 @@
 
 declare(strict_types=1);
 
-use App\Core\Auth;
-use App\Core\Database;
 use App\Services\Access;
 use App\Services\Settings;
 
@@ -26,13 +24,12 @@ $role = (string) ($authUser['role'] ?? '');
 // unbuilt item is rendered disabled rather than as a link into a 404.
 $admin = Access::canAdminister($role);
 $canManageBranches = Access::canManageBranches($role);
-$activeBranchId = Auth::branchId();
 
-// A super admin with no branch chosen yet cannot reach any of the
-// branch-scoped screens below (Router::requireAbility() redirects them
-// straight back to /admin/branches), so showing links into them here would
-// just be dead-ends. Show only the branch picker until one is active.
-$groups = $canManageBranches && $activeBranchId === null ? [] : [
+// Super admin manages branches but never operates inside one (decision
+// 2026-09-26), so none of the branch-scoped screens below are ever reachable
+// for that role (Router::requireAbility() sends it straight back to
+// /admin/branches) — showing links into them would just be dead-ends.
+$groups = $canManageBranches ? [] : [
     'Overview' => [
         ['key' => 'dashboard', 'label' => 'Dashboard', 'href' => '/dashboard', 'icon' => 'grid', 'show' => true, 'ready' => true],
     ],
@@ -87,24 +84,6 @@ if ($authUser !== null && ($authUser['name'] ?? '') !== '') {
             <?= e(Settings::string('company_name', 'LedgerHive')) ?>
         </span>
     </a>
-
-    <?php if ($canManageBranches && $activeBranchId !== null) : ?>
-        <?php
-        $activeBranchName = (string) (Database::instance()->value(
-            'SELECT name FROM branches WHERE id = :id',
-            ['id' => $activeBranchId]
-        ) ?? 'Unknown branch');
-        ?>
-        <div class="flex items-center justify-between gap-2 rounded-lg bg-white/5 px-2.5 py-2 text-[11px]">
-            <span class="min-w-0 truncate text-slate-300">
-                Operating as <span class="font-medium text-white"><?= e($activeBranchName) ?></span>
-            </span>
-            <form method="post" action="<?= e(url('/admin/branches/exit')) ?>" class="shrink-0">
-                <?= csrf_field() ?>
-                <button type="submit" class="font-medium text-brand-400 hover:text-brand-300">Exit</button>
-            </form>
-        </div>
-    <?php endif; ?>
 
     <?php foreach ($groups as $groupLabel => $items) : ?>
         <?php $visible = array_filter($items, static fn (array $i): bool => $i['show'] === true); ?>
