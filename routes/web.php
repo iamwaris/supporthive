@@ -60,6 +60,8 @@ $router->post('/users/{id}', 'UserController@update', ['can:administer']);
 $router->post('/users/{id}/toggle', 'UserController@toggleStatus', ['can:administer']);
 $router->post('/users/{id}/reset-password', 'UserController@resetPassword', ['can:administer']);
 
+$router->get('/audit-log', 'AuditLogController@index', ['can:administer']);
+
 // --- Master data (M2) -----------------------------------------------------
 // Reading is open to anyone who may see financials; every write needs the
 // master-data ability, which today means admin only.
