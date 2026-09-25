@@ -177,11 +177,13 @@ $hasCategories = $tree !== [];
                 <textarea id="notes" name="notes" rows="2" maxlength="2000" class="input h-auto py-2.5"><?= e(old('notes')) ?></textarea>
             </div>
 
-            <div class="mt-6 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
+            <div class="mt-6 flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
                 <p class="flex-1 text-[11.5px] text-slate-500">Recorded against your account.</p>
-                <a href="<?= e(url('/income')) ?>" class="btn-secondary">Cancel</a>
-                <button type="submit" name="add_another" value="1" class="btn-secondary">Save &amp; add another</button>
-                <button type="submit" class="btn-primary">Save income</button>
+                <div class="flex flex-wrap gap-3">
+                    <a href="<?= e(url('/income')) ?>" class="btn-secondary">Cancel</a>
+                    <button type="submit" name="add_another" value="1" class="btn-secondary">Save &amp; add another</button>
+                    <button type="submit" class="btn-primary">Save income</button>
+                </div>
             </div>
         </div>
 

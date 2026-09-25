@@ -70,6 +70,7 @@ $hasSplit = $currentTotalBp > 0;
             </div>
         <?php endif; ?>
 
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -188,6 +189,7 @@ $hasSplit = $currentTotalBp > 0;
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
 
         <?php if ($history !== []) : ?>
             <div class="border-t border-slate-200 bg-slate-50 px-5 py-4">

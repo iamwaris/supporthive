@@ -101,14 +101,16 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
     </div>
 
     <?php if ($total > $perPage) : ?>
-        <div class="flex items-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3">
+        <div class="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center">
             <p class="flex-1 text-[11.5px] text-slate-500">Page <?= e((string) $page) ?> of <?= e((string) $pages) ?></p>
-            <?php if ($page > 1) : ?>
-                <a href="<?= e(url('/income')) ?>?month=<?= e($month['value']) ?>&page=<?= $page - 1 ?>" class="btn-secondary">Previous</a>
-            <?php endif; ?>
-            <?php if ($page < $pages) : ?>
-                <a href="<?= e(url('/income')) ?>?month=<?= e($month['value']) ?>&page=<?= $page + 1 ?>" class="btn-secondary">Next</a>
-            <?php endif; ?>
+            <div class="flex flex-wrap gap-3">
+                <?php if ($page > 1) : ?>
+                    <a href="<?= e(url('/income')) ?>?month=<?= e($month['value']) ?>&page=<?= $page - 1 ?>" class="btn-secondary">Previous</a>
+                <?php endif; ?>
+                <?php if ($page < $pages) : ?>
+                    <a href="<?= e(url('/income')) ?>?month=<?= e($month['value']) ?>&page=<?= $page + 1 ?>" class="btn-secondary">Next</a>
+                <?php endif; ?>
+            </div>
         </div>
     <?php endif; ?>
 </div>

@@ -166,26 +166,28 @@ $pageUrl = static function (int $target) use ($filters): string {
     </div>
 
     <?php if ($total > 0) : ?>
-        <div class="flex flex-wrap items-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3">
+        <div class="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center">
             <p class="flex-1 text-[11.5px] text-slate-500">
                 Showing <span class="money"><?= e((string) (($page - 1) * $perPage + 1)) ?></span>&ndash;<span
                     class="money"><?= e((string) min($page * $perPage, $total)) ?></span>
                 of <span class="money"><?= e(number_format($total)) ?></span>.
             </p>
 
-            <?php if ($page > 1) : ?>
-                <a href="<?= e($pageUrl($page - 1)) ?>" class="btn-secondary">Previous</a>
-            <?php else : ?>
-                <span class="btn-secondary pointer-events-none opacity-40">Previous</span>
-            <?php endif; ?>
+            <div class="flex flex-wrap items-center gap-3">
+                <?php if ($page > 1) : ?>
+                    <a href="<?= e($pageUrl($page - 1)) ?>" class="btn-secondary">Previous</a>
+                <?php else : ?>
+                    <span class="btn-secondary pointer-events-none opacity-40">Previous</span>
+                <?php endif; ?>
 
-            <span class="money text-xs text-slate-600"><?= e((string) $page) ?> of <?= e((string) $pages) ?></span>
+                <span class="money text-xs text-slate-600"><?= e((string) $page) ?> of <?= e((string) $pages) ?></span>
 
-            <?php if ($page < $pages) : ?>
-                <a href="<?= e($pageUrl($page + 1)) ?>" class="btn-secondary">Next</a>
-            <?php else : ?>
-                <span class="btn-secondary pointer-events-none opacity-40">Next</span>
-            <?php endif; ?>
+                <?php if ($page < $pages) : ?>
+                    <a href="<?= e($pageUrl($page + 1)) ?>" class="btn-secondary">Next</a>
+                <?php else : ?>
+                    <span class="btn-secondary pointer-events-none opacity-40">Next</span>
+                <?php endif; ?>
+            </div>
         </div>
     <?php endif; ?>
 </div>

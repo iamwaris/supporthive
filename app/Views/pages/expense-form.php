@@ -202,13 +202,15 @@ $hasCategories = $tree !== [];
                           class="input h-auto py-2.5"><?= e(old('notes')) ?></textarea>
             </div>
 
-            <div class="mt-6 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
+            <div class="mt-6 flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center">
                 <p class="flex-1 text-[11.5px] text-slate-500">
                     Recorded against your account with the date and time.
                 </p>
-                <a href="<?= e(url('/expenses')) ?>" class="btn-secondary">Cancel</a>
-                <button type="submit" name="add_another" value="1" class="btn-secondary">Save &amp; add another</button>
-                <button type="submit" class="btn-primary">Save expense</button>
+                <div class="flex flex-wrap gap-3">
+                    <a href="<?= e(url('/expenses')) ?>" class="btn-secondary">Cancel</a>
+                    <button type="submit" name="add_another" value="1" class="btn-secondary">Save &amp; add another</button>
+                    <button type="submit" class="btn-primary">Save expense</button>
+                </div>
             </div>
         </div>
 
