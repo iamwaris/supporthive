@@ -102,20 +102,55 @@ Every PR that touches request handling:
 
 ## 7. Pre-launch checklist
 
-- [ ] `APP_ENV=production`, `APP_DEBUG=false`, `SESSION_SECURE=true`
-- [ ] `APP_KEY` set to a freshly generated value (not the local one)
-- [ ] HTTPS enforced; certificate valid; HSTS confirmed in response headers
-- [ ] `php scripts/preflight.php` fully green on the host
-- [ ] Application directory not reachable over HTTP — verify by requesting
-      `/../app/bootstrap.php`, `/.env`, `/composer.json`, `/.git/config`
-- [ ] Upload execution blocked — upload a harmless `.txt`, then confirm a
-      renamed `.php` cannot execute
-- [ ] Default/seed accounts removed or given real passwords
-- [ ] DB user privileges reviewed (see §5 — not narrowable on Hostinger)
-- [ ] Automated backups running **and a restore has been tested**
-- [ ] `storage/logs` writable, not web-readable, and rotating
-- [ ] Error alerting in place
-- [ ] Rate limits verified by actually exceeding them
+Checked 2026-09-25 against production (`https://myinvoicestudio.com`), read-only
+from the outside — nothing here required or used elevated access.
+
+- [ ] `APP_ENV=production`, `APP_DEBUG=false`, `SESSION_SECURE=true` — the
+      session cookie *is* `Secure; HttpOnly; SameSite=Lax` (confirmed), but the
+      env values themselves need an on-host check (SSH), which this pass didn't have
+- [ ] `APP_KEY` set to a freshly generated value (not the local one) — needs
+      a manual confirmation; a secret, not something to verify remotely
+- [x] HTTPS enforced; certificate valid; HSTS confirmed in response headers —
+      confirmed: HTTP redirects 301 to HTTPS, `strict-transport-security:
+      max-age=31536000; includeSubDomains; preload` present, full CSP live
+      and matching the documented policy
+- [ ] `php scripts/preflight.php` fully green on the host — **not run
+      automatically anywhere.** It exists and passes locally, but nothing in
+      `deploy.yml` invokes it on the live host; needs either a manual SSH run
+      or wiring into the deploy pipeline
+- [x] Application directory not reachable over HTTP — confirmed 404 on
+      `/.env`, `/composer.json`, `/.git/config`, `/app/bootstrap.php`
+- [ ] Upload execution blocked — the `.htaccess` mechanism and `Upload`
+      class's extension allow-list are unchanged and covered by existing
+      code, but the live end-to-end test (upload, rename, attempt execution)
+      needs an authenticated session and wasn't run against production
+- [ ] Default/seed accounts removed or given real passwords — needs a DB
+      check this pass had no access to
+- [x] DB user privileges reviewed — accepted limitation, see §5 (not
+      narrowable on Hostinger); nothing new to do
+- [ ] Automated backups running **and a restore has been tested** — M7-7,
+      not started
+- [ ] `storage/logs` writable, not web-readable, and rotating — not
+      web-readable (confirmed 404); writable needs an on-host check.
+      **"Rotating" is half true**: `Logger` already names files per day
+      (`app-YYYY-MM-DD.log`), so no single file grows unbounded, but nothing
+      ever *deletes* an old one — `storage/logs` grows forever. Same gap
+      exists for `rate_limits`: `RateLimiter::prune()` is written and tested
+      (`tests/Feature/RateLimiterTest.php`) but has no caller anywhere in the
+      app — there is no cron or scheduled-task mechanism on this project at
+      all yet, so nothing invokes it
+- [ ] Error alerting in place — **does not exist.** No mail, webhook, or
+      third-party error-tracking integration anywhere in the codebase;
+      `MAIL_HOST`/`MAIL_PORT` are provisioned in `.env`/deploy secrets but
+      nothing reads them
+- [x] Rate limits verified by actually exceeding them — `RateLimiter` had
+      **zero test coverage** despite CLAUDE.md rule 9 requiring it; added
+      `tests/Feature/RateLimiterTest.php` (7 cases: hit counting, threshold
+      trip point, clear, decay-window exclusion, seconds-remaining, prune).
+      Verified at the code level; live login-endpoint verification against
+      production was deliberately not attempted here (repeatedly failing
+      logins against a live site risks tripping monitoring or locking a
+      real account)
 
 ## 8. Incident response
 
