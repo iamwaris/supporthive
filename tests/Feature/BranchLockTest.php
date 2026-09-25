@@ -48,6 +48,10 @@ final class BranchLockTest extends TestCase
     {
         $db = Database::instance();
         $db->delete('users', 'email = :e', ['e' => 'lock-tester@test.local']);
+        $db->run(
+            'DELETE a FROM audit_log a JOIN branches b ON b.id = a.branch_id WHERE b.name LIKE :n',
+            ['n' => 'BL %']
+        );
         $db->delete('branches', 'name LIKE :n', ['n' => 'BL %']);
     }
 

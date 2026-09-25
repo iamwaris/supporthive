@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use App\Services\Audit;
 use RuntimeException;
 
 /**
@@ -108,11 +109,18 @@ final class Auth
             ['id' => $userId]
         );
         Logger::security('Login success', ['user_id' => $userId, 'ip' => Http::clientIp()]);
+        // branch_id is already set above, so Audit::record() (which reads
+        // Auth::branchId() itself) stamps the right one — the same reason
+        // this call sits after that line rather than before it.
+        Audit::record('auth.login', 'users', $userId, null, ['ip' => Http::clientIp()]);
     }
 
     public static function logout(): void
     {
         $id = self::id();
+        // Recorded before Session::destroy(), since Audit::record() reads
+        // Auth::id()/Auth::branchId() from the very session being destroyed.
+        Audit::record('auth.logout', 'users', $id, null, null);
         Session::destroy();
         self::$cached = null;
         Logger::security('Logout', ['user_id' => $id]);
