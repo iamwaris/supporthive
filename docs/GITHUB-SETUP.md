@@ -83,6 +83,7 @@ ssh -i ~/.ssh/supporthive_deploy -p <SSH_PORT> <SSH_USER>@<SSH_HOST> "pwd && ls 
 | `WEB_ROOT` | `/home/<user>/domains/<site>/public_html` |
 | `DEPLOY_ENABLED` | `true` — **set this last** |
 | `RUN_MIGRATIONS` | `true` to migrate on every deploy (optional) |
+| `MAINTENANCE_ENABLED` | `true` to turn on the nightly prune + preflight job (`maintenance.yml`) |
 | `PHP_BIN` | only if plain `php` on the host is the wrong version, e.g. `/opt/alt/php83/usr/bin/php` |
 
 Use **absolute** paths over SSH — unlike FTP, there is no chroot making them
@@ -103,6 +104,15 @@ everything above is filled in and the application directory exists on the host.
 `RUN_MIGRATIONS` is deliberately separate. Leave it off for the first deploy,
 then turn it on once you have seen the pipeline work — and take a database
 backup before any destructive schema change.
+
+**`MAINTENANCE_ENABLED`** gates `.github/workflows/maintenance.yml`, a
+separate scheduled workflow (nightly, `workflow_dispatch` also works for a
+manual run) that reuses these same SSH secrets to prune `storage/logs` and
+the `rate_limits` table on the host, then runs `scripts/preflight.php`
+against it. Leave it off until `DEPLOY_ENABLED` has worked at least once — it
+needs the same `APP_DIR` to already exist and be reachable. A failed run
+fails the whole workflow, which GitHub emails to the repo's watchers by
+default.
 
 ## 5. Protect `main`
 

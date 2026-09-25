@@ -71,4 +71,35 @@ final class Logger
     {
         self::log(self::INFO, $message, $context);
     }
+
+    /**
+     * Deletes dated log files (app-YYYY-MM-DD.log, security-YYYY-MM-DD.log)
+     * older than the retention window. Each day already gets its own file
+     * (see log() above), so this is pure cleanup, never a truncation of a
+     * file still being written to. Intended to run from a scheduled task —
+     * see .github/workflows/maintenance.yml — since nothing calls it at
+     * request time.
+     *
+     * @return int number of files deleted
+     */
+    public static function prune(int $olderThanDays = 30): int
+    {
+        $dir = STORAGE_PATH . '/logs';
+        if (!is_dir($dir)) {
+            return 0;
+        }
+
+        $cutoff = time() - ($olderThanDays * 86400);
+        $deleted = 0;
+        $files = array_merge(glob($dir . '/app-*.log') ?: [], glob($dir . '/security-*.log') ?: []);
+
+        foreach ($files as $file) {
+            if (is_file($file) && (int) filemtime($file) < $cutoff) {
+                @unlink($file);
+                $deleted++;
+            }
+        }
+
+        return $deleted;
+    }
 }

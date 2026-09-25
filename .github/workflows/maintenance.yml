@@ -1,0 +1,92 @@
+name: Scheduled maintenance
+
+# Runs prune housekeeping (storage/logs, rate_limits) and a preflight health
+# check against production on a schedule — see docs/SECURITY.md §7, which is
+# what surfaced that nothing was pruning either, and that preflight.php was
+# never run against the live host. A failed step here fails the whole
+# workflow run, which GitHub emails to the repo's watchers by default — a
+# free, if coarse, stand-in for the "error alerting" gap until something more
+# real-time is decided.
+
+on:
+  schedule:
+    # 02:30 UTC, a low-traffic hour for a PKR-timezone audience (07:30 PKT).
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-production
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    name: Prune + preflight on the main host
+    runs-on: ubuntu-latest
+    environment: production
+
+    # Off until the host is confirmed reachable, same pattern deploy.yml
+    # uses for DEPLOY_ENABLED — separate switch because this workflow runs
+    # unattended on a timer rather than on a push someone is watching.
+    if: vars.MAINTENANCE_ENABLED == 'true'
+
+    env:
+      APP_DIR: ${{ vars.APP_DIR || secrets.APP_DIR }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      PHP_BIN: ${{ vars.PHP_BIN || 'php' }}
+
+    steps:
+      - name: Verify required secrets and variables are set
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS APP_DIR; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::Not configured for maintenance. Missing:$missing"
+            echo "This workflow reuses the same secrets as deploy.yml — see docs/GITHUB-SETUP.md."
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
+            || { echo "::error::SSH_PRIVATE_KEY is not a valid private key."; exit 1; }
+
+      - name: Prune storage/logs and rate_limits
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "cd '$APP_DIR' && $PHP_BIN scripts/maintenance.php"
+
+      - name: Preflight health check
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "cd '$APP_DIR' && $PHP_BIN scripts/preflight.php"

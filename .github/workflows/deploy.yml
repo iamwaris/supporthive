@@ -260,9 +260,15 @@ jobs:
 
           if $SSH_CMD "$SSH_USER@$SSH_HOST" "command -v rsync >/dev/null 2>&1"; then
             echo "Using rsync."
+            # storage/documents holds attachments (M7-1, decision D-4) that
+            # exist only on the server, the same reason storage/logs and
+            # storage/cache are excluded below - without this, --delete
+            # removes every uploaded receipt on the next deploy, since the
+            # local build never creates this directory to sync from.
             rsync -rlptz --delete \
               --exclude 'storage/logs/***' \
               --exclude 'storage/cache/***' \
+              --exclude 'storage/documents/***' \
               -e "$SSH_CMD" \
               ./release/app_private/ "$SSH_USER@$SSH_HOST:$APP_DIR"
           else
@@ -317,8 +323,8 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
               "$SSH_USER@$SSH_HOST" "
                 chmod 600 '$APP_DIR/.env' 2>/dev/null || true
-                mkdir -p '$APP_DIR/storage/logs' '$APP_DIR/storage/cache' '$WEB_ROOT/uploads'
-                chmod 750 '$APP_DIR/storage/logs' '$APP_DIR/storage/cache'
+                mkdir -p '$APP_DIR/storage/logs' '$APP_DIR/storage/cache' '$APP_DIR/storage/documents' '$WEB_ROOT/uploads'
+                chmod 750 '$APP_DIR/storage/logs' '$APP_DIR/storage/cache' '$APP_DIR/storage/documents'
                 chmod 755 '$WEB_ROOT/uploads'
               "
 

@@ -114,10 +114,10 @@ from the outside — nothing here required or used elevated access.
       confirmed: HTTP redirects 301 to HTTPS, `strict-transport-security:
       max-age=31536000; includeSubDomains; preload` present, full CSP live
       and matching the documented policy
-- [ ] `php scripts/preflight.php` fully green on the host — **not run
-      automatically anywhere.** It exists and passes locally, but nothing in
-      `deploy.yml` invokes it on the live host; needs either a manual SSH run
-      or wiring into the deploy pipeline
+- [x] `php scripts/preflight.php` fully green on the host — was **not run
+      automatically anywhere**; now runs nightly via
+      `.github/workflows/maintenance.yml` (`MAINTENANCE_ENABLED` gates it,
+      same pattern as `DEPLOY_ENABLED`), and a failed run fails that workflow
 - [x] Application directory not reachable over HTTP — confirmed 404 on
       `/.env`, `/composer.json`, `/.git/config`, `/app/bootstrap.php`
 - [ ] Upload execution blocked — the `.htaccess` mechanism and `Upload`
@@ -130,19 +130,23 @@ from the outside — nothing here required or used elevated access.
       narrowable on Hostinger); nothing new to do
 - [ ] Automated backups running **and a restore has been tested** — M7-7,
       not started
-- [ ] `storage/logs` writable, not web-readable, and rotating — not
-      web-readable (confirmed 404); writable needs an on-host check.
-      **"Rotating" is half true**: `Logger` already names files per day
-      (`app-YYYY-MM-DD.log`), so no single file grows unbounded, but nothing
-      ever *deletes* an old one — `storage/logs` grows forever. Same gap
-      exists for `rate_limits`: `RateLimiter::prune()` is written and tested
-      (`tests/Feature/RateLimiterTest.php`) but has no caller anywhere in the
-      app — there is no cron or scheduled-task mechanism on this project at
-      all yet, so nothing invokes it
-- [ ] Error alerting in place — **does not exist.** No mail, webhook, or
-      third-party error-tracking integration anywhere in the codebase;
-      `MAIL_HOST`/`MAIL_PORT` are provisioned in `.env`/deploy secrets but
-      nothing reads them
+- [x] `storage/logs` writable, not web-readable, and rotating — not
+      web-readable (confirmed 404); writable needs an on-host check, but
+      **rotation is now real**: `Logger::prune()` (new) plus
+      `RateLimiter::prune()` (existed, never called) both run nightly via
+      `scripts/maintenance.php` from `.github/workflows/maintenance.yml` —
+      the project's first scheduled-task mechanism, chosen as a GitHub
+      Actions cron over a Hostinger cron job (owner's call 2026-09-25),
+      reusing `deploy.yml`'s existing SSH secrets rather than provisioning a
+      second set
+- [ ] Error alerting in place — **still does not exist** as a real-time
+      mechanism. A GitHub Actions workflow failure now emails the repo's
+      watchers by default (`maintenance.yml` failing preflight, or
+      `deploy.yml` failing outright), which is *something* — but it is not
+      the same as being notified when the live site throws a 500 between
+      scheduled runs. `MAIL_HOST`/`MAIL_PORT` remain provisioned and unused;
+      a real answer needs a decision on mechanism (email from `ErrorHandler`
+      itself, a webhook, a third-party tracker)
 - [x] Rate limits verified by actually exceeding them — `RateLimiter` had
       **zero test coverage** despite CLAUDE.md rule 9 requiring it; added
       `tests/Feature/RateLimiterTest.php` (7 cases: hit counting, threshold
