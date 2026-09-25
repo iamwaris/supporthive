@@ -128,8 +128,10 @@ from the outside — nothing here required or used elevated access.
       check this pass had no access to
 - [x] DB user privileges reviewed — accepted limitation, see §5 (not
       narrowable on Hostinger); nothing new to do
-- [ ] Automated backups running **and a restore has been tested** — M7-7,
-      not started
+- [ ] Automated backups running **and a restore has been tested** — running:
+      confirmed 2026-09-25, Hostinger's daily backup covers both the database
+      and the filesystem (attachments, `.env` included). Restore: not yet
+      tested — deferred to a separate session (M7-7)
 - [x] `storage/logs` writable, not web-readable, and rotating — not
       web-readable (confirmed 404); writable needs an on-host check, but
       **rotation is now real**: `Logger::prune()` (new) plus
