@@ -54,6 +54,10 @@ $router->get('/dashboard/charts/budget', 'DashboardController@budgetChart', ['ca
 $router->get('/settings', 'SettingsController@index', ['can:administer']);
 $router->post('/settings', 'SettingsController@update', ['can:administer']);
 
+$router->get('/settings/ai', 'AiSettingsController@edit', ['can:administer']);
+$router->post('/settings/ai', 'AiSettingsController@update', ['can:administer']);
+$router->post('/settings/ai/test', 'AiSettingsController@test', ['can:administer']);
+
 $router->get('/users', 'UserController@index', ['can:administer']);
 $router->post('/users', 'UserController@store', ['can:administer']);
 $router->post('/users/{id}', 'UserController@update', ['can:administer']);
@@ -103,6 +107,8 @@ $router->get('/expenses/new', 'ExpenseController@create', ['can:write']);
 $router->post('/expenses', 'ExpenseController@store', ['can:write']);
 // Type-ahead over previously used vendor names (decision D-5).
 $router->get('/expenses/vendors', 'ExpenseController@vendors', ['can:write']);
+// AI receipt pre-fill: extraction only, nothing persisted but the usage-log row.
+$router->post('/expenses/scan-receipt', 'ExpenseController@scanReceipt', ['can:write']);
 
 $router->get('/income', 'IncomeController@index', ['can:view']);
 $router->get('/income/new', 'IncomeController@create', ['can:write']);
@@ -145,6 +151,11 @@ $router->get('/reports/partner-contributions', 'ReportController@partnerContribu
 $router->get('/reports/partner-withdrawals', 'ReportController@partnerWithdrawals', ['can:view']);
 $router->get('/reports/profit-distribution', 'ReportController@profitDistribution', ['can:view']);
 $router->get('/reports/daily-transactions', 'ReportController@dailyTransactions', ['can:view']);
+
+// AI chat: read-only Q&A over the same reporting layer, gated by the same
+// visibility as the reports screens (AiAvailability itself gates whether the
+// feature is usable for the branch, checked inside the controller).
+$router->post('/ai/chat', 'AiChatController@ask', ['can:view']);
 
 // --- Branch administration (multi-branch retrofit) --------------------------
 // Super admin only, and deliberately NOT gated by can:view/etc — those all

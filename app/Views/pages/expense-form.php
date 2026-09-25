@@ -8,13 +8,16 @@
  * @var int                       $lastAccountId
  * @var list<array{vendor:string,uses:int}> $suggestions
  * @var array<string,list<string>> $errors
+ * @var bool                       $aiEnabled
  */
 
 declare(strict_types=1);
 
+use App\Core\Csrf;
 use App\Services\Settings;
 
 $errors = $errors ?? [];
+$aiEnabled = $aiEnabled ?? false;
 $symbol = Settings::string('currency_symbol', 'Rs');
 $activeAccounts = array_values(array_filter($accounts, static fn (array $a): bool => (int) $a['is_active'] === 1));
 $hasCategories = $tree !== [];
@@ -39,6 +42,9 @@ $hasCategories = $tree !== [];
 <form method="post" action="<?= e(url('/expenses')) ?>" enctype="multipart/form-data" novalidate
       x-data="{
           vendor: <?= e(json_encode(old('vendor'), JSON_THROW_ON_ERROR)) ?>,
+          amount: <?= e(json_encode(old('amount'), JSON_THROW_ON_ERROR)) ?>,
+          transactionDate: <?= e(json_encode(old('transaction_date', date('Y-m-d')), JSON_THROW_ON_ERROR)) ?>,
+          categoryId: <?= e(json_encode(old('category_id'), JSON_THROW_ON_ERROR)) ?>,
           suggestions: [],
           open: false,
           async lookup() {
@@ -50,9 +56,77 @@ $hasCategories = $tree !== [];
                   this.open = this.suggestions.length > 0;
               } catch (e) { this.suggestions = []; this.open = false; }
           },
-          pick(name) { this.vendor = name; this.open = false; }
+          pick(name) { this.vendor = name; this.open = false; },
+          scanning: false,
+          scanError: null,
+          scanBanner: false,
+          async scanReceipt(event) {
+              const input = event.target;
+              const file = input.files && input.files[0];
+              if (!file) { return; }
+
+              this.scanning = true;
+              this.scanError = null;
+              this.scanBanner = false;
+
+              try {
+                  const body = new FormData();
+                  body.append('receipt', file);
+                  const response = await fetch('<?= e(url('/expenses/scan-receipt')) ?>', {
+                      method: 'POST',
+                      headers: { 'X-CSRF-Token': '<?= e(Csrf::token()) ?>' },
+                      body,
+                  });
+                  const data = await response.json();
+
+                  if (!response.ok) {
+                      this.scanError = data.error || 'Could not read that receipt. Enter the details manually.';
+                      return;
+                  }
+
+                  if (data.vendor) { this.vendor = data.vendor; }
+                  if (data.amount) { this.amount = data.amount; }
+                  if (data.transaction_date) { this.transactionDate = data.transaction_date; }
+                  if (data.category_id !== null && data.category_id !== undefined) {
+                      this.categoryId = String(data.category_id);
+                  }
+                  this.scanBanner = true;
+              } catch (e) {
+                  this.scanError = 'Could not read that receipt. Enter the details manually.';
+              } finally {
+                  this.scanning = false;
+                  input.value = '';
+              }
+          }
       }">
     <?= csrf_field() ?>
+
+    <?php if ($aiEnabled) : ?>
+        <div class="mb-5 card p-4 sm:p-5">
+            <label for="ai_receipt" class="label">Scan a receipt to auto-fill</label>
+            <input id="ai_receipt" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                   x-on:change="scanReceipt($event)" x-bind:disabled="scanning"
+                   class="input file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-slate-700">
+            <p class="help">Reads the vendor, amount, date and category from a photo or PDF — review before saving.</p>
+
+            <p x-show="scanning" x-cloak class="mt-2 flex items-center gap-2 text-[11.5px] text-slate-500"
+               role="status" aria-live="polite">
+                <span class="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-brand-500"></span>
+                Reading receipt&hellip;
+            </p>
+
+            <p x-show="scanError" x-cloak x-text="scanError" class="error mt-2" role="alert" aria-live="assertive"></p>
+
+            <div x-show="scanBanner" x-cloak
+                 class="mt-3 flex items-start justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-[11.5px] text-brand-800"
+                 role="status" aria-live="polite">
+                <span>Pre-filled from receipt &mdash; review before saving.</span>
+                <button type="button" x-on:click="scanBanner = false" class="shrink-0 font-medium underline">
+                    Dismiss
+                </button>
+            </div>
+        </div>
+    <?php endif; ?>
 
     <div class="grid gap-5 xl:grid-cols-[1fr_340px]">
 
@@ -63,7 +137,7 @@ $hasCategories = $tree !== [];
                 <div class="w-full sm:w-48">
                     <label for="transaction_date" class="label">Date</label>
                     <input id="transaction_date" name="transaction_date" type="date" required
-                           value="<?= e(old('transaction_date', date('Y-m-d'))) ?>" class="input">
+                           value="<?= e(old('transaction_date', date('Y-m-d'))) ?>" x-model="transactionDate" class="input">
                     <p class="help">Defaults to today</p>
                 </div>
 
@@ -71,7 +145,7 @@ $hasCategories = $tree !== [];
                     <label for="amount" class="label">Amount (<?= e($symbol) ?>)</label>
                     <input id="amount" name="amount" type="text" inputmode="decimal" required
                            autocomplete="off" placeholder="0.00"
-                           value="<?= e(old('amount')) ?>"
+                           value="<?= e(old('amount')) ?>" x-model="amount"
                            class="money h-14 text-2xl font-medium tracking-tight
                                   <?= isset($errors['amount']) ? 'input-error' : 'input' ?>">
                     <?php if (isset($errors['amount'][0])) : ?>
@@ -85,7 +159,7 @@ $hasCategories = $tree !== [];
             <div class="grid gap-5 sm:grid-cols-2">
                 <div>
                     <label for="category_id" class="label">Category</label>
-                    <select id="category_id" name="category_id" required
+                    <select id="category_id" name="category_id" required x-model="categoryId"
                             class="<?= isset($errors['category_id']) ? 'input-error' : 'input' ?>">
                         <option value="">Choose one&hellip;</option>
                         <?php foreach ($tree as $node) : ?>

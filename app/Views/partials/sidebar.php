@@ -57,6 +57,7 @@ $groups = $canManageBranches ? [] : [
         ['key' => 'users', 'label' => 'Users', 'href' => '/users', 'icon' => 'users', 'show' => $admin, 'ready' => true],
         ['key' => 'audit-log', 'label' => 'Audit Log', 'href' => '/audit-log', 'icon' => 'doc', 'show' => $admin, 'ready' => true],
         ['key' => 'settings', 'label' => 'Settings', 'href' => '/settings', 'icon' => 'sliders', 'show' => $admin, 'ready' => true],
+        ['key' => 'settings-ai', 'label' => 'AI Settings', 'href' => '/settings/ai', 'icon' => 'sliders', 'show' => $admin, 'ready' => true],
     ],
 ];
 

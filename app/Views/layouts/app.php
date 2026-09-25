@@ -114,8 +114,24 @@ $nav = $nav ?? '';
     </div>
 </div>
 
-<script src="<?= e(asset('assets/vendor/alpine.min.js')) ?>" defer></script>
+<?php require APP_PATH . '/Views/partials/ai-chat.php'; ?>
+
+<?php
+/*
+ * app.js first, Alpine second — deliberately. Alpine's vendored build calls
+ * .start() synchronously as soon as its own <script defer> runs (it has no
+ * DOMContentLoaded/readyState guard of its own; `defer` is what delays it),
+ * and start() walks the whole DOM immediately. Any Alpine.data() registration
+ * app.js does via an `alpine:init` listener has to already be registered by
+ * then, so app.js — which only *adds* that listener, it never touches the
+ * Alpine global at top level — must execute first. Deferred scripts run in
+ * document order, so this ordering is what makes that true. Swapping it back
+ * silently breaks every x-data="..." component app.js registers: Alpine logs
+ * "X is not defined" for each one and never initialises it.
+ */
+?>
 <script src="<?= e(asset('assets/js/app.js')) ?>" defer></script>
+<script src="<?= e(asset('assets/vendor/alpine.min.js')) ?>" defer></script>
 <?php if (!empty($pageScripts)) : ?>
     <?= $pageScripts /* Rendered by the view; fixed vendor <script src> tags, not user input. */ ?>
 <?php endif; ?>

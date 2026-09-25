@@ -34,10 +34,17 @@ final class SettingsController extends Controller
             'budget_alert_pct' => 'required|int|between:1,100',
         ], '/settings');
 
+        // Validator::validated() only checks that these look like integers —
+        // it doesn't cast — so they arrive here as strings. Cast the known
+        // int fields back to int before Settings::set() so it can infer the
+        // correct value_type instead of writing every field as 'string'.
+        $clean['fiscal_year_start'] = (int) $clean['fiscal_year_start'];
+        $clean['budget_alert_pct'] = (int) $clean['budget_alert_pct'];
+
         $before = Settings::all();
 
         foreach ($clean as $key => $value) {
-            Settings::set($key, (string) $value);
+            Settings::set($key, $value);
         }
 
         // Settings change how money is presented and when alerts fire, so the

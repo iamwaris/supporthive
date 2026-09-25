@@ -125,4 +125,58 @@ final class SettingsTest extends TestCase
         // Leave the fixture as it was.
         Settings::set('company_name', 'LedgerHive');
     }
+
+    /**
+     * Regression test: Settings::set() used to write a row without ever
+     * setting value_type, so a brand-new bool setting silently defaulted to
+     * the settings table's DB-level 'string' default — and because the
+     * ON DUPLICATE KEY UPDATE branch didn't touch value_type either, a row
+     * stuck at 'string' could never self-correct on a later write. That made
+     * a strict `Settings::get($key, false) === true` check (as used by
+     * App\Services\AiAvailability) silently and permanently return false
+     * even though the stored value "looked like" it was on.
+     */
+    public function testSetWithBoolValueInfersBoolTypeAndRoundTripsAsNativeBool(): void
+    {
+        Settings::set('test_bool_flag', true);
+        Settings::flush();
+
+        self::assertSame(true, Settings::get('test_bool_flag'), 'bool setting must round-trip as native true');
+
+        $row = Database::instance()->first(
+            'SELECT value_type FROM settings WHERE branch_id = :b AND setting_key = :k',
+            ['b' => $this->branchId, 'k' => 'test_bool_flag']
+        );
+        self::assertNotNull($row);
+        self::assertSame('bool', $row['value_type'], 'row must be typed bool, not left at the string default');
+
+        // A later write to the same key must also keep it typed bool, since
+        // the original bug meant the type could never self-correct either.
+        Settings::set('test_bool_flag', false);
+        Settings::flush();
+
+        self::assertSame(false, Settings::get('test_bool_flag'), 'bool setting must round-trip as native false');
+
+        $row = Database::instance()->first(
+            'SELECT value_type FROM settings WHERE branch_id = :b AND setting_key = :k',
+            ['b' => $this->branchId, 'k' => 'test_bool_flag']
+        );
+        self::assertNotNull($row);
+        self::assertSame('bool', $row['value_type']);
+    }
+
+    public function testSetWithIntValueInfersIntType(): void
+    {
+        Settings::set('test_int_setting', 42);
+        Settings::flush();
+
+        self::assertSame(42, Settings::get('test_int_setting'));
+
+        $row = Database::instance()->first(
+            'SELECT value_type FROM settings WHERE branch_id = :b AND setting_key = :k',
+            ['b' => $this->branchId, 'k' => 'test_int_setting']
+        );
+        self::assertNotNull($row);
+        self::assertSame('int', $row['value_type']);
+    }
 }

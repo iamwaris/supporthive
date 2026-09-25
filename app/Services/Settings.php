@@ -55,22 +55,66 @@ final class Settings
     /**
      * Write a setting. Records who changed it — settings alter how money is
      * calculated, so an unattributed change is not acceptable.
+     *
+     * $value is typed mixed rather than string: the previous string-only
+     * signature forced every caller to pre-stringify the value before it
+     * reached here, which threw away the one signal that lets this method
+     * infer the correct value_type (a PHP bool, int or float). Without that
+     * signal the INSERT ... ON DUPLICATE KEY UPDATE never set value_type at
+     * all, so a brand-new row silently took the settings table's DB-level
+     * default of 'string' — and because value_type was never included in the
+     * UPDATE branch either, a row stuck at 'string' could never self-correct
+     * on a later write. Settings::cast() only converts '1'/'0' to a real
+     * bool when value_type = 'bool', so a setting like ai_enabled stuck at
+     * 'string' compares false forever against a strict `=== true` check even
+     * though the stored value "looks like" it's on.
      */
-    public static function set(string $key, string $value): void
+    public static function set(string $key, mixed $value): void
     {
         $branchId = Auth::branchId();
         if ($branchId === null) {
             throw new RuntimeException('No active branch — cannot change settings.');
         }
 
+        $type = self::inferType($value);
+        $stringValue = self::stringify($value);
+
         Database::instance()->run(
-            'INSERT INTO settings (branch_id, setting_key, setting_value, updated_by)
-             VALUES (:b, :k, :v, :u)
-             ON DUPLICATE KEY UPDATE setting_value = :v2, updated_by = :u2',
-            ['b' => $branchId, 'k' => $key, 'v' => $value, 'u' => Auth::id(), 'v2' => $value, 'u2' => Auth::id()]
+            'INSERT INTO settings (branch_id, setting_key, setting_value, value_type, updated_by)
+             VALUES (:b, :k, :v, :t, :u)
+             ON DUPLICATE KEY UPDATE setting_value = :v2, value_type = :t2, updated_by = :u2',
+            [
+                'b' => $branchId,
+                'k' => $key,
+                'v' => $stringValue,
+                't' => $type,
+                'u' => Auth::id(),
+                'v2' => $stringValue,
+                't2' => $type,
+                'u2' => Auth::id(),
+            ]
         );
 
         self::$cache = null;
+    }
+
+    /** Maps a PHP value's native type to one of the settings.value_type ENUM values. */
+    private static function inferType(mixed $value): string
+    {
+        return match (true) {
+            is_bool($value) => 'bool',
+            is_int($value) => 'int',
+            // Money and percentages are passed in as strings precisely to
+            // avoid a float round-trip (see cast() below); a genuine PHP
+            // float is still honoured for callers that do pass one.
+            is_float($value) => 'decimal',
+            default => 'string',
+        };
+    }
+
+    private static function stringify(mixed $value): string
+    {
+        return is_bool($value) ? ($value ? '1' : '0') : (string) $value;
     }
 
     /** @return array<string,mixed> every setting, cast, for the settings screen */

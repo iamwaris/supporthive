@@ -4,19 +4,25 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Auth;
+use App\Core\Config;
 use App\Core\Controller;
 use App\Core\Database;
 use App\Core\Http;
+use App\Core\RateLimiter;
 use App\Core\Session;
 use App\Domain\TransactionType;
 use App\Models\Account;
 use App\Models\Attachment;
 use App\Models\Category;
 use App\Models\Expense;
+use App\Services\AiAvailability;
+use App\Services\AnthropicClient;
 use App\Services\LedgerQuery;
 use App\Services\Settings;
 use App\Services\TransactionService;
 use InvalidArgumentException;
+use JsonException;
 use RuntimeException;
 
 /**
@@ -75,6 +81,7 @@ final class ExpenseController extends Controller
             'tree' => $categories->tree('expense'),
             'lastAccountId' => (int) Session::get('_last_expense_account', 0),
             'suggestions' => Expense::vendorSuggestions('', 6),
+            'aiEnabled' => AiAvailability::enabledForCurrentBranch(),
         ]);
     }
 
@@ -144,6 +151,207 @@ final class ExpenseController extends Controller
         $term = (string) ($_GET['q'] ?? '');
 
         $this->json(['suggestions' => Expense::vendorSuggestions($term, 8)]);
+    }
+
+    /**
+     * Pre-fill convenience only: reads an uploaded receipt image/PDF, asks the
+     * Anthropic API to extract vendor/amount/date/category from it, and
+     * returns the guess as JSON. Nothing here is persisted — not the file
+     * (no Upload::store() call), not a transaction, not an attachment — so a
+     * bad extraction costs the user nothing but a re-type. Only a usage-log
+     * row is written, for per-branch quota reporting.
+     */
+    public function scanReceipt(): void
+    {
+        if (!AiAvailability::enabledForCurrentBranch()) {
+            // A branch with AI off should not even be able to detect that
+            // this endpoint exists.
+            Http::abort(404);
+        }
+
+        RateLimiter::guard('ai_receipt:' . Auth::branchId(), 10, 3600);
+
+        /** @var array{name?:string,type?:string,tmp_name?:string,error?:int,size?:int}|null $file */
+        $file = $_FILES['receipt'] ?? null;
+        if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            $this->json(['error' => 'No file uploaded.'], 422);
+        }
+
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            $this->json(['error' => 'The upload failed. Try again.'], 422);
+        }
+
+        $tmpName = (string) ($file['tmp_name'] ?? '');
+        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+            $this->json(['error' => 'Invalid upload.'], 422);
+        }
+
+        $maxBytes = (int) Config::get('uploads.max_bytes', 5_242_880);
+        if ((int) ($file['size'] ?? 0) > $maxBytes) {
+            $this->json(['error' => 'File is larger than the ' . round($maxBytes / 1048576, 1) . ' MB limit.'], 422);
+        }
+
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $mime = (string) $finfo->file($tmpName);
+
+        /** @var array<string,string> $extensionsByMime */
+        $extensionsByMime = [
+            'image/jpeg'      => 'jpg',
+            'image/png'       => 'png',
+            'image/webp'      => 'webp',
+            'image/gif'       => 'gif',
+            'application/pdf' => 'pdf',
+        ];
+
+        /** @var list<string> $allowedMime */
+        $allowedMime = Config::get('uploads.allowed_mime', []);
+        if (!isset($extensionsByMime[$mime]) || !in_array($mime, $allowedMime, true)) {
+            $this->json(['error' => 'That file type is not allowed.'], 422);
+        }
+
+        if (str_starts_with($mime, 'image/') && @getimagesize($tmpName) === false) {
+            $this->json(['error' => 'That image could not be read.'], 422);
+        }
+
+        $bytes = file_get_contents($tmpName);
+        if ($bytes === false) {
+            $this->json(['error' => 'Could not read that receipt. Enter the details manually.'], 502);
+        }
+
+        $encoded = base64_encode($bytes);
+        $contentBlock = $mime === 'application/pdf'
+            ? ['type' => 'document', 'source' => ['type' => 'base64', 'media_type' => $mime, 'data' => $encoded]]
+            : ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $mime, 'data' => $encoded]];
+
+        $tool = [
+            'name' => 'extract_receipt',
+            'description' => 'Record the fields extracted from a receipt image or document.',
+            'input_schema' => [
+                'type' => 'object',
+                'properties' => [
+                    'vendor' => ['type' => ['string', 'null'], 'description' => 'The vendor/payee name as printed.'],
+                    'amount' => [
+                        'type' => ['string', 'null'],
+                        'description' => 'Total amount as a plain decimal string, no currency symbol, e.g. "12.50".',
+                    ],
+                    'transaction_date' => [
+                        'type' => ['string', 'null'],
+                        'description' => 'Date in ISO format YYYY-MM-DD.',
+                    ],
+                    'category_guess' => [
+                        'type' => ['string', 'null'],
+                        'description' => 'Best-guess expense category name, if evident.',
+                    ],
+                    'confidence' => ['type' => 'string', 'enum' => ['high', 'medium', 'low']],
+                ],
+                'required' => ['vendor', 'amount', 'transaction_date', 'category_guess', 'confidence'],
+            ],
+        ];
+
+        $system = 'You extract structured data from a receipt image or PDF. Report only what is visibly printed '
+            . 'on the receipt - never infer, guess, or fill in a value that is not legible. If a field is not '
+            . 'present or not legible, return null for it. Always respond using the extract_receipt tool, with '
+            . 'no other output.';
+
+        try {
+            $response = AnthropicClient::forCurrentBranch()->createMessage(
+                [
+                    [
+                        'role' => 'user',
+                        'content' => [
+                            $contentBlock,
+                            ['type' => 'text', 'text' => 'Extract the fields from this receipt.'],
+                        ],
+                    ],
+                ],
+                $system,
+                [$tool],
+                1024
+            );
+
+            $extracted = $this->extractToolInput($response);
+        } catch (RuntimeException | JsonException) {
+            $this->json(['error' => 'Could not read that receipt. Enter the details manually.'], 502);
+        }
+
+        if ($extracted === null) {
+            $this->json(['error' => 'Could not read that receipt. Enter the details manually.'], 502);
+        }
+
+        $categoryId = null;
+        $categoryLabel = null;
+        $categoryGuess = $extracted['category_guess'] ?? null;
+        if (is_string($categoryGuess) && trim($categoryGuess) !== '') {
+            foreach ((new Category())->tree('expense') as $node) {
+                if (strcasecmp((string) $node['parent']['name'], $categoryGuess) === 0) {
+                    $categoryId = (int) $node['parent']['id'];
+                    $categoryLabel = (string) $node['parent']['name'];
+                    break;
+                }
+                foreach ($node['children'] as $child) {
+                    if (strcasecmp((string) $child['name'], $categoryGuess) === 0) {
+                        $categoryId = (int) $child['id'];
+                        $categoryLabel = (string) $child['name'];
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        Database::instance()->insert('ai_usage_log', [
+            'branch_id' => Auth::branchId(),
+            'user_id' => Auth::id(),
+            'feature' => 'receipt_scan',
+        ]);
+
+        $this->json([
+            'vendor' => $this->stringOrNull($extracted['vendor'] ?? null),
+            'amount' => $this->stringOrNull($extracted['amount'] ?? null),
+            'transaction_date' => $this->stringOrNull($extracted['transaction_date'] ?? null),
+            'category_id' => $categoryId,
+            'category_label' => $categoryLabel,
+            'confidence' => $this->stringOrNull($extracted['confidence'] ?? null) ?? 'low',
+        ]);
+    }
+
+    /**
+     * Pulls the extract_receipt tool_use block's input out of a Messages API
+     * response. Returns null on anything unexpected — the caller turns that
+     * into the same generic "could not read" response as every other failure
+     * mode, never a raw parse error.
+     *
+     * @param array<string,mixed> $response
+     * @return array<string,mixed>|null
+     */
+    private function extractToolInput(array $response): ?array
+    {
+        $content = $response['content'] ?? null;
+        if (!is_array($content)) {
+            return null;
+        }
+
+        foreach ($content as $block) {
+            if (!is_array($block) || ($block['type'] ?? null) !== 'tool_use') {
+                continue;
+            }
+            if (($block['name'] ?? null) !== 'extract_receipt') {
+                continue;
+            }
+
+            $input = $block['input'] ?? null;
+            if (is_array($input)) {
+                return $input;
+            }
+            if (is_string($input)) {
+                /** @var array<string,mixed> $decoded */
+                $decoded = json_decode($input, true, 512, JSON_THROW_ON_ERROR);
+                return $decoded;
+            }
+
+            return null;
+        }
+
+        return null;
     }
 
     /**
