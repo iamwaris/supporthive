@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Core\Auth;
 use App\Core\Database;
 use App\Core\Http;
+use App\Core\Logger;
+use PDOException;
 
 /**
  * Append-only change history.
@@ -31,7 +33,7 @@ final class Audit
         ?array $before = null,
         ?array $after = null
     ): void {
-        Database::instance()->insert('audit_log', [
+        $row = [
             'user_id' => Auth::id(),
             // NULL for a super admin action (no active branch) — see the
             // branches_and_tenant_scope migration's note on this column.
@@ -50,7 +52,30 @@ final class Audit
                 ),
                 JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             ),
-        ]);
+        ];
+
+        try {
+            Database::instance()->insert('audit_log', $row);
+        } catch (PDOException $e) {
+            // A session can outlive its own branch: deleted by a super admin
+            // while the session was still open, or — the case that surfaced
+            // this — a whole dataset re-import redefining every id out from
+            // under a browser that still holds an old session cookie. That
+            // must never be what breaks the login/logout it's trying to
+            // record, so retry once as branch-less rather than letting a
+            // dangling foreign key take the request down with it.
+            if (!str_contains($e->getMessage(), 'fk_audit_branch')) {
+                throw $e;
+            }
+
+            Logger::security('Audit row retried without branch_id: stale branch on session', [
+                'action' => $action,
+                'entity_type' => $entityType,
+                'branch_id' => $row['branch_id'],
+            ]);
+            $row['branch_id'] = null;
+            Database::instance()->insert('audit_log', $row);
+        }
     }
 
     /**
