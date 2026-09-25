@@ -35,7 +35,7 @@ $statusLabel = static fn (string $status): string => match ($status) {
 
 <div class="grid gap-5 xl:grid-cols-[1fr_360px]">
 
-    <div class="flex flex-col gap-5">
+    <div class="flex min-w-0 flex-col gap-5">
         <?php if ($batches === []) : ?>
             <div class="card px-5 py-8 text-center text-sm text-slate-500">
                 No distributions calculated yet.

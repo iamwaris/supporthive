@@ -36,6 +36,7 @@ $statusLabel = static fn (string $status): string => match ($status) {
                 <a href="<?= e(url('/reports/profit-distribution?format=pdf')) ?>" class="btn-secondary">Export PDF</a>
             </div>
         </div>
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -70,6 +71,7 @@ $statusLabel = static fn (string $status): string => match ($status) {
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 
     <?php if ($batchId !== null) : ?>
@@ -77,6 +79,7 @@ $statusLabel = static fn (string $status): string => match ($status) {
             <div class="px-5 pt-4 pb-3">
                 <h2 class="font-display text-sm font-semibold text-ink">Batch detail</h2>
             </div>
+            <div class="overflow-x-auto">
             <table class="w-full border-collapse">
                 <thead>
                     <tr>
@@ -102,6 +105,7 @@ $statusLabel = static fn (string $status): string => match ($status) {
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
         </div>
     <?php endif; ?>
 </div>

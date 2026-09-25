@@ -27,6 +27,7 @@ $symbol = Settings::string('currency_symbol', 'Rs');
             </p>
         </div>
 
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -145,6 +146,7 @@ $symbol = Settings::string('currency_symbol', 'Rs');
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 
     <?php if ($canEdit) : ?>

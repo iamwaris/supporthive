@@ -22,7 +22,7 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
 
 <div class="grid gap-5 xl:grid-cols-[1fr_380px]">
 
-    <div class="flex flex-col gap-5">
+    <div class="flex min-w-0 flex-col gap-5">
 
         <!-- balances, derived from the ledger -->
         <div class="card overflow-hidden">

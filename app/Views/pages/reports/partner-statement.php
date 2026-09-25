@@ -70,6 +70,7 @@ $typeBadge = [
         </div>
 
         <div class="card overflow-hidden">
+            <div class="overflow-x-auto">
             <table class="w-full border-collapse">
                 <thead>
                     <tr>
@@ -105,6 +106,7 @@ $typeBadge = [
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
         </div>
     <?php endif; ?>
 </div>

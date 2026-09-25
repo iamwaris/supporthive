@@ -61,7 +61,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
 
     <div class="grid gap-5 xl:grid-cols-[1fr_360px]">
 
-        <div class="flex flex-col gap-5">
+        <div class="flex min-w-0 flex-col gap-5">
             <div class="grid gap-3 sm:grid-cols-2">
                 <div class="card px-5 py-4">
                     <p class="kpi-label">Total budgeted — <?= e($months[$month]) ?> <?= e((string) $year) ?></p>
@@ -78,6 +78,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
                     <h2 class="font-display text-sm font-semibold text-ink">Budget vs actual</h2>
                 </div>
 
+                <div class="overflow-x-auto">
                 <table class="w-full border-collapse">
                     <thead>
                         <tr>
@@ -158,6 +159,7 @@ $totalSpent = array_sum(array_map(static fn (array $r): float => (float) $r['spe
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
 

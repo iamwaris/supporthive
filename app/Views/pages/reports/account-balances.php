@@ -35,6 +35,7 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
     </div>
 
     <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -58,5 +59,6 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 </div>

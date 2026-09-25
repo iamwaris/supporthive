@@ -38,6 +38,7 @@ $total = array_reduce($rows, static fn (float $sum, array $r): float => $sum + (
             <h2 class="font-display text-sm font-semibold text-ink">Contributions by partner</h2>
             <span class="money text-sm font-semibold text-ink"><?= e($symbol) ?> <?= e($money($total)) ?></span>
         </div>
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -59,5 +60,6 @@ $total = array_reduce($rows, static fn (float $sum, array $r): float => $sum + (
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 </div>

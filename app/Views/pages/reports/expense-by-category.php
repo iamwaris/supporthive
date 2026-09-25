@@ -39,6 +39,7 @@ $totalFloat = (float) $total;
             <h2 class="font-display text-sm font-semibold text-ink">Expense by category</h2>
             <span class="money text-sm font-semibold text-ink"><?= e($symbol) ?> <?= e($money($total)) ?></span>
         </div>
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -63,5 +64,6 @@ $totalFloat = (float) $total;
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 </div>

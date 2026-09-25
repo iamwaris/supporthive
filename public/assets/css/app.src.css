@@ -11,6 +11,19 @@
    flashes visible for one frame before Alpine's x-show catches up. */
 [x-cloak] { display: none !important; }
 
+/* A wide, auto-layout <table> inside its own `.overflow-x-auto` wrapper is
+   allowed (design rule: "only tables ... may be wider, each inside its own
+   overflow-x-auto container") — but a table's intrinsic min-content width
+   (driven by whitespace-nowrap cells: dates, money, badges) can still leak
+   past that wrapper into document.documentElement.scrollWidth in Chromium,
+   even though the wrapper's own box and document.body.scrollWidth both
+   measure correctly contained. Confirmed on /transactions, /accounts,
+   /budgets and /users at 375px: window.scrollTo() could move the whole page
+   sideways, revealing blank space, despite every element in the ancestor
+   chain individually measuring within the viewport. This is the backstop —
+   the root itself must never scroll horizontally, whatever the cause. */
+html, body { overflow-x: hidden; max-width: 100%; }
+
 /* ---------------------------------------------------------------------------
    Fonts, self-hosted.
    The CSP is font-src 'self', so Google Fonts is not an option — a <link> to

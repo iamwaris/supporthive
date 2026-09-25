@@ -26,7 +26,7 @@ $activeAccounts = array_values(array_filter($accounts, static fn (array $a): boo
 
 <div class="grid gap-5 xl:grid-cols-[1fr_360px]">
 
-    <div class="flex flex-col gap-5">
+    <div class="flex min-w-0 flex-col gap-5">
 
         <!-- summary -->
         <div class="grid gap-3 sm:grid-cols-2">

@@ -24,7 +24,7 @@ $trees = [
 
 <div class="grid gap-5 xl:grid-cols-[1fr_360px]">
 
-    <div class="flex flex-col gap-5">
+    <div class="flex min-w-0 flex-col gap-5">
         <?php foreach ($trees as $type => $group) : ?>
             <div class="card overflow-hidden">
                 <div class="flex items-baseline gap-3 px-5 pt-4 pb-3">

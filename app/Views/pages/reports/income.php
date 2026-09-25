@@ -62,6 +62,7 @@ $row = static function (array $r) use ($money): void {
         <div class="px-5 pt-4 pb-3">
             <h2 class="font-display text-sm font-semibold text-ink">Received</h2>
         </div>
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -81,6 +82,7 @@ $row = static function (array $r) use ($money): void {
                 endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 
     <div class="card overflow-hidden">
@@ -91,6 +93,7 @@ $row = static function (array $r) use ($money): void {
             </div>
             <span class="money text-sm font-semibold text-slate-600"><?= e($symbol) ?> <?= e($money($pendingTotal)) ?></span>
         </div>
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -110,5 +113,6 @@ $row = static function (array $r) use ($money): void {
                 endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 </div>

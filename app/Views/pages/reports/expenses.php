@@ -40,6 +40,7 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
                 <h2 class="font-display text-sm font-semibold text-ink">Expenses</h2>
                 <span class="money text-sm font-semibold text-bad-text"><?= e($symbol) ?> <?= e($money($total)) ?></span>
             </div>
+            <div class="overflow-x-auto">
             <table class="w-full border-collapse">
                 <thead>
                     <tr>
@@ -67,6 +68,7 @@ $money = static fn (mixed $v): string => number_format((float) $v, 2);
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div class="card p-5">

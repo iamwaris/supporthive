@@ -57,6 +57,7 @@ $labelFor = static fn (string $state): string => match ($state) {
     </div>
 
     <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
         <table class="w-full border-collapse">
             <thead>
                 <tr>
@@ -105,5 +106,6 @@ $labelFor = static fn (string $state): string => match ($state) {
                 <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     </div>
 </div>
