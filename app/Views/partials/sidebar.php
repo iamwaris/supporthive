@@ -38,6 +38,8 @@ $groups = $canManageBranches ? [] : [
         ['key' => 'income', 'label' => 'Income', 'href' => '/income', 'icon' => 'trend', 'show' => true, 'ready' => true],
         ['key' => 'transfers', 'label' => 'Transfers', 'href' => '/transfers', 'icon' => 'swap', 'show' => true, 'ready' => true],
         ['key' => 'ledger', 'label' => 'All Transactions', 'href' => '/transactions', 'icon' => 'list', 'show' => true, 'ready' => true],
+        ['key' => 'recurring-rules', 'label' => 'Recurring Rules', 'href' => '/recurring-rules', 'icon' => 'repeat', 'show' => true, 'ready' => true],
+        ['key' => 'recurring-occurrences', 'label' => 'Recurring Approvals', 'href' => '/recurring-occurrences', 'icon' => 'doc', 'show' => true, 'ready' => true],
     ],
     'Finance' => [
         ['key' => 'accounts', 'label' => 'Accounts', 'href' => '/accounts', 'icon' => 'card', 'show' => true, 'ready' => true],

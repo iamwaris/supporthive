@@ -22,6 +22,7 @@ $paths = [
     'coins'   => '<path d="M12 3v18"></path><path d="M8 7h5.5a2.5 2.5 0 0 1 0 5H10a2.5 2.5 0 0 0 0 5H16"></path>',
     'doc'     => '<path d="M5 3h9l5 5v13H5z"></path><path d="M14 3v5h5"></path>',
     'sliders' => '<path d="M4 7h10"></path><path d="M18 7h2"></path><path d="M4 17h4"></path><path d="M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>',
+    'repeat'  => '<path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>',
 ];
 
 $key = (string) ($item['icon'] ?? '');

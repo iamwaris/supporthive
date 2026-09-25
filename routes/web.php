@@ -123,6 +123,27 @@ $router->get('/budgets', 'BudgetController@index', ['can:view']);
 $router->post('/budgets', 'BudgetController@store', ['can:master']);
 $router->post('/budgets/{id}', 'BudgetController@update', ['can:master']);
 
+// --- Recurring transactions (M9) — rule CRUD only ---------------------------
+// Generation (the nightly cron) and the approval queue for generated drafts
+// are separate features; these routes only manage the schedules themselves.
+$router->get('/recurring-rules', 'RecurringRuleController@index', ['can:view']);
+$router->post('/recurring-rules', 'RecurringRuleController@store', ['can:master']);
+$router->post('/recurring-rules/{id}', 'RecurringRuleController@update', ['can:master']);
+$router->post('/recurring-rules/{id}/toggle', 'RecurringRuleController@toggle', ['can:master']);
+
+// The approval queue for drafts those rules (or the nightly cron) generated.
+// Reviewing needs only the write ability (same as a manual expense/income
+// entry, which approving ultimately becomes) rather than master — approving
+// or rejecting a draft changes no schedule, only whether it becomes a
+// transaction. /approve-bulk is a distinct literal path from
+// /recurring-occurrences/{id}/approve, so Router::match()'s exact-lookup
+// (checked before the {id} pattern is ever tried) resolves it correctly
+// regardless of registration order here.
+$router->get('/recurring-occurrences', 'RecurringOccurrenceController@index', ['can:view']);
+$router->post('/recurring-occurrences/{id}/approve', 'RecurringOccurrenceController@approve', ['can:write']);
+$router->post('/recurring-occurrences/{id}/reject', 'RecurringOccurrenceController@reject', ['can:write']);
+$router->post('/recurring-occurrences/approve-bulk', 'RecurringOccurrenceController@approveBulk', ['can:write']);
+
 // Reading a distribution batch is financial data; calculating, approving and
 // paying one out needs the distribute ability, which today means admin only.
 $router->get('/profit-distributions', 'ProfitDistributionController@index', ['can:view']);

@@ -18,6 +18,7 @@
  * @var array{total:string,accounts:list<array<string,mixed>>} $accountBalances
  * @var list<array<string,mixed>>  $recentTransactions
  * @var list<array<string,mixed>>  $alerts
+ * @var int                        $pendingRecurringCount
  * @var array<string,mixed>|null   $authUser
  */
 
@@ -52,6 +53,17 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
     <noscript><button type="submit" class="btn-secondary">Go</button></noscript>
     <p class="ml-auto text-[11px] text-slate-500">Today's Expenses and Account Balance are always as of right now.</p>
 </form>
+
+<?php if ($pendingRecurringCount > 0) : ?>
+    <a href="<?= e(url('/recurring-occurrences')) ?>"
+       class="card mb-5 flex items-center justify-between gap-3 border-brand-500/40 bg-brand-50 px-5 py-3.5 hover:border-brand-500">
+        <span class="text-xs font-medium text-brand-900">
+            <?= e((string) $pendingRecurringCount) ?>
+            recurring <?= $pendingRecurringCount === 1 ? 'draft is' : 'drafts are' ?> waiting for review
+        </span>
+        <span class="badge-warn">Review queue</span>
+    </a>
+<?php endif; ?>
 
 <!-- KPI tiles -->
 <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

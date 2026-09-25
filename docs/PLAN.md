@@ -23,7 +23,7 @@ What we are building and why. Module breakdown lives in
 | Most important journey | Record a day's expenses in seconds, and have the dashboard and P&L stay correct without reconciliation. |
 | Currency | PKR (spec examples). Single currency in V1. |
 | Success in 3 months | Daily entry habit sustained; month-end P&L and partner statements produced from the system rather than a spreadsheet. |
-| Out of scope for V1 | Recurring expenses, approval workflows, forecasting, invoicing, receivables/payables, payroll, tax reporting, inventory, multi-company. |
+| Out of scope for V1 | Approval workflows, forecasting, invoicing, receivables/payables, payroll, tax reporting, inventory, multi-company. Recurring expenses shipped as M9 (`docs/TRACKER.md`) — no longer out of scope. |
 
 ### Branding (spec §2)
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Core\Controller;
+use App\Models\RecurringOccurrence;
 use App\Services\BudgetService;
 use App\Services\DashboardService;
 use InvalidArgumentException;
@@ -48,6 +49,9 @@ final class DashboardController extends Controller
             'accountBalances' => DashboardService::accountBalances(),
             'recentTransactions' => DashboardService::recentTransactions(8),
             'alerts' => BudgetService::alerts($budgetSummary),
+            // One bounded COUNT query (RecurringOccurrence::pendingCount()),
+            // same cost discipline as every other widget here (§27).
+            'pendingRecurringCount' => (new RecurringOccurrence())->pendingCount(),
         ]);
     }
 

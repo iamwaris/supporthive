@@ -140,7 +140,7 @@ widgets, §15 lists 8 chart types, §16 lists 12 reports.
 | M7-6 | Pre-launch security checklist | M | doing | `docs/SECURITY.md` §7 walked item-by-item against live production (2026-09-25), read-only. Confirmed good: HTTPS/HSTS/CSP, app dir + `.env`/`.git` unreachable, DB privilege limitation accepted. Closed: `RateLimiter` had zero tests (added `tests/Feature/RateLimiterTest.php`); `preflight.php` now runs nightly and `storage/logs`/`rate_limits` now get pruned nightly, both via the new `.github/workflows/maintenance.yml` (owner's call 2026-09-25: GitHub Actions cron, reusing `deploy.yml`'s existing production SSH secrets, gated by a new `MAINTENANCE_ENABLED` variable). **Found and fixed a live data-loss bug while doing this**: the deploy pipeline's `rsync --delete` never excluded `storage/documents` (added in M7-1), so every deploy since attachments shipped had been deleting any uploaded receipt on the production host. Fixed in `deploy.yml`. **Still open**: real-time error alerting (a GitHub Actions failure emailing watchers is a start, not a live-500 notifier — needs a decision on mechanism), `APP_ENV`/`APP_DEBUG`/`APP_KEY`/seed-account checks (need on-host or DB access this pass didn't have), the upload-execution live test (needs an authenticated session against production) |
 | M7-7 | Backup + restore drill | M | doing | Confirmed 2026-09-25: Hostinger's daily automated backup covers both the database and the filesystem (attachments, `.env` included). **Restore not yet tested** — deferred by owner's choice to a separate session; "a backup isn't a backup until restored" still applies until then |
 
-## M8 — Claude AI assistant integration *(built, not yet committed)*
+## M8 — Claude AI assistant integration *(committed and pushed)*
 
 | ID | Task | Size | Status | Notes |
 |---|---|---|---|---|
@@ -154,12 +154,10 @@ widgets, §15 lists 8 chart types, §16 lists 12 reports.
 | M8-8 | Rate limiting on both AI endpoints | S | done | 10 receipt scans/hour/branch, 20 chat questions/hour/user, via existing `RateLimiter` |
 | M8-9 | `ai_usage_log` table | S | done | Usage visibility only — **no cap enforcement yet**, deferred (see below) |
 
-**Not yet committed or pushed.** Working tree has the new files untracked and the
-modified files (`ExpenseController.php`, `expense-form.php`, `sidebar.php`,
-`layouts/app.php`, `routes/web.php`) unstaged — verified via `git status`
-2026-09-25, `git log` still shows `06edf46` (mobile pass round two) as HEAD.
-Full suite green: `vendor/bin/phpunit` → **174 tests, 448 assertions, OK**.
-`composer cs` (phpcs) and `composer stan` (PHPStan level 5) both clean.
+**Committed and pushed** as `8317943`; CI passed (lint, static analysis,
+tests, secret scan). Full suite green: `vendor/bin/phpunit` → **174 tests,
+448 assertions, OK**. `composer cs` (phpcs) and `composer stan` (PHPStan
+level 5) both clean.
 
 **Deferred / open:**
 - Per-branch AI usage/cost cap enforcement — `ai_usage_log` records usage but
@@ -168,6 +166,24 @@ Full suite green: `vendor/bin/phpunit` → **174 tests, 448 assertions, OK**.
   client-resent per request only; a page reload loses it.
 - Two test-coverage gaps: `AiSettingsController` (`/settings/ai`) and
   `ExpenseController::scanReceipt()` have no `tests/Feature` coverage yet.
+
+## M9 — Recurring transactions *(generation + approval path built)*
+
+Two separate tasks by design (see the migration's own header comment for
+why a generated draft is never a `transactions` row): the generation path
+(schema, the pure schedule function, and the CLI job that turns active
+rules into draft `recurring_occurrences` rows) and the approval/web path
+(list pending drafts, approve into a real `transactions` row via
+`TransactionService::post()`, reject) are both built — see M9-3 and M9-4
+below.
+
+| ID | Task | Size | Status | Notes |
+|---|---|---|---|---|
+| M9-1 | `recurring_rules` + `recurring_occurrences` schema | M | done | `database/migrations/2026_09_25_000013_recurring_transactions.sql`. Re-run twice locally (dev and test DBs), both a clean no-op the second time |
+| M9-2 | `RecurringSchedule` pure date function | M | done | `App\Services\RecurringSchedule`; no DB, no `Auth`, no clock of its own — phase from `start_date`, search floor from a caller-supplied `effectiveFrom` |
+| M9-3 | Generation path: models, service, CLI script, nightly workflow step | L | done | `App\Models\RecurringRule`/`RecurringOccurrence` (each split web-path tenant-scoped methods from CLI-safe explicit-`$branchId` methods that never touch `Auth`), `App\Services\RecurringRuleService::generateForBranch()` (per-rule DB transaction, catches the `uq_occurrence_rule_date` duplicate as the idempotency backstop rather than aborting the run, deliberately never calls `TransactionService` or `Audit::record()` — logs via `Logger` instead, since both read `Auth::` state that is null in a CLI cron), `scripts/generate-recurring-transactions.php` (continues past a single failed branch), one new step in `.github/workflows/maintenance.yml` between the existing prune and preflight steps. Test: `tests/Feature/RecurringRuleGenerationTest.php` (6 cases: writes occurrences without touching `transactions`, idempotent re-run incl. forcing the duplicate-key catch path, paused rule generates nothing, branch isolation, expired rule stops generating without deleting earlier drafts, a 3-month gap catches up in one run). Deliberately runs with `$_SESSION` empty throughout, proving the CLI path needs no session. Suite: 204 → 210 tests, no regressions; `composer check` clean |
+| M9-4 | Approval/web path (list, approve, reject) | L | done | `App\Models\RecurringOccurrence::pendingForBranch()`/`pendingCount()` (tenant-scoped web path, alongside the existing CLI `createForBranch()`); `App\Services\RecurringRuleService::approve()`/`reject()`/`approveBulk()` (tenant-scoped `find()` load IS the ownership check; approve posts through `TransactionService::post()` inside one DB transaction with the review-status update, edited amount/date/description override the generated snapshot, `Audit::record()` carries both original and posted values for whatever was edited; bulk caps at 50 and skips a bad row per-item without aborting the rest); `App\Controllers\RecurringOccurrenceController` (thin — validate → delegate → respond, same shape as `ExpenseController`); `App\Views\pages\recurring-occurrences.php` (bulk-select checkboxes associated to a separate `<form>` via the HTML `form=` attribute rather than DOM nesting, since each row's own approve/reject `<form>` sits in the same table); routes under `/recurring-occurrences`; sidebar entry + a one-COUNT-query dashboard tile (`DashboardService`-adjacent, via `RecurringOccurrence::pendingCount()`). Test: `tests/Feature/RecurringOccurrenceApprovalTest.php` (10 cases: posts and links back a transaction, expense→`expenses`/income→`sales` detail row with a null invoice number, edited values (not the snapshot) are what post, audit records original+posted only when something changed, rejection never touches `transactions`, branch isolation, already-reviewed guard, bulk skips one bad row without aborting the rest). Suite: 217 → 227 tests, no regressions; `composer check` clean; `npm run build` clean. Verified live against XAMPP: seeded two daily rules, ran the generator (12 real drafts), approved one with an edited amount+description (posted transaction carried the edited values, confirmed on `/expenses`), rejected another (ledger untouched), audit_log payload confirmed with `original`/`posted` pairs — all test rows cleaned up afterward |
+| M9-5 | Rules CRUD screen (create, edit, pause/resume) | M | done | `App\Controllers\RecurringRuleController` (create/update/toggle — thin, same shape as `ExpenseController`); `App\Views\pages\recurring-rules.php`; routes under `/recurring-rules` (`can:view` for the list, `can:master` for writes). Form posts two type-specific category `<select>`s (expense tree / income tree) and merges the right one into `category_id` before validation, so submission is correct whether or not Alpine ran. `RecurringRuleService::assertReferencesUsable()` checks the account/category/customer references are real and usable before a rule is saved; `toggleActive()` handles pause/resume, setting `last_generated_date` to today on resume so the paused window is never backfilled; `nextOccurrenceDate()` drives the "next due" column shown per active rule. Schedule-shape and positive-amount checks enforce the same `chk_recurring_rule_schedule`/CHECK constraints the migration defines, by hand, since `Validator` has no declarative "required when" rule. Test: `tests/Feature/RecurringRuleControllerTest.php` (7 cases: monthly rule persists `day_of_month` with `day_of_week` null and vice versa for weekly, missing day-of-month/day-of-week fails validation and creates nothing, end date before start date fails, toggling twice pauses then resumes and resets the cursor to today, a rule belonging to another branch can't be updated or toggled) |
 
 ## Done
 

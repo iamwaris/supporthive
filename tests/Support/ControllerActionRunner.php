@@ -37,6 +37,16 @@ final class ControllerActionRunner
      * @param array<string,mixed> $post      Written to $_POST before the call.
      * @param array<string,array{name:string,type:string,tmp_name:string,error:int,size:int}> $files
      *                                       Written to $_FILES before the call.
+     * @param array<string,string> $routeParams Passed as the action's own $params
+     *                                       argument — e.g. the {id} a route like
+     *                                       PATCH /widgets/{id} captures, exactly as
+     *                                       App\Core\Router::invoke() passes it in a
+     *                                       real request. Every action here is called
+     *                                       with this array regardless of whether it
+     *                                       declares a $params parameter, the same way
+     *                                       Router::invoke() always calls
+     *                                       ->{$method}($params) — PHP does not error
+     *                                       on an unused extra argument.
      * @return array{status:int,body:string}
      */
     public static function run(
@@ -45,7 +55,8 @@ final class ControllerActionRunner
         array $session,
         array $post = [],
         array $files = [],
-        string $requestMethod = 'POST'
+        string $requestMethod = 'POST',
+        array $routeParams = []
     ): array {
         $resultFile = tempnam(sys_get_temp_dir(), 'shresult');
         if ($resultFile === false) {
@@ -66,7 +77,8 @@ final class ControllerActionRunner
             $post,
             $files,
             $requestMethod,
-            $resultFile
+            $resultFile,
+            $routeParams
         ));
 
         $process = proc_open(
@@ -111,6 +123,7 @@ final class ControllerActionRunner
      * @param array<string,mixed> $session
      * @param array<string,mixed> $post
      * @param array<string,array{name:string,type:string,tmp_name:string,error:int,size:int}> $files
+     * @param array<string,string> $routeParams
      */
     private static function buildScript(
         string $controllerClass,
@@ -119,7 +132,8 @@ final class ControllerActionRunner
         array $post,
         array $files,
         string $requestMethod,
-        string $resultFile
+        string $resultFile,
+        array $routeParams = []
     ): string {
         // Method names here are always one of this class's own literal
         // arguments ('edit', 'update', 'scanReceipt', ...), never request
@@ -136,6 +150,7 @@ final class ControllerActionRunner
         $filesLiteral = var_export($files, true);
         $requestMethodLiteral = var_export($requestMethod, true);
         $resultFileLiteral = var_export($resultFile, true);
+        $routeParamsLiteral = var_export($routeParams, true);
 
         return <<<PHP
             <?php
@@ -154,7 +169,11 @@ final class ControllerActionRunner
 
             \$controllerClass = {$controllerClassLiteral};
             \$controller = new \$controllerClass();
-            \$controller->{$method}();
+            // Called with the route params regardless of whether {$method}()
+            // declares a \$params argument — the same way
+            // App\\Core\\Router::invoke() always calls ->{method}(\$params);
+            // PHP does not error on an unused extra positional argument.
+            \$controller->{$method}({$routeParamsLiteral});
             PHP;
     }
 }

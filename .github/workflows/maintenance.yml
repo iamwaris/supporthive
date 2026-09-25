@@ -82,6 +82,15 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
               "$SSH_USER@$SSH_HOST" "cd '$APP_DIR' && $PHP_BIN scripts/maintenance.php"
 
+      - name: Generate recurring transactions
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "cd '$APP_DIR' && $PHP_BIN scripts/generate-recurring-transactions.php"
+
       - name: Preflight health check
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
