@@ -19,6 +19,8 @@ config/local.php
 !/public/uploads/.htaccess
 /storage/documents/*
 !/storage/documents/.gitkeep
+# Rendered video + assets written by the /brag Claude Code skill; never committed.
+/brag-output/
 
 # ---- Dependencies / tooling ----
 /vendor/
