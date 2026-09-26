@@ -197,8 +197,11 @@ final class LedgerQuery
             return $this;
         }
 
-        $like = $this->bind('%' . $term . '%');
-        $this->conditions[] = '(t.description LIKE ' . $like . ' OR t.reference_no LIKE ' . $like . ')';
+        // One placeholder per use: with native prepares (EMULATE_PREPARES off)
+        // a named placeholder repeated in a statement fails with HY093.
+        $pattern = '%' . $term . '%';
+        $this->conditions[] = '(t.description LIKE ' . $this->bind($pattern)
+            . ' OR t.reference_no LIKE ' . $this->bind($pattern) . ')';
         return $this;
     }
 

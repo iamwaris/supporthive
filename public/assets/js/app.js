@@ -151,6 +151,58 @@ function aiChatFormatAnswer(rawText) {
 }
 
 document.addEventListener('alpine:init', () => {
+  // All Transactions (pages/transactions.php): the compact totals bar appears
+  // once the totals hero has scrolled up out of <main>, the page's scroller.
+  // Only "scrolled past", not "below the fold", so it never duplicates a hero
+  // that is still on screen.
+  Alpine.data('ledgerStickyTotals', () => ({
+    heroGone: false,
+    init() {
+      const hero = this.$refs.hero;
+      if (!hero || !('IntersectionObserver' in window)) {
+        return;
+      }
+      const observer = new IntersectionObserver(([entry]) => {
+        const rootTop = entry.rootBounds ? entry.rootBounds.top : 0;
+        this.heroGone = !entry.isIntersecting && entry.boundingClientRect.bottom <= rootTop;
+      }, { root: document.getElementById('main') });
+      observer.observe(hero);
+    },
+  }));
+
+  // All Transactions filter toolbar. The <details> panel and the form work
+  // without this; it only adds outside-click/Esc closing, focus handling,
+  // submit-on-preset, and keeps the custom dates out of the request unless
+  // "Custom" is chosen (disabled inputs are not submitted).
+  Alpine.data('ledgerFilterForm', () => ({
+    range: 'all',
+    init() {
+      this.range = this.$root.querySelector('#f-range').value;
+    },
+    rangeChanged() {
+      if (this.range === 'custom') {
+        this.$refs.panel.open = true;
+        this.$nextTick(() => this.$refs.from.focus());
+        return;
+      }
+      this.$root.requestSubmit();
+    },
+    panelToggled() {
+      if (this.$refs.panel.open && this.range !== 'custom') {
+        this.$refs.firstField.focus();
+      }
+    },
+    closePanel(returnFocus) {
+      if (!this.$refs.panel.open) {
+        return;
+      }
+      this.$refs.panel.open = false;
+      if (returnFocus) {
+        this.$refs.summary.focus();
+      }
+    },
+  }));
+
   Alpine.data('aiChatWidget', () => ({
     open: false,
     question: '',

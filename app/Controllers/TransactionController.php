@@ -12,8 +12,11 @@ use App\Models\Account;
 use App\Models\Attachment;
 use App\Models\Category;
 use App\Models\Partner;
+use App\Services\DateRangePreset;
+use App\Services\LedgerFilters;
 use App\Services\LedgerQuery;
 use App\Services\TransactionService;
+use DateTimeImmutable;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -73,6 +76,20 @@ final class TransactionController extends Controller
             array_map(static fn (array $row): int => (int) $row['id'], $rows)
         );
 
+        $accounts = (new Account())->allOrdered();
+        $categories = (new Category())->tree('expense');
+        $incomeCategories = (new Category())->tree('income');
+        $partners = (new Partner())->allOrdered();
+        $types = TransactionType::options();
+
+        $ledgerFilters = new LedgerFilters($filters, url('/transactions'));
+        $chips = $ledgerFilters->chips(
+            $types,
+            $this->namesById($accounts),
+            $this->categoryNamesById([...$categories, ...$incomeCategories]),
+            $this->namesById($partners)
+        );
+
         $this->view('pages/transactions', [
             'title' => 'All Transactions',
             'nav' => 'ledger',
@@ -87,12 +104,17 @@ final class TransactionController extends Controller
             'inbound' => $inbound,
             'outbound' => $outbound,
             'net' => $query->netAmount(),
+            'inShare' => $this->inShare($inbound, $outbound),
+            'rangeLabel' => DateRangePreset::label($filters['from'], $filters['to']),
+            'rangeOptions' => DateRangePreset::options(),
             'filters' => $filters,
-            'accounts' => (new Account())->allOrdered(),
-            'categories' => (new Category())->tree('expense'),
-            'incomeCategories' => (new Category())->tree('income'),
-            'partners' => (new Partner())->allOrdered(),
-            'types' => TransactionType::options(),
+            'ledgerFilters' => $ledgerFilters,
+            'chips' => $chips,
+            'accounts' => $accounts,
+            'categories' => $categories,
+            'incomeCategories' => $incomeCategories,
+            'partners' => $partners,
+            'types' => $types,
         ]);
     }
 
@@ -119,8 +141,54 @@ final class TransactionController extends Controller
     }
 
     /**
+     * Money in as a percentage of all money moved, for the hero's in/out bar.
+     * Null when nothing moved, so the view can show an empty bar rather than 0/0.
+     */
+    private function inShare(string $inbound, string $outbound): ?float
+    {
+        $in = max(0.0, (float) $inbound);
+        $moved = $in + max(0.0, (float) $outbound);
+
+        return $moved > 0 ? min(100.0, max(0.0, round($in / $moved * 100, 1))) : null;
+    }
+
+    /**
+     * @param list<array<string,mixed>> $records
+     * @return array<int,string>
+     */
+    private function namesById(array $records): array
+    {
+        $names = [];
+        foreach ($records as $record) {
+            $names[(int) $record['id']] = (string) $record['name'];
+        }
+
+        return $names;
+    }
+
+    /**
+     * Children are named "Parent · Child", matching the ledger's Category column.
+     *
+     * @param list<array{parent:array<string,mixed>,children:list<array<string,mixed>>}> $tree
+     * @return array<int,string>
+     */
+    private function categoryNamesById(array $tree): array
+    {
+        $names = [];
+        foreach ($tree as $node) {
+            $parentName = (string) $node['parent']['name'];
+            $names[(int) $node['parent']['id']] = $parentName;
+            foreach ($node['children'] as $child) {
+                $names[(int) $child['id']] = $parentName . ' · ' . (string) $child['name'];
+            }
+        }
+
+        return $names;
+    }
+
+    /**
      * @return array{
-     *     from:?string, to:?string, account_id:?int, category_id:?int,
+     *     range:string, from:?string, to:?string, account_id:?int, category_id:?int,
      *     partner_id:?int, type:?string, status:string, q:?string,
      *     min:?string, max:?string, page:int
      * }
@@ -128,10 +196,18 @@ final class TransactionController extends Controller
     private function readFilters(): array
     {
         $type = isset($_GET['type']) ? trim((string) $_GET['type']) : '';
+        $preset = $this->stringOrNull($_GET['range'] ?? null);
+        $range = DateRangePreset::resolve(
+            $preset !== null && array_key_exists($preset, DateRangePreset::options()) ? $preset : null,
+            $this->stringOrNull($_GET['from'] ?? null),
+            $this->stringOrNull($_GET['to'] ?? null),
+            new DateTimeImmutable('today')
+        );
 
         return [
-            'from' => $this->stringOrNull($_GET['from'] ?? null),
-            'to' => $this->stringOrNull($_GET['to'] ?? null),
+            'range' => $range['preset'],
+            'from' => $range['from'],
+            'to' => $range['to'],
             'account_id' => $this->intOrNull($_GET['account_id'] ?? null),
             'category_id' => $this->intOrNull($_GET['category_id'] ?? null),
             'partner_id' => $this->intOrNull($_GET['partner_id'] ?? null),

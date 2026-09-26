@@ -525,6 +525,31 @@ final class LedgerTest extends TestCase
         self::assertLessThanOrEqual(200, count($rows));
     }
 
+    /**
+     * Regression: search() bound one named placeholder and used it twice
+     * (description OR reference_no). With EMULATE_PREPARES off that is
+     * SQLSTATE HY093, so any search on All Transactions threw a 500.
+     */
+    public function testSearchMatchesDescriptionOrReferenceWithoutAPlaceholderError(): void
+    {
+        $this->postExpense('5.00');
+        TransactionService::post([
+            'type' => TransactionType::Expense,
+            'amount' => '7.00',
+            'account_id' => $this->bankId,
+            'category_id' => $this->expenseCategoryId,
+            'transaction_date' => '2026-09-11',
+            'description' => 'LT other',
+            'reference_no' => 'REF-EXPENSE-42',
+        ]);
+
+        $query = LedgerQuery::posted()->account($this->bankId)->search('expense');
+
+        self::assertSame(2, $query->count());
+        self::assertCount(2, $query->page(1, 10));
+        self::assertSame('12.00', $query->totalAmount());
+    }
+
     public function testAnUnknownOrderColumnIsRejected(): void
     {
         $this->expectException(InvalidArgumentException::class);
