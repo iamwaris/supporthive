@@ -77,6 +77,39 @@ final class Expense
         );
     }
 
+    /**
+     * Everything an "expense added" email reports, in one read.
+     *
+     * Scoped to the branch the expense was posted in, so a stray id can never
+     * describe another tenant's expense. from_recurring is true when the row
+     * was posted by approving a recurring draft rather than typed in.
+     *
+     * @return array<string,mixed>|null
+     */
+    public static function notificationDetails(int $transactionId, int $branchId): ?array
+    {
+        return Database::instance()->first(
+            "SELECT t.id, t.amount, t.transaction_date,
+                    b.name AS branch_name,
+                    c.name AS category_name,
+                    pc.name AS parent_category_name,
+                    e.vendor,
+                    u.name AS created_by_name,
+                    EXISTS (
+                        SELECT 1 FROM recurring_occurrences ro
+                        WHERE ro.transaction_id = t.id AND ro.branch_id = t.branch_id
+                    ) AS from_recurring
+             FROM transactions t
+             JOIN branches b ON b.id = t.branch_id
+             LEFT JOIN categories c ON c.id = t.category_id
+             LEFT JOIN categories pc ON pc.id = c.parent_id
+             LEFT JOIN expenses e ON e.transaction_id = t.id
+             LEFT JOIN users u ON u.id = t.created_by
+             WHERE t.id = :id AND t.branch_id = :branch AND t.type = :type",
+            ['id' => $transactionId, 'branch' => $branchId, 'type' => 'expense']
+        );
+    }
+
     /** Trim and collapse whitespace, so " ABC   Traders " and "ABC Traders" are one vendor. */
     public static function tidyVendor(?string $vendor): ?string
     {

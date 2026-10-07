@@ -117,8 +117,9 @@ final class TransactionService
                 $status,
                 $writeDetail
             ): int {
+                $branchId = self::requireBranchId();
                 $id = $db->insert('transactions', [
-                    'branch_id' => self::requireBranchId(),
+                    'branch_id' => $branchId,
                     'transaction_date' => $date,
                     'type' => $type->value,
                     'direction' => $type->direction(),
@@ -148,6 +149,15 @@ final class TransactionService
                     'account_id' => $accountId,
                     'description' => $description,
                 ]);
+
+                // Every expense passes through here, whether typed in or
+                // approved from a recurring draft. The email waits for the
+                // outermost commit so it never announces a rolled-back row.
+                if (ExpenseNotifier::appliesTo($type)) {
+                    $db->afterCommit(static function () use ($id, $branchId): void {
+                        ExpenseNotifier::expensePosted($id, $branchId);
+                    });
+                }
 
                 return $id;
             }

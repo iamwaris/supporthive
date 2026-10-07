@@ -29,6 +29,7 @@ The ledger contract is settled, so **M3 is unblocked**.
 | OPS-2 | Protect `main` (require PR + green CI) | S | deferred | User's explicit call while solo and testing on live — revisit before other users get access |
 | OPS-3 | Turn off `DEV_QUICK_LOGIN` before wider access | S | done | Repo variable flipped to `false` and redeployed 2026-09-24 |
 | UI-1 | All Transactions: totals hero, slim filter toolbar, filter chips, sticky totals | M | done | Started and landed 2026-09-27. See decision log entry of the same date |
+| NOTIFY-1 | Email notification whenever an expense is added | M | done | Started 2026-10-06, landed 2026-10-07. Hand-rolled SMTP client (`App\Services\Mail`, zero runtime deps, cert verification on, STARTTLS/implicit TLS, AUTH LOGIN). Settings → Email notifications: per-branch on/off + up to 10 recipients (admin only, `can:administer`). Fired from `TransactionService::post()` via new `Database::afterCommit()`, so manual and approved-recurring expenses both notify, only after the outermost commit; mail failures are logged and never fail the save. Configure `MAIL_*` in `.env`; blank `MAIL_HOST` = logged no-op. Follow-up: sending is synchronous in the request (bounded by `MAIL_TIMEOUT`) - move to a queue if latency shows |
 
 ## Live status (2026-09-24)
 

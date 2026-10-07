@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Core\Controller;
+use App\Core\Csrf;
 use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
 use App\Services\Audit;
+use App\Services\ExpenseNotifier;
+use App\Services\Mail\RecipientList;
 use App\Services\Settings;
 
 final class SettingsController extends Controller
@@ -19,8 +22,9 @@ final class SettingsController extends Controller
             'title' => 'Settings',
             'nav' => 'settings',
             'pageTitle' => 'Settings',
-            'pageMeta' => 'Company, currency and alert thresholds',
+            'pageMeta' => 'Company, currency, alerts and notifications',
             'settings' => Settings::all(),
+            'maxRecipients' => RecipientList::MAX_RECIPIENTS,
         ]);
     }
 
@@ -32,7 +36,24 @@ final class SettingsController extends Controller
             'currency_symbol' => 'required|max:8',
             'fiscal_year_start' => 'required|int|between:1,12',
             'budget_alert_pct' => 'required|int|between:1,100',
+            ExpenseNotifier::SETTING_ENABLED => 'nullable|in:1',
+            ExpenseNotifier::SETTING_RECIPIENTS => 'nullable|max:4000',
         ], '/settings');
+
+        $recipients = RecipientList::parse((string) ($clean[ExpenseNotifier::SETTING_RECIPIENTS] ?? ''));
+        if (!$recipients->isValid()) {
+            $old = $_POST;
+            unset($old[Csrf::FIELD]);
+            Session::set('_old', $old);
+            Session::flash('errors', [ExpenseNotifier::SETTING_RECIPIENTS => $recipients->errors]);
+            Session::flash('error', 'Please correct the highlighted fields.');
+            Http::redirect('/settings');
+        }
+
+        // Stored normalised (deduplicated, one per line) so what the form
+        // shows next time is exactly the list that will be emailed.
+        $clean[ExpenseNotifier::SETTING_RECIPIENTS] = $recipients->toSetting();
+        $clean[ExpenseNotifier::SETTING_ENABLED] = $clean[ExpenseNotifier::SETTING_ENABLED] === '1';
 
         // Validator::validated() only checks that these look like integers —
         // it doesn't cast — so they arrive here as strings. Cast the known

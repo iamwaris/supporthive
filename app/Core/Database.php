@@ -26,6 +26,9 @@ final class Database
     /** Set when any depth throws, so an outer commit cannot persist half the work. */
     private bool $transactionAborted = false;
 
+    /** @var list<callable():void> Work deferred until the outermost transaction commits. */
+    private array $afterCommit = [];
+
     private function __construct()
     {
         /** @var array<string,mixed> $c */
@@ -157,6 +160,7 @@ final class Database
         if ($this->transactionDepth === 0) {
             $this->pdo->beginTransaction();
             $this->transactionAborted = false;
+            $this->afterCommit = [];
         }
 
         $this->transactionDepth++;
@@ -167,8 +171,11 @@ final class Database
             $this->transactionAborted = true;
             $this->transactionDepth--;
 
-            if ($this->transactionDepth === 0 && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
+            if ($this->transactionDepth === 0) {
+                $this->afterCommit = [];
+                if ($this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
             }
 
             throw $e;
@@ -178,6 +185,7 @@ final class Database
 
         if ($this->transactionDepth === 0) {
             if ($this->transactionAborted) {
+                $this->afterCommit = [];
                 if ($this->pdo->inTransaction()) {
                     $this->pdo->rollBack();
                 }
@@ -186,9 +194,52 @@ final class Database
             }
 
             $this->pdo->commit();
+            $this->runAfterCommit();
         }
 
         return $result;
+    }
+
+    /**
+     * Defer a side effect (an email, a webhook) until the data it describes
+     * is durable.
+     *
+     * Inside a transaction the callback waits for the OUTERMOST commit, so a
+     * nested post() inside a larger unit of work cannot announce a row that
+     * the outer transaction later rolls back; on rollback it is discarded.
+     * Outside a transaction the data is already committed, so it runs now.
+     */
+    public function afterCommit(callable $callback): void
+    {
+        if ($this->transactionDepth === 0) {
+            $this->invokeAfterCommit($callback);
+            return;
+        }
+
+        $this->afterCommit[] = $callback;
+    }
+
+    private function runAfterCommit(): void
+    {
+        $callbacks = $this->afterCommit;
+        $this->afterCommit = [];
+
+        foreach ($callbacks as $callback) {
+            $this->invokeAfterCommit($callback);
+        }
+    }
+
+    /**
+     * The commit has already happened, so an exception here must not reach a
+     * caller that would read it as "the save failed" and tell the user so.
+     */
+    private function invokeAfterCommit(callable $callback): void
+    {
+        try {
+            $callback();
+        } catch (Throwable $e) {
+            Logger::error('After-commit callback failed', ['error' => $e->getMessage()]);
+        }
     }
 
     /**

@@ -3,12 +3,14 @@
 /**
  * @var array<string,mixed>        $settings
  * @var array<string,list<string>> $errors
+ * @var int                        $maxRecipients
  */
 
 declare(strict_types=1);
 
 $settings = $settings ?? [];
 $errors = $errors ?? [];
+$maxRecipients = $maxRecipients ?? 10;
 
 /** Field value: flashed input wins over the stored value, so a failed save keeps what was typed. */
 $value = static function (string $key) use ($settings): string {
@@ -23,6 +25,17 @@ $months = [
 ];
 
 $fiscalStart = (int) ($value('fiscal_year_start') ?: 7);
+
+// After a failed save the submitted values win even when blank: an unticked
+// box or a cleared list is what the admin chose, not "fall back to stored".
+$redisplay = $errors !== [];
+$notifyEnabled = $redisplay
+    ? old('expense_notify_enabled') === '1'
+    : ($settings['expense_notify_enabled'] ?? false) === true;
+$notifyRecipients = $redisplay
+    ? old('expense_notify_recipients')
+    : (string) ($settings['expense_notify_recipients'] ?? '');
+$recipientErrors = $errors['expense_notify_recipients'] ?? [];
 ?>
 <form method="post" action="<?= e(url('/settings')) ?>" class="max-w-2xl" novalidate>
     <?= csrf_field() ?>
@@ -107,6 +120,41 @@ $fiscalStart = (int) ($value('fiscal_year_start') ?: 7);
                     <p class="error"><?= e($errors['budget_alert_pct'][0]) ?></p>
                 <?php endif; ?>
             </div>
+        </div>
+    </div>
+
+    <div class="card mt-5 p-6">
+        <h2 class="font-display text-base font-semibold tracking-tight text-ink">Email notifications</h2>
+        <p class="mt-1 text-xs text-slate-500">
+            Email these people every time an expense is recorded in this branch, whether typed in or approved
+            from a recurring draft.
+        </p>
+
+        <div class="mt-5 flex items-center gap-2.5">
+            <input id="expense_notify_enabled" name="expense_notify_enabled" type="checkbox" value="1"
+                   <?= $notifyEnabled ? 'checked' : '' ?>
+                   class="h-4 w-4 rounded border-slate-300 text-brand-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400">
+            <label for="expense_notify_enabled" class="text-sm font-medium text-ink">Email when an expense is added</label>
+        </div>
+
+        <div class="mt-5">
+            <label for="expense_notify_recipients" class="label">Recipients</label>
+            <textarea id="expense_notify_recipients" name="expense_notify_recipients" rows="4" maxlength="4000"
+                      autocomplete="off" spellcheck="false"
+                      class="<?= $recipientErrors !== [] ? 'input-error' : 'input' ?>"
+                      aria-describedby="expense_notify_recipients-help<?= $recipientErrors !== [] ? ' expense_notify_recipients-error' : '' ?>"
+                      <?= $recipientErrors !== [] ? 'aria-invalid="true"' : '' ?>><?= e($notifyRecipients) ?></textarea>
+            <p id="expense_notify_recipients-help" class="help">
+                One address per line, up to <?= e((string) $maxRecipients) ?>.
+                Leave empty to send nothing.
+            </p>
+            <?php if ($recipientErrors !== []) : ?>
+                <div id="expense_notify_recipients-error">
+                    <?php foreach ($recipientErrors as $message) : ?>
+                        <p class="error"><?= e($message) ?></p>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 
