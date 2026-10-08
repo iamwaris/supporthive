@@ -52,6 +52,20 @@ function warn(string $label, bool $ok, string $remedy = ''): void
     echo "  WARN  {$label}" . ($remedy !== '' ? " -> {$remedy}" : '') . "\n";
 }
 
+/** php.ini shorthand ("8M", "1G", "512K") to bytes. */
+function iniBytes(string $value): int
+{
+    $value = trim($value);
+    $number = (int) $value;
+
+    return match (strtoupper(substr($value, -1))) {
+        'G' => $number * 1073741824,
+        'M' => $number * 1048576,
+        'K' => $number * 1024,
+        default => $number,
+    };
+}
+
 $isProduction = Config::isProduction();
 
 echo "Environment\n";
@@ -95,6 +109,29 @@ check('public/uploads writable', is_writable(PUBLIC_PATH . '/uploads'), 'chmod 7
 check('uploads execution blocked', is_file(PUBLIC_PATH . '/uploads/.htaccess'), 'restore public/uploads/.htaccess');
 check('.env not inside the web root', !is_file(PUBLIC_PATH . '/.env'), 'move .env above the web root immediately');
 check('compiled CSS present', is_file(PUBLIC_PATH . '/assets/css/app.css'), 'npm run build');
+check(
+    'storage/documents writable',
+    is_writable(STORAGE_PATH . '/documents'),
+    'chmod 750 storage/documents (attachments and employee documents are stored here)'
+);
+
+echo "\nUploads\n";
+// A PDF larger than PHP's own limits never reaches Upload::storePrivatePdf():
+// over upload_max_filesize it arrives as UPLOAD_ERR_INI_SIZE, and over
+// post_max_size PHP drops the whole body — CSRF token included — so the
+// admin sees a 419 instead of "file too large".
+$pdfMaxBytes = (int) Config::get('uploads.pdf_max_bytes', 10485760);
+$pdfMaxLabel = round($pdfMaxBytes / 1048576, 1) . ' MB';
+check(
+    'upload_max_filesize >= UPLOAD_PDF_MAX_BYTES',
+    iniBytes((string) ini_get('upload_max_filesize')) >= $pdfMaxBytes,
+    'raise upload_max_filesize in php.ini to at least ' . $pdfMaxLabel
+);
+check(
+    'post_max_size > UPLOAD_PDF_MAX_BYTES',
+    iniBytes((string) ini_get('post_max_size')) > $pdfMaxBytes,
+    'raise post_max_size in php.ini above ' . $pdfMaxLabel . ' (the file plus the form fields)'
+);
 
 echo "\nDatabase\n";
 try {

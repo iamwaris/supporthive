@@ -24,12 +24,13 @@ $role = (string) ($authUser['role'] ?? '');
 // unbuilt item is rendered disabled rather than as a link into a 404.
 $admin = Access::canAdminister($role);
 $canManageBranches = Access::canManageBranches($role);
+$isEmployee = Access::canUseEmployeePortal($role);
 
 // Super admin manages branches but never operates inside one (decision
 // 2026-09-26), so none of the branch-scoped screens below are ever reachable
 // for that role (Router::requireAbility() sends it straight back to
 // /admin/branches) — showing links into them would just be dead-ends.
-$groups = $canManageBranches ? [] : [
+$groups = $canManageBranches || $isEmployee ? [] : [
     'Overview' => [
         ['key' => 'dashboard', 'label' => 'Dashboard', 'href' => '/dashboard', 'icon' => 'grid', 'show' => true, 'ready' => true],
     ],
@@ -54,6 +55,10 @@ $groups = $canManageBranches ? [] : [
     'Reports' => [
         ['key' => 'reports', 'label' => 'Reports', 'href' => '/reports', 'icon' => 'doc', 'show' => true, 'ready' => true],
     ],
+    'People' => [
+        ['key' => 'employees', 'label' => 'Employees', 'href' => '/employees', 'icon' => 'users', 'show' => $admin, 'ready' => true],
+        ['key' => 'employee-documents', 'label' => 'Employee Documents', 'href' => '/employee-documents', 'icon' => 'doc', 'show' => $admin, 'ready' => true],
+    ],
     'System' => [
         ['key' => 'categories', 'label' => 'Categories', 'href' => '/categories', 'icon' => 'list', 'show' => true, 'ready' => true],
         ['key' => 'users', 'label' => 'Users', 'href' => '/users', 'icon' => 'users', 'show' => $admin, 'ready' => true],
@@ -62,6 +67,15 @@ $groups = $canManageBranches ? [] : [
         ['key' => 'settings-ai', 'label' => 'AI Settings', 'href' => '/settings/ai', 'icon' => 'sliders', 'show' => $admin, 'ready' => true],
     ],
 ];
+
+// An employee has no access to the books at all (Access::canViewFinancials()
+// is false), so the finance groups above would be nothing but 403s.
+if ($isEmployee) {
+    $groups['My workspace'] = [
+        ['key' => 'portal', 'label' => 'Dashboard', 'href' => '/portal', 'icon' => 'grid', 'show' => true, 'ready' => true],
+        ['key' => 'portal-documents', 'label' => 'Documents', 'href' => '/portal/documents', 'icon' => 'doc', 'show' => true, 'ready' => true],
+    ];
+}
 
 if ($canManageBranches) {
     $groups['Branches'] = [
@@ -78,7 +92,7 @@ if ($authUser !== null && ($authUser['name'] ?? '') !== '') {
 ?>
 <nav aria-label="Main" class="flex w-62 shrink-0 flex-col gap-6 overflow-y-auto bg-ink px-4 py-5">
 
-    <a href="<?= e(url('/dashboard')) ?>" class="flex items-center gap-2.5 px-2">
+    <a href="<?= e(url(Access::landingPath($role))) ?>" class="flex items-center gap-2.5 px-2">
         <svg class="h-6.5 w-6.5 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 19.5V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v14.5"></path>
             <path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H19"></path>

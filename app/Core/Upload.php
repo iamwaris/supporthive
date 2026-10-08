@@ -40,7 +40,9 @@ final class Upload
     /**
      * Same rules as store(), but written under storage/documents — outside
      * PUBLIC_PATH entirely, so nothing here is reachable by a guessed URL.
-     * Financial attachments (decision D-4) use this; nothing else should.
+     * Anything an authenticated controller must gate belongs here: financial
+     * attachments (decision D-4) call it directly; employee documents go
+     * through storePrivatePdf(), which narrows it to PDF.
      *
      * @param array{name:string,type:string,tmp_name:string,error:int,size:int} $file
      * @return array{path:string,filename:string,mime:string,size:int}
@@ -51,11 +53,56 @@ final class Upload
     }
 
     /**
+     * storePrivate(), narrowed to PDF only and to its own size limit
+     * (uploads.pdf_max_bytes) — employee documents are handbooks and
+     * policies, larger than a receipt photo and never anything but a PDF.
+     *
      * @param array{name:string,type:string,tmp_name:string,error:int,size:int} $file
      * @return array{path:string,filename:string,mime:string,size:int}
      */
-    private static function write(string $baseDir, string $publicPrefix, array $file, string $subdirectory): array
+    public static function storePrivatePdf(array $file, string $subdirectory): array
     {
+        return self::write(
+            STORAGE_PATH . '/documents',
+            'documents',
+            $file,
+            $subdirectory,
+            ['application/pdf'],
+            (int) Config::get('uploads.pdf_max_bytes', 10_485_760)
+        );
+    }
+
+    /**
+     * Does the file start with the PDF magic bytes? finfo already sniffs the
+     * type; this is the stricter check that the header is at offset 0, which
+     * is where a PDF reader looks and where a polyglot usually is not.
+     */
+    public static function hasPdfSignature(string $path): bool
+    {
+        $handle = is_file($path) && is_readable($path) ? fopen($path, 'rb') : false;
+        if ($handle === false) {
+            return false;
+        }
+        $head = fread($handle, 5);
+        fclose($handle);
+
+        return $head === '%PDF-';
+    }
+
+    /**
+     * @param array{name:string,type:string,tmp_name:string,error:int,size:int} $file
+     * @param list<string>|null $onlyMime Narrows the configured allow-list for this call; never widens it.
+     * @param int|null $maxBytes Overrides uploads.max_bytes for this call.
+     * @return array{path:string,filename:string,mime:string,size:int}
+     */
+    private static function write(
+        string $baseDir,
+        string $publicPrefix,
+        array $file,
+        string $subdirectory,
+        ?array $onlyMime = null,
+        ?int $maxBytes = null
+    ): array {
         if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
             throw new RuntimeException(self::errorMessage((int) $file['error']));
         }
@@ -65,7 +112,7 @@ final class Upload
             throw new RuntimeException('Invalid upload.');
         }
 
-        $maxBytes = (int) Config::get('uploads.max_bytes', 5_242_880);
+        $maxBytes ??= (int) Config::get('uploads.max_bytes', 5_242_880);
         if ((int) $file['size'] > $maxBytes) {
             throw new RuntimeException('File is larger than the ' . round($maxBytes / 1048576, 1) . ' MB limit.');
         }
@@ -75,6 +122,9 @@ final class Upload
 
         /** @var list<string> $allowed */
         $allowed = Config::get('uploads.allowed_mime', []);
+        if ($onlyMime !== null) {
+            $allowed = array_values(array_intersect($allowed, $onlyMime));
+        }
         if (!in_array($mime, $allowed, true) || !isset(self::EXTENSIONS[$mime])) {
             Logger::security('Upload rejected: disallowed type', ['mime' => $mime, 'ip' => Http::clientIp()]);
             throw new RuntimeException('That file type is not allowed.');
@@ -84,6 +134,11 @@ final class Upload
         if (str_starts_with($mime, 'image/') && @getimagesize($file['tmp_name']) === false) {
             Logger::security('Upload rejected: corrupt image', ['ip' => Http::clientIp()]);
             throw new RuntimeException('That image could not be read.');
+        }
+
+        if ($mime === 'application/pdf' && !self::hasPdfSignature($file['tmp_name'])) {
+            Logger::security('Upload rejected: PDF without a PDF header', ['ip' => Http::clientIp()]);
+            throw new RuntimeException('That file is not a valid PDF.');
         }
 
         $subdirectory = trim(preg_replace('/[^a-z0-9\/_-]/i', '', $subdirectory) ?? '', '/');

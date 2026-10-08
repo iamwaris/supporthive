@@ -11,6 +11,7 @@ use App\Core\Database;
 use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
+use App\Services\Access;
 
 /**
  * Password-free login for testing.
@@ -69,7 +70,8 @@ final class DevAuthController extends Controller
             $params['branch'] = $branchId;
         }
 
-        $sql .= " ORDER BY FIELD(role, 'super_admin', 'admin', 'partner', 'accountant', 'data_entry'), name LIMIT 8";
+        $sql .= " ORDER BY FIELD(role, 'super_admin', 'admin', 'partner', 'accountant', 'data_entry', 'employee'),"
+            . ' name LIMIT 8';
 
         return Database::instance()->all($sql, $params);
     }
@@ -117,6 +119,6 @@ final class DevAuthController extends Controller
         ]);
 
         Session::flash('success', 'Signed in as ' . (string) $user['name'] . ' (development shortcut).');
-        Http::redirect('/dashboard');
+        Http::redirect(Access::landingPath((string) $user['role']));
     }
 }

@@ -140,6 +140,85 @@ final class Http
         exit;
     }
 
+    /**
+     * Stream a file the caller has already authorised and resolved from the
+     * database — never a client-supplied path.
+     *
+     * $inline opens it in the browser (preview, as a top-level page in a new
+     * tab); false forces a download. Both keep the global security headers
+     * from sendSecurityHeaders(): the CSP's frame-ancestors 'none' still
+     * applies, which is why preview is a new tab and never an embed.
+     */
+    public static function sendFile(string $path, string $mime, string $downloadName, bool $inline): never
+    {
+        // The extension comes from the server-generated stored filename (an
+        // allow-listed one, see App\Core\Upload), never from the client's name.
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $ascii = self::dispositionFilename($downloadName, $extension);
+        $disposition = ($inline ? 'inline' : 'attachment')
+            . '; filename="' . $ascii . '"'
+            . "; filename*=UTF-8''" . rawurlencode(self::utf8Filename($downloadName, $extension, $ascii));
+
+        // Anything already buffered (a stray notice, a BOM) would corrupt the
+        // file and invalidate Content-Length.
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: ' . $mime);
+        header('Content-Length: ' . (string) filesize($path));
+        header('Content-Disposition: ' . $disposition);
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, no-store');
+
+        readfile($path);
+        exit;
+    }
+
+    /**
+     * A filename safe to put inside a quoted Content-Disposition value.
+     *
+     * Header injection (CR/LF) and quote-breaking characters are removed
+     * outright; anything else outside a conservative ASCII set becomes "-".
+     * Always ends in the given extension (the stored file's real one; .pdf by
+     * default), since a browser saving "Policy" with no extension is a
+     * support ticket. Capped at 150 characters including the extension.
+     */
+    public static function dispositionFilename(string $name, string $extension = 'pdf'): string
+    {
+        $extension = (string) preg_replace('/[^a-z0-9]/', '', strtolower($extension));
+        $extension = $extension === '' ? 'pdf' : $extension;
+
+        $name = str_replace(["\r", "\n", '"', '\\'], '', $name);
+        $name = (string) preg_replace('/[^A-Za-z0-9 ._-]/', '-', $name);
+        $name = (string) preg_replace('/([ ._-])\1+/', '$1', $name);
+        $name = self::withoutExtension(rtrim($name, ' .-_'), $extension);
+        $name = rtrim(substr(trim($name, ' .-_'), 0, 150 - strlen($extension) - 1), ' .-_');
+
+        return ($name === '' ? 'document' : $name) . '.' . $extension;
+    }
+
+    /**
+     * The RFC 5987 filename* value: the original UTF-8 name with only control,
+     * quote and path characters removed, so a non-Latin title survives the
+     * download. Browsers that ignore filename* fall back to the ASCII one.
+     */
+    private static function utf8Filename(string $name, string $extension, string $fallback): string
+    {
+        // Invalid UTF-8 makes preg_replace() return null, which lands on the fallback.
+        $clean = trim((string) preg_replace('/[\x00-\x1F\x7F"\\\\\/]/u', '', $name));
+        $clean = trim(mb_substr(self::withoutExtension($clean, $extension), 0, 140));
+
+        return $clean === '' ? $fallback : $clean . '.' . $extension;
+    }
+
+    private static function withoutExtension(string $name, string $extension): string
+    {
+        $suffix = '.' . $extension;
+
+        return str_ends_with(strtolower($name), $suffix) ? substr($name, 0, -strlen($suffix)) : $name;
+    }
+
     public static function abort(int $status, string $message = ''): never
     {
         http_response_code($status);

@@ -8,6 +8,7 @@ use App\Core\Auth;
 use App\Core\Controller;
 use App\Core\Database;
 use App\Core\Http;
+use App\Core\Logger;
 use App\Core\Session;
 use App\Models\Attachment;
 use RuntimeException;
@@ -62,26 +63,13 @@ final class DocumentController extends Controller
             Http::abort(404);
         }
 
-        $path = STORAGE_PATH . '/documents/attachments/' . $attachment['stored_filename'];
+        $path = STORAGE_PATH . '/documents/attachments/' . basename((string) $attachment['stored_filename']);
         if (!is_file($path)) {
+            Logger::error('Attachment file missing from storage', ['attachment_id' => $id]);
             Http::abort(404);
         }
 
-        $filename = self::safeFilename((string) $attachment['original_filename']);
-
-        header('Content-Type: ' . (string) $attachment['mime']);
-        header('Content-Length: ' . (string) filesize($path));
-        header('Content-Disposition: inline; filename="' . $filename . '"');
-        header('X-Content-Type-Options: nosniff');
-        header('Cache-Control: private, max-age=0, no-cache');
-
-        readfile($path);
-        exit;
-    }
-
-    private static function safeFilename(string $filename): string
-    {
-        return preg_replace('/[^A-Za-z0-9 ._-]/', '-', $filename) ?? 'document';
+        Http::sendFile($path, (string) $attachment['mime'], (string) $attachment['original_filename'], true);
     }
 
     private function transactionInBranch(int $transactionId): bool

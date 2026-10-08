@@ -109,6 +109,7 @@ final class Validator
                     'email'    => is_string($value) && filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
                     'url'      => is_string($value) && filter_var($value, FILTER_VALIDATE_URL) !== false,
                     'date'     => is_string($value) && strtotime($value) !== false,
+                    'ymd'      => is_string($value) && self::isYmd($value),
                     'alpha'    => is_string($value) && preg_match('/^[\p{L}]+$/u', $value) === 1,
                     'alphanum' => is_string($value) && preg_match('/^[\p{L}\p{N}]+$/u', $value) === 1,
                     'slug'     => is_string($value) && preg_match('/^[a-z0-9-]+$/', $value) === 1,
@@ -132,6 +133,18 @@ final class Validator
                 $this->validated[$field] = $value;
             }
         }
+    }
+
+    /**
+     * A real calendar date in exactly YYYY-MM-DD. Stricter than `date`
+     * (strtotime accepts "next tuesday"): the value must round-trip, so
+     * 2026-02-30 — which DateTime would quietly roll into March — fails.
+     */
+    private static function isYmd(string $value): bool
+    {
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+
+        return $date !== false && $date->format('Y-m-d') === $value;
     }
 
     private function compareLength(mixed $value, int $limit, string $operator): bool
@@ -168,6 +181,7 @@ final class Validator
                 implode(' and ', array_map('trim', explode(',', (string) $arg)))
             ),
             'in'       => "The selected {$label} is not valid.",
+            'ymd'      => "The {$label} must be a valid date (YYYY-MM-DD).",
             'same'     => "The {$label} does not match.",
             default    => "The {$label} is not valid.",
         };

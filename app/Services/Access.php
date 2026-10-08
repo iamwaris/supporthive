@@ -22,6 +22,12 @@ namespace App\Services;
  * every admin-shaped ability here because once it has switched into a branch
  * (`Auth::branchId()` non-null) it operates as a full admin of that branch;
  * `canManageBranches()` is the one ability specific to it.
+ *
+ * `employee` (decision 2026-10-08) is a self-service role with no access to
+ * the books at all: it reads its own profile and the documents its branch's
+ * admins publish, nothing else. Every finance/admin ability below therefore
+ * lists its roles explicitly rather than deriving from ALL, so adding a role
+ * to the schema can never widen what it may reach.
  */
 final class Access
 {
@@ -30,12 +36,19 @@ final class Access
     public const ACCOUNTANT = 'accountant';
     public const DATA_ENTRY = 'data_entry';
     public const SUPER_ADMIN = 'super_admin';
+    public const EMPLOYEE = 'employee';
 
-    /** Roles an administrator may actually assign in V1. */
+    /**
+     * Roles an administrator may assign from the Users screen. Employees are
+     * deliberately absent: they are created only through the Employees screen,
+     * which also writes their profile row.
+     */
     public const ASSIGNABLE = [self::ADMIN, self::PARTNER];
 
     /** Every role the schema permits, assignable or not. */
-    public const ALL = [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY, self::SUPER_ADMIN];
+    public const ALL = [
+        self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY, self::SUPER_ADMIN, self::EMPLOYEE,
+    ];
 
     /**
      * May this role create, edit or void financial records?
@@ -73,10 +86,59 @@ final class Access
         return in_array($role, [self::ADMIN, self::SUPER_ADMIN], true);
     }
 
-    /** May this role read financial data at all? */
+    /**
+     * May this role read financial data at all?
+     *
+     * An explicit list, never self::ALL: employee is a known role that must
+     * not see the books, and every `can:view` route depends on this answer.
+     */
     public static function canViewFinancials(string $role): bool
     {
-        return in_array($role, self::ALL, true);
+        return in_array(
+            $role,
+            [self::ADMIN, self::PARTNER, self::ACCOUNTANT, self::DATA_ENTRY, self::SUPER_ADMIN],
+            true
+        );
+    }
+
+    /** May this role use the employee self-service portal? Employees only. */
+    public static function canUseEmployeePortal(string $role): bool
+    {
+        return $role === self::EMPLOYEE;
+    }
+
+    /**
+     * May this role open (preview/download) an employee document? Employees
+     * read them; the admins who publish them must be able to check what they
+     * uploaded.
+     */
+    public static function canReadEmployeeDocuments(string $role): bool
+    {
+        return in_array($role, [self::EMPLOYEE, self::ADMIN, self::SUPER_ADMIN], true);
+    }
+
+    /** Where a signed-in user of this role lands after sign-in or at "/". */
+    public static function landingPath(string $role): string
+    {
+        return $role === self::EMPLOYEE ? '/portal' : '/dashboard';
+    }
+
+    /**
+     * The `can:<ability>` route gate. Unknown abilities deny — a typo in a
+     * route's middleware must never widen access.
+     */
+    public static function allows(string $ability, string $role): bool
+    {
+        return match ($ability) {
+            'write'              => self::canWriteTransactions($role),
+            'master'             => self::canManageMasterData($role),
+            'administer'         => self::canAdminister($role),
+            'distribute'         => self::canDistributeProfit($role),
+            'view'               => self::canViewFinancials($role),
+            'portal'             => self::canUseEmployeePortal($role),
+            'employee-documents' => self::canReadEmployeeDocuments($role),
+            default              => false,
+        };
     }
 
     /** May this role create/list branches and switch between them? Super admin only. */

@@ -122,6 +122,14 @@ if ($branch === null) {
     }
 }
 
+// Turning an employee login into an admin/partner here would leave its
+// employee profile behind and bypass the Employees screen entirely.
+$existingRole = $db->value('SELECT role FROM users WHERE email = :email LIMIT 1', ['email' => $email]);
+if ($existingRole === Access::EMPLOYEE) {
+    fwrite(STDERR, "{$email} is an employee login. Manage it from the Employees screen. Nothing was written.\n");
+    exit(1);
+}
+
 $minLength = (int) Config::get('security.password_min_length', 12);
 
 // When STDIN is a terminal the password will be visible, because hiding it

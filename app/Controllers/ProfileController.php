@@ -10,6 +10,7 @@ use App\Core\Controller;
 use App\Core\Database;
 use App\Core\Http;
 use App\Core\Session;
+use App\Services\Access;
 
 /**
  * The signed-in user's own profile. Just the password screen for now —
@@ -65,6 +66,6 @@ final class ProfileController extends Controller
         Auth::updatePassword((string) $clean['password']);
 
         Session::flash('success', 'Password changed.');
-        Http::redirect('/dashboard');
+        Http::redirect(Access::landingPath((string) (Auth::user()['role'] ?? '')));
     }
 }

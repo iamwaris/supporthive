@@ -24,6 +24,11 @@ use App\Services\Audit;
  * gets this far. This screen only ever creates admin/partner logins
  * (App\Services\Access::ASSIGNABLE) — the same two roles
  * scripts/create-user.php has always been limited to.
+ *
+ * Employees are managed from App\Controllers\EmployeeController instead
+ * (their login and profile change together), so an employee id is a 404 on
+ * every action here — this screen must not rename, suspend or reset one
+ * behind the Employees screen's back.
  */
 final class UserController extends Controller
 {
@@ -34,7 +39,7 @@ final class UserController extends Controller
             'nav' => 'users',
             'pageTitle' => 'Users',
             'pageMeta' => 'Logins for this branch. A new user must change their password on first sign-in.',
-            'users' => (new User())->allOrdered(),
+            'users' => (new User())->nonEmployeesOrdered(),
             'roles' => Access::ASSIGNABLE,
         ]);
     }
@@ -94,11 +99,7 @@ final class UserController extends Controller
     {
         $id = (int) ($params['id'] ?? 0);
         $users = new User();
-        $target = $users->find($id);
-
-        if ($target === null) {
-            Http::abort(404);
-        }
+        $target = $this->findNonEmployee($users, $id);
 
         $clean = $this->validate([
             'name' => 'required|max:120',
@@ -132,11 +133,7 @@ final class UserController extends Controller
     {
         $id = (int) ($params['id'] ?? 0);
         $users = new User();
-        $target = $users->find($id);
-
-        if ($target === null) {
-            Http::abort(404);
-        }
+        $target = $this->findNonEmployee($users, $id);
 
         if ($id === Auth::id()) {
             Session::flash('error', 'You cannot suspend your own account.');
@@ -170,11 +167,7 @@ final class UserController extends Controller
     {
         $id = (int) ($params['id'] ?? 0);
         $users = new User();
-        $target = $users->find($id);
-
-        if ($target === null) {
-            Http::abort(404);
-        }
+        $target = $this->findNonEmployee($users, $id);
 
         if ($id === Auth::id()) {
             Session::flash('error', 'Use Account -> Change password for your own account.');
@@ -192,5 +185,20 @@ final class UserController extends Controller
             . ' — shown once; the account must change it on next sign-in.'
         );
         Http::redirect('/users');
+    }
+
+    /**
+     * Branch-scoped find(), with employees treated as not found.
+     *
+     * @return array<string,mixed>
+     */
+    private function findNonEmployee(User $users, int $id): array
+    {
+        $target = $users->find($id);
+        if ($target === null || (string) $target['role'] === Access::EMPLOYEE) {
+            Http::abort(404);
+        }
+
+        return $target;
     }
 }

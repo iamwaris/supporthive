@@ -13,14 +13,25 @@
  *
  * History lives only in Alpine's in-memory state for this page load — never
  * persisted, never sent anywhere but back to /ai/chat on the next question.
+ *
+ * @var array<string,mixed>|null $authUser  from layouts/app.php
  */
 
 declare(strict_types=1);
 
+$authUser = $authUser ?? null;
+
 use App\Core\Csrf;
+use App\Services\Access;
 use App\Services\AiAvailability;
 
-if (!AiAvailability::enabledForCurrentBranch()) {
+// The assistant answers questions about the books, and /ai/chat is can:view.
+// A role that cannot read financials (an employee) gets no launcher at all
+// rather than a widget whose every question would 403.
+if (
+    !Access::canViewFinancials((string) ($authUser['role'] ?? ''))
+    || !AiAvailability::enabledForCurrentBranch()
+) {
     return;
 }
 ?>

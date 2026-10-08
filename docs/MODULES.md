@@ -216,6 +216,21 @@ threshold, and runs the pre-launch checklist in [SECURITY.md](SECURITY.md).
 
 ---
 
+## Employees & documents *(added 2026-10-08, tracker section EMP)*
+
+An `employee` role with no financial access. Admins manage employees
+(`/employees`: list, search, create, edit, deactivate/reactivate, reset
+password) and publish PDFs (`/employee-documents`). Employees land on
+`/portal`: their own read-only profile and the documents published to their
+branch, which they can preview (new tab) or download.
+
+- Tables: `employee_profiles` (one per employee login), `employee_documents`.
+- Files follow Module 10's rule: `storage/documents/employee-documents`,
+  streamed by `EmployeeDocumentController` after a branch-scoped lookup.
+- Visibility is per branch, like everything else.
+
+---
+
 ## Dependency order
 
 ```

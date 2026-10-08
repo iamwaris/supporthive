@@ -239,6 +239,11 @@ final class Auth
      * this on every account it touches — is redirected to the change
      * screen before it can reach anything else, /logout excepted. The
      * screen itself is excluded by path so this cannot loop.
+     *
+     * The account's status is re-read on every request, mirroring the
+     * branch check in requireActiveBranch(): deactivating an employee (or
+     * suspending any user, or deleting the row) must end a session that is
+     * already open, not just block the next sign-in.
      */
     public static function requireLogin(): void
     {
@@ -248,8 +253,16 @@ final class Auth
         }
 
         $user = self::user();
+        if ($user === null || (string) ($user['status'] ?? '') !== 'active') {
+            Logger::security('Session ended: account inactive mid-session', ['user_id' => self::id()]);
+            self::logout();
+            Session::start();
+            Session::flash('error', 'This account has been deactivated.');
+            Http::redirect('/login');
+        }
+
         $exempt = in_array(Http::path(), ['/account/password', '/logout'], true);
-        if ($user !== null && (int) ($user['must_change_password'] ?? 0) === 1 && !$exempt) {
+        if ((int) ($user['must_change_password'] ?? 0) === 1 && !$exempt) {
             Http::redirect('/account/password');
         }
     }

@@ -97,7 +97,9 @@ final class Router
 
         match ($name) {
             'auth'  => Auth::requireLogin(),
-            'guest' => Auth::check() ? Http::redirect('/dashboard') : null,
+            'guest' => Auth::check()
+                ? Http::redirect(Access::landingPath((string) (Auth::user()['role'] ?? '')))
+                : null,
             'role'  => Auth::requireRole(...explode(',', (string) $arg)),
             // Ability gates delegate to App\Services\Access, which is unit
             // tested. Routes name what the user must be able to DO, not which
@@ -124,16 +126,7 @@ final class Router
         $user = Auth::user();
         $role = (string) ($user['role'] ?? '');
 
-        $allowed = match ($ability) {
-            'write'      => Access::canWriteTransactions($role),
-            'master'     => Access::canManageMasterData($role),
-            'administer' => Access::canAdminister($role),
-            'distribute' => Access::canDistributeProfit($role),
-            'view'       => Access::canViewFinancials($role),
-            default      => false,
-        };
-
-        if (!$allowed) {
+        if (!Access::allows($ability, $role)) {
             Logger::security('Ability denied', [
                 'user_id' => Auth::id(),
                 'role'    => $role,

@@ -12,6 +12,7 @@ use App\Core\Logger;
 use App\Core\RateLimiter;
 use App\Core\Session;
 use App\Core\Validator;
+use App\Services\Access;
 
 final class AuthController extends Controller
 {
@@ -53,7 +54,7 @@ final class AuthController extends Controller
         RateLimiter::clear('login:' . $email);
 
         Session::forget('_old');
-        Http::redirect('/dashboard');
+        Http::redirect(Access::landingPath((string) (Auth::user()['role'] ?? '')));
     }
 
     public function logout(): void

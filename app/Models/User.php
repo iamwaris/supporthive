@@ -30,6 +30,20 @@ final class User extends Model
         );
     }
 
+    /**
+     * The Users screen's list: every login in this branch except employees,
+     * who are managed (with their profile) from the Employees screen.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function nonEmployeesOrdered(): array
+    {
+        return $this->db()->all(
+            "SELECT * FROM users WHERE branch_id = :branch AND role <> 'employee' ORDER BY status ASC, name ASC",
+            ['branch' => $this->requireBranchId()]
+        );
+    }
+
     /** Email is unique across the whole app, not just this branch — the schema enforces it globally. */
     public function emailExists(string $email, ?int $exceptId = null): bool
     {

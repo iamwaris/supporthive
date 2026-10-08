@@ -87,6 +87,8 @@ final class AccessTest extends TestCase
             self::assertFalse(Access::canDistributeProfit($role));
             self::assertFalse(Access::canViewFinancials($role));
             self::assertFalse(Access::canManageBranches($role));
+            self::assertFalse(Access::canUseEmployeePortal($role));
+            self::assertFalse(Access::canReadEmployeeDocuments($role));
         }
     }
 
@@ -97,6 +99,87 @@ final class AccessTest extends TestCase
         foreach (Access::ASSIGNABLE as $role) {
             self::assertContains($role, Access::ALL);
         }
+    }
+
+    /**
+     * The employee role must never inherit a finance or admin ability. The
+     * specific bug this guards: canViewFinancials() used to answer "every
+     * known role", so adding employee to ALL alone would have opened every
+     * can:view route — dashboard, ledger, reports — to employees.
+     */
+    public function testEmployeeIsDeniedEveryFinanceAndAdminAbility(): void
+    {
+        self::assertFalse(Access::canViewFinancials(Access::EMPLOYEE));
+        self::assertFalse(Access::canWriteTransactions(Access::EMPLOYEE));
+        self::assertFalse(Access::canManageMasterData(Access::EMPLOYEE));
+        self::assertFalse(Access::canAdminister(Access::EMPLOYEE));
+        self::assertFalse(Access::canDistributeProfit(Access::EMPLOYEE));
+        self::assertFalse(Access::canManageBranches(Access::EMPLOYEE));
+
+        foreach (['view', 'write', 'master', 'administer', 'distribute'] as $ability) {
+            self::assertFalse(Access::allows($ability, Access::EMPLOYEE), "employee must not have can:{$ability}");
+        }
+    }
+
+    public function testOnlyEmployeesUseThePortal(): void
+    {
+        foreach (Access::ALL as $role) {
+            self::assertSame(
+                $role === Access::EMPLOYEE,
+                Access::canUseEmployeePortal($role),
+                "portal access for {$role}"
+            );
+            self::assertSame($role === Access::EMPLOYEE, Access::allows('portal', $role));
+        }
+    }
+
+    public function testEmployeeDocumentsAreReadableByEmployeesAndTheAdminsWhoPublishThem(): void
+    {
+        $readers = [Access::EMPLOYEE, Access::ADMIN, Access::SUPER_ADMIN];
+
+        foreach (Access::ALL as $role) {
+            $expected = in_array($role, $readers, true);
+            self::assertSame($expected, Access::canReadEmployeeDocuments($role), "employee documents for {$role}");
+            self::assertSame($expected, Access::allows('employee-documents', $role));
+        }
+    }
+
+    public function testEmployeesLandOnThePortalAndEveryoneElseOnTheDashboard(): void
+    {
+        self::assertSame('/portal', Access::landingPath(Access::EMPLOYEE));
+
+        $others = [Access::ADMIN, Access::PARTNER, Access::ACCOUNTANT, Access::DATA_ENTRY, Access::SUPER_ADMIN, ''];
+        foreach ($others as $role) {
+            self::assertSame('/dashboard', Access::landingPath($role), "landing path for '{$role}'");
+        }
+    }
+
+    public function testAllowsMatchesEachNamedAbility(): void
+    {
+        foreach (Access::ALL as $role) {
+            self::assertSame(Access::canWriteTransactions($role), Access::allows('write', $role));
+            self::assertSame(Access::canManageMasterData($role), Access::allows('master', $role));
+            self::assertSame(Access::canAdminister($role), Access::allows('administer', $role));
+            self::assertSame(Access::canDistributeProfit($role), Access::allows('distribute', $role));
+            self::assertSame(Access::canViewFinancials($role), Access::allows('view', $role));
+        }
+    }
+
+    /** A typo in a route's can:<ability> must deny, never widen. */
+    public function testUnknownAbilityIsDeniedForEveryRole(): void
+    {
+        foreach (array_merge(Access::ALL, ['', 'agent']) as $role) {
+            foreach (['', 'View', 'admin', 'documents', 'portal ', 'employee_documents'] as $ability) {
+                self::assertFalse(Access::allows($ability, $role), "can:{$ability} must deny {$role}");
+            }
+        }
+    }
+
+    public function testEmployeeIsAKnownRoleButNotAssignableFromTheUsersScreen(): void
+    {
+        self::assertContains(Access::EMPLOYEE, Access::ALL);
+        self::assertTrue(Access::isKnown(Access::EMPLOYEE));
+        self::assertNotContains(Access::EMPLOYEE, Access::ASSIGNABLE);
     }
 
     public function testFutureRolesAreAlreadyAnswered(): void

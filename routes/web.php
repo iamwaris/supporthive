@@ -7,20 +7,29 @@
  * Middleware:
  *   auth              signed in
  *   guest             signed out only
- *   can:<ability>     checked against App\Services\Access (unit tested)
+ *   can:<ability>     checked against App\Services\Access::allows() (unit tested)
  *                     write | master | administer | distribute | view
+ *                     | portal | employee-documents
+ *   role:<a,b>        exact role list (super admin's branch screens only)
+ *
+ * tests/Unit/RouteAccessTest.php loads this file and asserts every route but
+ * /, /login and /dev-login carries a gate, and snapshots exactly which routes
+ * an employee (and a partner) can reach. A new route changes that snapshot on
+ * purpose, never by accident.
  */
 
 declare(strict_types=1);
 
 use App\Controllers\DevAuthController;
+use App\Core\Auth;
 use App\Core\Http;
 use App\Core\Router;
+use App\Services\Access;
 
 /** @var Router $router */
 
 // --- Public ---------------------------------------------------------------
-$router->get('/', static fn (): never => Http::redirect('/dashboard'));
+$router->get('/', static fn (): never => Http::redirect(Access::landingPath((string) (Auth::user()['role'] ?? ''))));
 
 // --- Authentication -------------------------------------------------------
 $router->get('/login', 'AuthController@showLogin', ['guest']);
@@ -65,6 +74,35 @@ $router->post('/users/{id}/toggle', 'UserController@toggleStatus', ['can:adminis
 $router->post('/users/{id}/reset-password', 'UserController@resetPassword', ['can:administer']);
 
 $router->get('/audit-log', 'AuditLogController@index', ['can:administer']);
+
+// --- Employees & employee documents (EMP) -----------------------------------
+// Managing employees and publishing documents is admin work. /employees/new is
+// a literal path, so Router::match()'s exact lookup resolves it before the
+// /employees/{id} pattern is ever tried; it is still registered first so the
+// table reads in the order a person would expect.
+$router->get('/employees', 'EmployeeController@index', ['can:administer']);
+$router->get('/employees/new', 'EmployeeController@create', ['can:administer']);
+$router->post('/employees', 'EmployeeController@store', ['can:administer']);
+$router->get('/employees/{id}', 'EmployeeController@show', ['can:administer']);
+$router->get('/employees/{id}/edit', 'EmployeeController@edit', ['can:administer']);
+$router->post('/employees/{id}', 'EmployeeController@update', ['can:administer']);
+$router->post('/employees/{id}/toggle', 'EmployeeController@toggleStatus', ['can:administer']);
+$router->post('/employees/{id}/reset-password', 'EmployeeController@resetPassword', ['can:administer']);
+
+$router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
+$router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);
+$router->post('/employee-documents/{id}/delete', 'EmployeeDocumentController@destroy', ['can:administer']);
+
+// Opening a document: employees read them, admins check what they published.
+// Streamed from storage/documents by the controller, never a public path
+// (decision D-4, extended to employee documents).
+$router->get('/employee-documents/{id}/view', 'EmployeeDocumentController@preview', ['can:employee-documents']);
+$router->get('/employee-documents/{id}/download', 'EmployeeDocumentController@download', ['can:employee-documents']);
+
+// The employee's own self-service area. Employees only — every other role
+// has the dashboard.
+$router->get('/portal', 'PortalController@index', ['can:portal']);
+$router->get('/portal/documents', 'PortalController@documents', ['can:portal']);
 
 // --- Master data (M2) -----------------------------------------------------
 // Reading is open to anyone who may see financials; every write needs the
