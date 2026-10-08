@@ -293,6 +293,115 @@ final class EmployeeManagementTest extends TestCase
         self::assertContains($this->adminAId, array_map('intval', $listed));
     }
 
+    /**
+     * @param array<string,string> $post
+     * @return array{status:int,body:string,session:array<string,mixed>}
+     */
+    private function storeViaUsersScreen(array $post): array
+    {
+        return ControllerActionRunner::run(UserController::class, 'store', $this->sessionA(), $post);
+    }
+
+    public function testUsersScreenCreatesAnEmployeeThroughTheSameOnboardingPath(): void
+    {
+        $result = $this->storeViaUsersScreen($this->validPost([
+            'email' => 'emt-via-users@test.local',
+            'role' => 'employee',
+        ]));
+        self::assertSame(302, $result['status']);
+
+        $user = Database::instance()->first(
+            'SELECT u.*, p.branch_id AS profile_branch_id, p.designation, p.phone, p.joining_date
+             FROM users u JOIN employee_profiles p ON p.user_id = u.id WHERE u.email = :e',
+            ['e' => 'emt-via-users@test.local']
+        );
+
+        self::assertNotNull($user, 'an employee from Add user must get its profile row too');
+        self::assertSame('employee', $user['role']);
+        self::assertSame(1, (int) $user['must_change_password']);
+        self::assertSame($this->branchAId, (int) $user['branch_id']);
+        self::assertSame($this->branchAId, (int) $user['profile_branch_id']);
+        self::assertSame('Field Technician', $user['designation']);
+        self::assertSame('0300-1234567', $user['phone']);
+        self::assertSame('2026-10-01', $user['joining_date']);
+
+        self::assertSame(1, (int) Database::instance()->value(
+            "SELECT COUNT(*) FROM audit_log WHERE action = 'employee.created' AND entity_id = :id",
+            ['id' => $user['id']]
+        ), 'the same audit entry the Employees screen writes');
+        self::assertStringContainsString(
+            'temporary password',
+            (string) ($result['session']['_flash']['success'] ?? ''),
+            'the one-time password notice'
+        );
+    }
+
+    public function testUsersScreenEmployeeWithoutDesignationInsertsNothingAndFlagsTheField(): void
+    {
+        $result = $this->storeViaUsersScreen($this->validPost([
+            'email' => 'emt-via-users@test.local',
+            'role' => 'employee',
+            'designation' => '',
+        ]));
+
+        self::assertSame(302, $result['status']);
+        self::assertArrayHasKey('designation', $result['session']['_flash']['errors'] ?? []);
+        self::assertSame('employee', $result['session']['_old']['role'] ?? null, 'input is kept for old()');
+        self::assertSame(0, (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM users WHERE email = :e',
+            ['e' => 'emt-via-users@test.local']
+        ));
+    }
+
+    public function testUsersScreenAdminAndPartnerCreationIgnoresTheEmployeeFields(): void
+    {
+        foreach (['admin', 'partner'] as $role) {
+            $email = 'emt-via-users-' . $role . '@test.local';
+            // Invalid profile values must not block a non-employee login.
+            $result = $this->storeViaUsersScreen($this->validPost([
+                'email' => $email,
+                'role' => $role,
+                'phone' => 'call me maybe',
+                'joining_date' => '2026-02-30',
+            ]));
+            self::assertSame(302, $result['status']);
+
+            $user = Database::instance()->first('SELECT * FROM users WHERE email = :e', ['e' => $email]);
+            self::assertNotNull($user, "{$role} must be created");
+            self::assertSame($role, $user['role']);
+            self::assertSame($this->branchAId, (int) $user['branch_id']);
+            self::assertSame(0, (int) Database::instance()->value(
+                'SELECT COUNT(*) FROM employee_profiles WHERE user_id = :id',
+                ['id' => $user['id']]
+            ), "{$role} must not get an employee profile");
+            self::assertSame(1, (int) Database::instance()->value(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'user.created' AND entity_id = :id",
+                ['id' => $user['id']]
+            ));
+        }
+    }
+
+    /** Add user may create an employee, but no existing login may be switched into that role. */
+    public function testUsersScreenUpdateStillRejectsTheEmployeeRole(): void
+    {
+        $result = ControllerActionRunner::run(
+            UserController::class,
+            'update',
+            $this->sessionA(),
+            ['name' => 'EMT Partner', 'role' => 'employee'],
+            [],
+            'POST',
+            ['id' => (string) $this->partnerAId]
+        );
+
+        self::assertSame(302, $result['status']);
+        self::assertArrayHasKey('role', $result['session']['_flash']['errors'] ?? []);
+        self::assertSame('partner', Database::instance()->value(
+            'SELECT role FROM users WHERE id = :id',
+            ['id' => $this->partnerAId]
+        ));
+    }
+
     public function testSearchMatchesEachFieldFiltersByStatusAndTreatsWildcardsLiterally(): void
     {
         $this->asBranchA();

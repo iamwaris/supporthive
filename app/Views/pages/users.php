@@ -4,7 +4,8 @@
  * User management — admin only, scoped to this branch.
  *
  * @var list<array<string,mixed>>  $users
- * @var list<string>               $roles
+ * @var list<string>               $roles           roles an existing login may be switched between
+ * @var list<string>               $creatableRoles  roles "Add user" may create
  * @var array<string,list<string>> $errors
  * @var array<string,mixed>|null   $authUser
  */
@@ -14,6 +15,13 @@ declare(strict_types=1);
 $errors = $errors ?? [];
 $myId = (int) ($authUser['id'] ?? 0);
 $roleLabel = static fn (string $role): string => ucfirst(str_replace('_', ' ', $role));
+$newRole = in_array(old('role'), $creatableRoles, true) ? old('role') : $creatableRoles[0];
+
+$employeeFields = [
+    ['name' => 'designation', 'label' => 'Designation', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'organization-title', 'inputmode' => null, 'help' => null],
+    ['name' => 'phone', 'label' => 'Phone', 'type' => 'tel', 'required' => false, 'max' => 30, 'autocomplete' => 'tel', 'inputmode' => 'tel', 'help' => 'Digits, spaces, + - ( ) only.'],
+    ['name' => 'joining_date', 'label' => 'Joining date', 'type' => 'date', 'required' => false, 'max' => null, 'autocomplete' => 'off', 'inputmode' => null, 'help' => null],
+];
 ?>
 
 <div class="grid gap-5 xl:grid-cols-[1fr_340px]">
@@ -137,7 +145,8 @@ $roleLabel = static fn (string $role): string => ucfirst(str_replace('_', ' ', $
             A one-time temporary password is generated and shown once after creation.
         </p>
 
-        <form method="post" action="<?= e(url('/users')) ?>" class="mt-4 flex flex-col gap-3">
+        <form method="post" action="<?= e(url('/users')) ?>" class="mt-4 flex flex-col gap-3"
+              x-data="{ role: <?= e(json_encode($newRole, JSON_THROW_ON_ERROR)) ?> }">
             <?= csrf_field() ?>
             <div>
                 <label for="new-u-name" class="label">Name</label>
@@ -159,14 +168,58 @@ $roleLabel = static fn (string $role): string => ucfirst(str_replace('_', ' ', $
             </div>
             <div>
                 <label for="new-u-role" class="label">Role</label>
-                <select id="new-u-role" name="role" required class="input">
-                    <?php foreach ($roles as $role) : ?>
-                        <option value="<?= e($role) ?>" <?= old('role') === $role ? 'selected' : '' ?>>
+                <select id="new-u-role" name="role" required x-model="role"
+                        <?= isset($errors['role'][0]) ? 'aria-invalid="true" aria-describedby="new-u-role-error"' : '' ?>
+                        class="<?= isset($errors['role']) ? 'input-error' : 'input' ?>">
+                    <?php foreach ($creatableRoles as $role) : ?>
+                        <option value="<?= e($role) ?>" <?= $newRole === $role ? 'selected' : '' ?>>
                             <?= e($roleLabel($role)) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
+                <?php if (isset($errors['role'][0])) : ?>
+                    <p id="new-u-role-error" class="error"><?= e($errors['role'][0]) ?></p>
+                <?php endif; ?>
+                <p class="help">
+                    <a href="<?= e(url('/employees')) ?>" class="font-medium text-brand-700 hover:underline">Manage employees &rarr;</a>
+                </p>
             </div>
+
+            <?php /* Visible without JavaScript; the server ignores these fields unless the role is employee. */ ?>
+            <fieldset x-show="role === 'employee'" class="flex flex-col gap-3 pt-1" aria-describedby="new-u-employee-hint">
+                <legend class="font-display text-[13px] font-semibold text-ink">Employee details</legend>
+                <p id="new-u-employee-hint" class="help mt-1">Only needed for employees.</p>
+                <?php foreach ($employeeFields as $field) : ?>
+                    <?php
+                    $name = $field['name'];
+                    $inputId = 'new-u-' . str_replace('_', '-', $name);
+                    $hasError = isset($errors[$name][0]);
+                    $describedBy = trim(($field['help'] !== null ? $inputId . '-help ' : '') . ($hasError ? $inputId . '-error' : ''));
+                    ?>
+                    <div>
+                        <label for="<?= e($inputId) ?>" class="label">
+                            <?= e($field['label']) ?>
+                            <span class="font-normal text-slate-400"><?= $field['required'] ? '(required for employees)' : '(optional)' ?></span>
+                        </label>
+                        <input id="<?= e($inputId) ?>" name="<?= e($name) ?>" type="<?= e($field['type']) ?>"
+                               value="<?= e(old($name)) ?>"
+                               <?= $field['max'] !== null ? 'maxlength="' . e((string) $field['max']) . '"' : '' ?>
+                               <?= $field['required'] ? 'x-bind:required="role === \'employee\'"' : '' ?>
+                               autocomplete="<?= e($field['autocomplete']) ?>"
+                               <?= $field['inputmode'] !== null ? 'inputmode="' . e($field['inputmode']) . '"' : '' ?>
+                               <?= $describedBy !== '' ? 'aria-describedby="' . e($describedBy) . '"' : '' ?>
+                               <?= $hasError ? 'aria-invalid="true"' : '' ?>
+                               class="<?= $hasError ? 'input-error' : 'input' ?>">
+                        <?php if ($field['help'] !== null) : ?>
+                            <p id="<?= e($inputId . '-help') ?>" class="help"><?= e($field['help']) ?></p>
+                        <?php endif; ?>
+                        <?php if ($hasError) : ?>
+                            <p id="<?= e($inputId . '-error') ?>" class="error"><?= e($errors[$name][0]) ?></p>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </fieldset>
+
             <button type="submit" class="btn-dark">Add user</button>
         </form>
     </div>

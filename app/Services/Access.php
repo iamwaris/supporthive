@@ -39,11 +39,21 @@ final class Access
     public const EMPLOYEE = 'employee';
 
     /**
-     * Roles an administrator may assign from the Users screen. Employees are
-     * deliberately absent: they are created only through the Employees screen,
-     * which also writes their profile row.
+     * Roles an administrator may switch an existing login between on the
+     * Users screen. Employees are deliberately absent: a login's role must
+     * never cross the employee boundary, because the employee profile row is
+     * written only when the login is created (see CREATABLE).
      */
     public const ASSIGNABLE = [self::ADMIN, self::PARTNER];
+
+    /**
+     * Roles the Users screen's "Add user" form may create. Wider than
+     * ASSIGNABLE on purpose: a new employee is created with its profile row
+     * through App\Services\EmployeeOnboarding, but an existing login's role
+     * may never be edited across the employee boundary — that would leave a
+     * profile row orphaned, or an employee login with none.
+     */
+    public const CREATABLE = [self::ADMIN, self::PARTNER, self::EMPLOYEE];
 
     /** Every role the schema permits, assignable or not. */
     public const ALL = [

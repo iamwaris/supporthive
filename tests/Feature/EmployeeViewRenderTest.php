@@ -8,6 +8,8 @@ use App\Core\Database;
 use App\Core\View;
 use App\Models\EmployeeDocument;
 use App\Models\EmployeeProfile;
+use App\Models\User;
+use App\Services\Access;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\BranchFixture;
 
@@ -160,5 +162,34 @@ final class EmployeeViewRenderTest extends TestCase
         self::assertStringContainsString('No documents match', $documents);
         self::assertStringContainsString('has not been set up yet', $missingProfile);
         self::assertStringContainsString('No documents have been shared with you yet.', $missingProfile);
+    }
+
+    /**
+     * Add user offers Employee with its profile fields, keeps a failed
+     * submit's input and shows each field's own error; the per-row edit
+     * selects still never offer Employee.
+     */
+    public function testUsersAddFormOffersEmployeeWithItsFields(): void
+    {
+        $_SESSION['_old'] = ['role' => 'employee', 'name' => 'EVR New', 'phone' => '<0300>', 'joining_date' => ''];
+
+        $html = $this->render('pages/users', [
+            'users' => (new User())->nonEmployeesOrdered(),
+            'roles' => Access::ASSIGNABLE,
+            'creatableRoles' => Access::CREATABLE,
+            'errors' => ['designation' => ['The designation field is required.']],
+        ]);
+
+        self::assertStringContainsString('<option value="employee" selected>', $html);
+        self::assertSame(1, substr_count($html, 'value="employee"'), 'only the Add user select offers Employee');
+        self::assertStringContainsString('Employee details', $html);
+        self::assertStringContainsString('Only needed for employees.', $html);
+        foreach (['new-u-designation', 'new-u-phone', 'new-u-joining-date'] as $inputId) {
+            self::assertStringContainsString('<label for="' . $inputId . '"', $html);
+        }
+        self::assertStringContainsString('id="new-u-designation-error" class="error"', $html);
+        self::assertStringContainsString('value="&lt;0300&gt;"', $html, 'old() input is kept and escaped');
+        self::assertStringContainsString('href="' . url('/employees') . '"', $html);
+        self::assertStringContainsString('Manage employees', $html);
     }
 }

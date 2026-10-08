@@ -12,6 +12,7 @@ use App\Core\Session;
 use App\Models\User;
 use App\Services\Access;
 use App\Services\Audit;
+use App\Services\EmployeeOnboarding;
 
 /**
  * In-app user management, admin only (`can:administer`), scoped to the
@@ -21,14 +22,16 @@ use App\Services\Audit;
  * super_admin is deliberately unreachable from here: it has no branch_id, so
  * it never appears in User::allOrdered(), and Router::requireAbility()
  * already sends a branch-less session to /admin/branches before a request
- * gets this far. This screen only ever creates admin/partner logins
- * (App\Services\Access::ASSIGNABLE) — the same two roles
- * scripts/create-user.php has always been limited to.
+ * gets this far. "Add user" creates admin, partner or employee logins
+ * (App\Services\Access::CREATABLE); an employee goes through
+ * App\Services\EmployeeOnboarding, the same path the Employees screen uses,
+ * so its profile row is written with it. Editing a role is limited to
+ * Access::ASSIGNABLE, which never includes employee.
  *
- * Employees are managed from App\Controllers\EmployeeController instead
+ * Once created, employees are managed from App\Controllers\EmployeeController
  * (their login and profile change together), so an employee id is a 404 on
- * every action here — this screen must not rename, suspend or reset one
- * behind the Employees screen's back.
+ * every action here that takes one — this screen must not rename, suspend or
+ * reset one behind the Employees screen's back.
  */
 final class UserController extends Controller
 {
@@ -41,16 +44,25 @@ final class UserController extends Controller
             'pageMeta' => 'Logins for this branch. A new user must change their password on first sign-in.',
             'users' => (new User())->nonEmployeesOrdered(),
             'roles' => Access::ASSIGNABLE,
+            'creatableRoles' => Access::CREATABLE,
         ]);
     }
 
     public function store(): void
     {
-        $clean = $this->validate([
+        $rules = [
             'name' => 'required|max:120',
             'email' => 'required|email|max:190',
-            'role' => 'required|in:' . implode(',', Access::ASSIGNABLE),
-        ], '/users');
+            'role' => 'required|in:' . implode(',', Access::CREATABLE),
+        ];
+        // The raw role only selects which rules apply; the profile fields are
+        // ignored entirely (never validated, never stored) for admin/partner.
+        $wantsEmployee = ($_POST['role'] ?? null) === Access::EMPLOYEE;
+        if ($wantsEmployee) {
+            $rules += EmployeeOnboarding::PROFILE_RULES;
+        }
+
+        $clean = $this->validate($rules, '/users');
 
         $name = trim((string) $clean['name']);
         $email = strtolower(trim((string) $clean['email']));
@@ -61,6 +73,16 @@ final class UserController extends Controller
             Session::flash('errors', ['email' => ['That email is already in use by another account.']]);
             Session::flash('error', 'Please correct the highlighted fields.');
             Http::redirect('/users');
+        }
+
+        if ($wantsEmployee) {
+            $fields = EmployeeOnboarding::normalise($clean);
+            $created = EmployeeOnboarding::create($fields);
+            Session::flash(
+                'success',
+                EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])
+            );
+            Http::redirect('/employees/' . $created['id']);
         }
 
         // A generated one-time password, shown once — the same forced-change

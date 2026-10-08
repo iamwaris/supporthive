@@ -14,6 +14,7 @@ use App\Core\Validator;
 use App\Models\EmployeeProfile;
 use App\Models\User;
 use App\Services\Audit;
+use App\Services\EmployeeOnboarding;
 
 /**
  * Employee management, admin only (`can:administer`), scoped to the admin's
@@ -32,10 +33,7 @@ final class EmployeeController extends Controller
     private const RULES = [
         'name' => 'required|max:120',
         'email' => 'required|email|max:190',
-        'phone' => 'nullable|max:30|regex:/^[0-9+()\s-]{7,30}$/',
-        'designation' => 'required|max:120',
-        'joining_date' => 'nullable|ymd',
-    ];
+    ] + EmployeeOnboarding::PROFILE_RULES;
 
     public function index(): void
     {
@@ -83,29 +81,18 @@ final class EmployeeController extends Controller
 
     public function store(): void
     {
-        $fields = $this->normalise($this->validate(self::RULES, '/employees/new'));
+        $fields = EmployeeOnboarding::normalise($this->validate(self::RULES, '/employees/new'));
 
         if ((new User())->emailExists($fields['email'])) {
             $this->failWithFieldError('email', 'That email is already in use by another account.', '/employees/new');
         }
 
-        // Shown once, never logged — the same one-time credential
-        // UserController and branch creation issue.
-        $tempPassword = bin2hex(random_bytes(9));
-        $id = (new EmployeeProfile())->createWithLogin($fields, Auth::hash($tempPassword));
-
-        Logger::security('Employee created', ['user_id' => $id, 'by' => Auth::id()]);
-        Audit::record('employee.created', 'users', $id, null, [
-            'name' => $fields['name'],
-            'email' => $fields['email'],
-            'designation' => $fields['designation'],
-        ]);
+        $created = EmployeeOnboarding::create($fields);
         Session::flash(
             'success',
-            $fields['name'] . ' added. Login: ' . $fields['email'] . ' / temporary password: ' . $tempPassword
-            . ' — this is shown once; the employee must change it on first sign-in.'
+            EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])
         );
-        Http::redirect('/employees/' . $id);
+        Http::redirect('/employees/' . $created['id']);
     }
 
     /** @param array<string,string> $params */
@@ -143,7 +130,7 @@ final class EmployeeController extends Controller
         $id = (int) $employee['id'];
         $back = '/employees/' . $id . '/edit';
 
-        $fields = $this->normalise($this->validate(self::RULES, $back));
+        $fields = EmployeeOnboarding::normalise($this->validate(self::RULES, $back));
 
         if ((new User())->emailExists($fields['email'], $id)) {
             $this->failWithFieldError('email', 'That email is already in use by another account.', $back);
@@ -224,21 +211,6 @@ final class EmployeeController extends Controller
         }
 
         return $employee;
-    }
-
-    /**
-     * @param array<string,mixed> $clean Validator::validated() output for self::RULES
-     * @return array{name:string,email:string,phone:?string,designation:string,joining_date:?string}
-     */
-    private function normalise(array $clean): array
-    {
-        return [
-            'name' => trim((string) $clean['name']),
-            'email' => strtolower(trim((string) $clean['email'])),
-            'phone' => $clean['phone'] === null ? null : trim((string) $clean['phone']),
-            'designation' => trim((string) $clean['designation']),
-            'joining_date' => $clean['joining_date'] === null ? null : (string) $clean['joining_date'],
-        ];
     }
 
     private function failWithFieldError(string $field, string $message, string $back): never

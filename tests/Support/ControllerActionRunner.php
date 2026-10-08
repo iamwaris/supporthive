@@ -47,7 +47,9 @@ final class ControllerActionRunner
      *                                       Router::invoke() always calls
      *                                       ->{$method}($params) — PHP does not error
      *                                       on an unused extra argument.
-     * @return array{status:int,body:string}
+     * @return array{status:int,body:string,session:array<string,mixed>} session is $_SESSION as the
+     *                                       action left it — e.g. the flashed field errors of a
+     *                                       failed validation.
      */
     public static function run(
         string $controllerClass,
@@ -105,7 +107,7 @@ final class ControllerActionRunner
             unlink($resultFile);
         }
 
-        /** @var array{status:int|null}|null $result */
+        /** @var array{status:int|null,session?:array<string,mixed>}|null $result */
         $result = $resultJson !== '' ? json_decode($resultJson, true) : null;
         $status = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
 
@@ -116,7 +118,9 @@ final class ControllerActionRunner
             );
         }
 
-        return ['status' => $status, 'body' => $stdout];
+        $sessionAfter = is_array($result) && is_array($result['session'] ?? null) ? $result['session'] : [];
+
+        return ['status' => $status, 'body' => $stdout, 'session' => $sessionAfter];
     }
 
     /**
@@ -164,7 +168,10 @@ final class ControllerActionRunner
 
             \$resultFile = {$resultFileLiteral};
             register_shutdown_function(static function () use (\$resultFile) {
-                file_put_contents(\$resultFile, json_encode(['status' => http_response_code()]));
+                file_put_contents(\$resultFile, json_encode([
+                    'status' => http_response_code(),
+                    'session' => \$_SESSION ?? [],
+                ]));
             });
 
             \$controllerClass = {$controllerClassLiteral};

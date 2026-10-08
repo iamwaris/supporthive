@@ -182,6 +182,19 @@ final class AccessTest extends TestCase
         self::assertNotContains(Access::EMPLOYEE, Access::ASSIGNABLE);
     }
 
+    /**
+     * "Add user" may create an employee (with its profile, via
+     * EmployeeOnboarding), but editing stays limited to ASSIGNABLE, so no
+     * existing login can be moved across the employee boundary.
+     */
+    public function testAddUserMayCreateEmployeesWithoutMakingTheRoleAssignable(): void
+    {
+        self::assertSame([Access::ADMIN, Access::PARTNER, Access::EMPLOYEE], Access::CREATABLE);
+        self::assertSame([], array_diff(Access::ASSIGNABLE, Access::CREATABLE));
+        self::assertNotContains(Access::SUPER_ADMIN, Access::CREATABLE);
+        self::assertNotContains(Access::EMPLOYEE, Access::ASSIGNABLE);
+    }
+
     public function testFutureRolesAreAlreadyAnswered(): void
     {
         // These are in the schema but not assignable. They must still have a
