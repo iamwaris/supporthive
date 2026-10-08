@@ -109,8 +109,7 @@ final class EmployeeManagementTest extends TestCase
         array $post = [],
         ?int $id = null,
         string $class = EmployeeController::class
-    ): int
-    {
+    ): int {
         $result = ControllerActionRunner::run(
             $class,
             $method,
