@@ -110,6 +110,10 @@ Full rationale in [MODULES.md](MODULES.md). Shape:
   copy of `branch_id`
 - `employee_documents` — PDFs an admin publishes to every employee of their
   branch; generated `stored_filename`, display-only `original_filename`
+- `employee_salaries` (2026-10-09) — append-only, effective-dated salary
+  history per employee (`amount` DECIMAL(15,2), `effective_from`, `note`,
+  `created_by`); the current salary is the latest row in effect today, a
+  future-dated row is a scheduled change. Admin-only
 
 Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 `audit_log`, `migrations`.
@@ -124,6 +128,7 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | Posted rows are voided, never deleted | `status` enum + mandatory reason + audit row |
 | Every transaction records creator and time | `created_by`, `created_at` NOT NULL |
 | Dashboard reconciles with transactions | Same table, same filters — by construction |
+| Salary history is never rewritten | `App\Models\EmployeeSalary` has no update/delete path; a change or correction is a new effective-dated, audited row |
 
 ## 4. Milestones
 
@@ -170,6 +175,7 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | 2026-10-08 | **Employee documents stored privately and streamed with auth** (decision D-4 extended), previewed in a new top-level tab | Same "nothing readable by holding a URL" rule as receipts; a new tab keeps the CSP's `frame-ancestors 'none'`/`object-src 'none'` intact | `public/uploads`; an embedded viewer (would need the frame/object policy loosened) |
 | 2026-10-08 | **PDF only, 10 MB default** (`UPLOAD_PDF_MAX_BYTES`), `%PDF-` header required at offset 0 | Handbooks and policies are PDFs; one type keeps preview behaviour predictable and the upload surface small | Images/Office documents |
 | 2026-10-08 | **Document visibility is per branch** — "all employees" means all employees of the uploading admin's branch | Every table is branch-scoped; a cross-branch publish would be the first exception to that rule | Global documents visible to every branch |
+| 2026-10-09 | **Employee salary: append-only, effective-dated history, admin-only** (`employee_salaries`, EMP-9). Every change is a new row with an effective date, a note and who recorded it, audited as `employee.salary_changed`; "current" is derived (latest `effective_from` on or before today, ties by id), so a raise can be scheduled ahead. Only admins see it: it lives in its own model and its own card on the admin employee page, never in the shared `partials/employee-profile.php`, the portal, `PortalController` or `EmployeeProfile::findWithUser()`; partners do not see it either. Salary changes only through `POST /employees/{id}/salary`, never the general edit form; an optional starting salary is written with the employee in the same transaction | History and payroll questions ("what were they paid in March?") need every past value with its date; a derived current value cannot drift from the history; keeping salary out of every shared or employee-facing read path makes "the employee never sees it" structural rather than a view-level `if` | A `salary` column on `employee_profiles` overwritten on edit (loses history, and the profile row is what the portal reads); editable/deletable history rows; showing the employee their own salary |
 
 ## 6. Risks
 

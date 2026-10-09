@@ -12,6 +12,7 @@ use App\Core\Logger;
 use App\Core\Session;
 use App\Core\Validator;
 use App\Models\EmployeeProfile;
+use App\Models\EmployeeSalary;
 use App\Models\User;
 use App\Services\Audit;
 use App\Services\EmployeeOnboarding;
@@ -53,13 +54,17 @@ final class EmployeeController extends Controller
         $total = $employees->searchCount($term, $status);
         $pages = max(1, (int) ceil($total / self::PER_PAGE));
         $page = min($page, $pages);
+        $rows = $employees->search($term, $status, $page, self::PER_PAGE);
 
         $this->view('pages/employees/index', [
             'title' => 'Employees',
             'nav' => 'employees',
             'pageTitle' => 'Employees',
             'pageMeta' => $total === 1 ? '1 employee' : number_format($total) . ' employees',
-            'employees' => $employees->search($term, $status, $page, self::PER_PAGE),
+            'employees' => $rows,
+            'salaries' => (new EmployeeSalary())->currentForUsers(
+                array_map(static fn (array $row): int => (int) $row['id'], $rows)
+            ),
             'filters' => ['q' => $term, 'status' => $status],
             'total' => $total,
             'page' => $page,
@@ -81,13 +86,14 @@ final class EmployeeController extends Controller
 
     public function store(): void
     {
-        $fields = EmployeeOnboarding::normalise($this->validate(self::RULES, '/employees/new'));
+        $clean = $this->validate(self::RULES + EmployeeOnboarding::STARTING_SALARY_RULES, '/employees/new');
+        $fields = EmployeeOnboarding::normalise($clean);
 
         if ((new User())->emailExists($fields['email'])) {
             $this->failWithFieldError('email', 'That email is already in use by another account.', '/employees/new');
         }
 
-        $created = EmployeeOnboarding::create($fields);
+        $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
         Session::flash(
             'success',
             EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])
@@ -99,6 +105,8 @@ final class EmployeeController extends Controller
     public function show(array $params): void
     {
         $employee = $this->findOr404($params);
+        $id = (int) $employee['id'];
+        $salaries = new EmployeeSalary();
 
         $this->view('pages/employees/show', [
             'title' => (string) $employee['name'],
@@ -106,7 +114,36 @@ final class EmployeeController extends Controller
             'pageTitle' => (string) $employee['name'],
             'pageMeta' => (string) $employee['designation'],
             'employee' => $employee,
+            'currentSalary' => $salaries->current($id),
+            'upcomingSalary' => $salaries->upcoming($id),
+            'salaryHistory' => $salaries->history($id),
         ]);
+    }
+
+    /**
+     * The only way a salary changes: a new effective-dated row, audited.
+     * There is no edit or delete — a mistake is corrected by recording the
+     * right amount, which keeps the history honest.
+     *
+     * @param array<string,string> $params
+     */
+    public function changeSalary(array $params): void
+    {
+        $employee = $this->findOr404($params);
+        $id = (int) $employee['id'];
+
+        $clean = $this->validate(EmployeeSalary::CHANGE_RULES, '/employees/' . $id);
+
+        (new EmployeeSalary())->record(
+            $id,
+            (string) $clean['amount'],
+            (string) $clean['effective_from'],
+            $clean['note'] === null ? null : (string) $clean['note']
+        );
+        Logger::security('Employee salary changed', ['user_id' => $id, 'by' => Auth::id()]);
+
+        Session::flash('success', 'Salary updated.');
+        Http::redirect('/employees/' . $id);
     }
 
     /** @param array<string,string> $params */

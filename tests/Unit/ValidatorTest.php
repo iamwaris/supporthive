@@ -69,4 +69,28 @@ final class ValidatorTest extends TestCase
             self::assertTrue(Validator::make(['phone' => $phone], $rule)->fails(), "{$phone} should fail");
         }
     }
+
+    /** The salary amount rule: money (digits, at most 2 decimals) plus the 0..9,999,999,999.99 range. */
+    public function testMoneyRuleWithTheSalaryRange(): void
+    {
+        $rule = ['amount' => 'required|money|between:0,9999999999.99'];
+
+        foreach (['0', '45000', '45000.5', '45000.50', '9999999999.99', ' 1200 '] as $amount) {
+            $v = Validator::make(['amount' => $amount], $rule);
+            self::assertTrue($v->passes(), "{$amount} should pass");
+        }
+
+        $invalid = ['-1', '1.234', '1,000', '1e5', '.5', '5.', 'abc', '10000000000', '9999999999.995', '١'];
+        foreach ($invalid as $amount) {
+            self::assertTrue(Validator::make(['amount' => $amount], $rule)->fails(), "{$amount} should fail");
+        }
+
+        self::assertSame(
+            'The amount must be an amount in digits with at most 2 decimal places, e.g. 45000.50.',
+            Validator::make(['amount' => '12.345'], $rule)->firstError('amount')
+        );
+        $optional = Validator::make(['amount' => ''], ['amount' => 'nullable|money']);
+        self::assertSame(['amount' => null], $optional->validated());
+        self::assertTrue(Validator::make(['amount' => ['1']], $rule)->fails(), 'an array is never money');
+    }
 }

@@ -110,6 +110,7 @@ final class Validator
                     'url'      => is_string($value) && filter_var($value, FILTER_VALIDATE_URL) !== false,
                     'date'     => is_string($value) && strtotime($value) !== false,
                     'ymd'      => is_string($value) && self::isYmd($value),
+                    'money'    => is_string($value) && preg_match('/^\d+(\.\d{1,2})?$/', $value) === 1,
                     'alpha'    => is_string($value) && preg_match('/^[\p{L}]+$/u', $value) === 1,
                     'alphanum' => is_string($value) && preg_match('/^[\p{L}\p{N}]+$/u', $value) === 1,
                     'slug'     => is_string($value) && preg_match('/^[a-z0-9-]+$/', $value) === 1,
@@ -182,6 +183,7 @@ final class Validator
             ),
             'in'       => "The selected {$label} is not valid.",
             'ymd'      => "The {$label} must be a valid date (YYYY-MM-DD).",
+            'money'    => "The {$label} must be an amount in digits with at most 2 decimal places, e.g. 45000.50.",
             'same'     => "The {$label} does not match.",
             default    => "The {$label} is not valid.",
         };

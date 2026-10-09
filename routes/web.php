@@ -88,6 +88,8 @@ $router->get('/employees/{id}/edit', 'EmployeeController@edit', ['can:administer
 $router->post('/employees/{id}', 'EmployeeController@update', ['can:administer']);
 $router->post('/employees/{id}/toggle', 'EmployeeController@toggleStatus', ['can:administer']);
 $router->post('/employees/{id}/reset-password', 'EmployeeController@resetPassword', ['can:administer']);
+// Salary is admin-only data; a change is always a new effective-dated row.
+$router->post('/employees/{id}/salary', 'EmployeeController@changeSalary', ['can:administer']);
 
 $router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
 $router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);

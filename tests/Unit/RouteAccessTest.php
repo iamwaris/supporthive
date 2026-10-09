@@ -124,6 +124,16 @@ final class RouteAccessTest extends TestCase
         }
     }
 
+    public function testSalaryChangeIsAdminOnlyAndUnreachableForEmployeesAndPartners(): void
+    {
+        $routes = $this->routes();
+
+        self::assertSame(['can:administer'], $routes['POST /employees/{id}/salary'] ?? null);
+        self::assertNotContains('POST /employees/{id}/salary', $this->reachableBy(Access::EMPLOYEE));
+        self::assertNotContains('POST /employees/{id}/salary', $this->reachableBy(Access::PARTNER));
+        self::assertContains('POST /employees/{id}/salary', $this->reachableBy(Access::ADMIN));
+    }
+
     /** @return list<string> "METHOD /path" for every gated route this role passes every middleware of */
     private function reachableBy(string $role): array
     {

@@ -9,6 +9,8 @@
 
 declare(strict_types=1);
 
+use App\Services\Settings;
+
 $errors = $errors ?? [];
 $editing = $employee !== null;
 $action = $editing ? '/employees/' . (int) $employee['id'] : '/employees';
@@ -29,6 +31,12 @@ $fields = [
     ['name' => 'designation', 'label' => 'Designation', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'organization-title', 'inputmode' => null, 'help' => null],
     ['name' => 'joining_date', 'label' => 'Joining date', 'type' => 'date', 'required' => false, 'max' => null, 'autocomplete' => 'off', 'inputmode' => null, 'help' => null],
 ];
+
+// Creation only: after that, salary changes go through the employee page so
+// each one gets an effective date and an audit entry.
+if (!$editing) {
+    $fields[] = ['name' => 'salary', 'label' => 'Starting salary (' . Settings::string('currency_symbol', 'Rs') . ')', 'type' => 'text', 'required' => false, 'max' => 13, 'autocomplete' => 'off', 'inputmode' => 'decimal', 'help' => 'Digits only, up to 2 decimal places. Takes effect from the joining date, or today. Admins only; never shown to the employee.'];
+}
 ?>
 
 <form method="post" action="<?= e(url($action)) ?>" class="card max-w-2xl p-5 sm:p-6" novalidate>

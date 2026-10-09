@@ -12,6 +12,8 @@
 
 declare(strict_types=1);
 
+use App\Services\Settings;
+
 $errors = $errors ?? [];
 $myId = (int) ($authUser['id'] ?? 0);
 $roleLabel = static fn (string $role): string => ucfirst(str_replace('_', ' ', $role));
@@ -21,6 +23,7 @@ $employeeFields = [
     ['name' => 'designation', 'label' => 'Designation', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'organization-title', 'inputmode' => null, 'help' => null],
     ['name' => 'phone', 'label' => 'Phone', 'type' => 'tel', 'required' => false, 'max' => 30, 'autocomplete' => 'tel', 'inputmode' => 'tel', 'help' => 'Digits, spaces, + - ( ) only.'],
     ['name' => 'joining_date', 'label' => 'Joining date', 'type' => 'date', 'required' => false, 'max' => null, 'autocomplete' => 'off', 'inputmode' => null, 'help' => null],
+    ['name' => 'salary', 'label' => 'Starting salary (' . Settings::string('currency_symbol', 'Rs') . ')', 'type' => 'text', 'required' => false, 'max' => 13, 'autocomplete' => 'off', 'inputmode' => 'decimal', 'help' => 'Digits only, up to 2 decimal places. Takes effect from the joining date, or today. Never shown to the employee.'],
 ];
 ?>
 

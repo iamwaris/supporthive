@@ -55,11 +55,12 @@ final class UserController extends Controller
             'email' => 'required|email|max:190',
             'role' => 'required|in:' . implode(',', Access::CREATABLE),
         ];
-        // The raw role only selects which rules apply; the profile fields are
-        // ignored entirely (never validated, never stored) for admin/partner.
+        // The raw role only selects which rules apply; the employee fields
+        // (profile and starting salary) are ignored entirely (never
+        // validated, never stored) for admin/partner.
         $wantsEmployee = ($_POST['role'] ?? null) === Access::EMPLOYEE;
         if ($wantsEmployee) {
-            $rules += EmployeeOnboarding::PROFILE_RULES;
+            $rules += EmployeeOnboarding::PROFILE_RULES + EmployeeOnboarding::STARTING_SALARY_RULES;
         }
 
         $clean = $this->validate($rules, '/users');
@@ -77,7 +78,7 @@ final class UserController extends Controller
 
         if ($wantsEmployee) {
             $fields = EmployeeOnboarding::normalise($clean);
-            $created = EmployeeOnboarding::create($fields);
+            $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
             Session::flash(
                 'success',
                 EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])

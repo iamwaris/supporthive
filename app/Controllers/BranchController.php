@@ -274,9 +274,11 @@ final class BranchController extends Controller
         }
 
         Database::instance()->transaction(static function (Database $db) use ($branchId): void {
-            // Employee documents reference users (uploaded_by), so they go
-            // before users; their files are removed only once the delete is
-            // durable. Employee profiles cascade with their users rows.
+            // Employee documents (uploaded_by) and salary rows (created_by)
+            // reference users without cascading, so both go before users;
+            // document files are removed only once the delete is durable.
+            // Employee profiles cascade with their users rows.
+            $db->delete('employee_salaries', 'branch_id = :id', ['id' => $branchId]);
             $documentPaths = array_map(
                 static fn (array $row): string => EmployeeDocument::filePath($row),
                 $db->all('SELECT stored_filename FROM employee_documents WHERE branch_id = :id', ['id' => $branchId])
