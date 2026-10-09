@@ -105,7 +105,9 @@ The core. No UI of its own beyond "All Transactions".
 - Ledger table + indexes on `(transaction_date)`, `(category_id)`,
   `(account_id)`, `(type, status)`, `(created_by)`.
 - All Transactions screen with the full filter set from spec §17.
-- Void flow: requires a reason, writes audit, never deletes.
+- Void flow: requires a reason, writes audit, never deletes. Once the void
+  commits, the branch's notification list (Settings → Email notifications,
+  shared with the expense-added email) gets one email describing it.
 
 **Done when:** a transaction can be posted and voided, voided rows vanish from
 totals but remain visible with their reason, and 10,000 rows paginate without

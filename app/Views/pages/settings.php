@@ -126,15 +126,15 @@ $recipientErrors = $errors['expense_notify_recipients'] ?? [];
     <div class="card mt-5 p-6">
         <h2 class="font-display text-base font-semibold tracking-tight text-ink">Email notifications</h2>
         <p class="mt-1 text-xs text-slate-500">
-            Email these people every time an expense is recorded in this branch, whether typed in or approved
-            from a recurring draft.
+            Email these people every time an expense is recorded in this branch (typed in or approved from a
+            recurring draft) and every time any transaction is voided.
         </p>
 
         <div class="mt-5 flex items-center gap-2.5">
             <input id="expense_notify_enabled" name="expense_notify_enabled" type="checkbox" value="1"
                    <?= $notifyEnabled ? 'checked' : '' ?>
                    class="h-4 w-4 rounded border-slate-300 text-brand-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400">
-            <label for="expense_notify_enabled" class="text-sm font-medium text-ink">Email when an expense is added</label>
+            <label for="expense_notify_enabled" class="text-sm font-medium text-ink">Email when an expense is added or a transaction is voided</label>
         </div>
 
         <div class="mt-5">

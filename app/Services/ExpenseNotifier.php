@@ -44,10 +44,7 @@ final class ExpenseNotifier
     public static function expensePosted(int $transactionId, int $branchId): void
     {
         try {
-            $recipients = self::recipientsFor(
-                Settings::get(self::SETTING_ENABLED, false),
-                Settings::string(self::SETTING_RECIPIENTS)
-            );
+            $recipients = self::branchRecipients();
             if ($recipients === []) {
                 return;
             }
@@ -73,6 +70,22 @@ final class ExpenseNotifier
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * The active branch's notification list, as configured under Settings.
+     *
+     * Shared with TransactionVoidNotifier: one list per branch covers every
+     * ledger email, so an admin never has to keep two lists in step.
+     *
+     * @return list<string>
+     */
+    public static function branchRecipients(): array
+    {
+        return self::recipientsFor(
+            Settings::get(self::SETTING_ENABLED, false),
+            Settings::string(self::SETTING_RECIPIENTS)
+        );
     }
 
     /**
@@ -145,7 +158,7 @@ final class ExpenseNotifier
 
         $lines[] = '';
         $lines[] = '--';
-        $lines[] = 'You are on the expense notification list for ' . $branch . '.';
+        $lines[] = 'You are on the notification list for ' . $branch . '.';
         $lines[] = 'An admin can change this list under Settings.';
 
         return new MailMessage($this->fromAddress, $this->fromName, $recipients, $subject, implode("\n", $lines));

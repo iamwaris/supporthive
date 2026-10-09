@@ -281,6 +281,7 @@ final class TransactionService
             $userId,
             $group
         ): int {
+            $branchId = (int) $transaction['branch_id'];
             $voidData = [
                 'status' => 'void',
                 'void_reason' => $reason,
@@ -292,27 +293,39 @@ final class TransactionService
                 $rows = $db->all(
                     "SELECT id FROM transactions
                      WHERE transfer_group = :g AND status = 'posted' AND branch_id = :branch",
-                    ['g' => $group, 'branch' => (int) $transaction['branch_id']]
+                    ['g' => $group, 'branch' => $branchId]
                 );
 
+                $voided = 0;
                 foreach ($rows as $row) {
-                    $db->update('transactions', $voidData, 'id = :id', ['id' => (int) $row['id']]);
+                    if (self::voidRow($db, (int) $row['id'], $voidData) === 0) {
+                        continue;
+                    }
+                    $voided++;
                     Audit::record('transaction.voided', 'transactions', (int) $row['id'], null, [
                         'reason' => $reason,
                         'transfer_group' => $group,
                     ]);
                 }
 
+                if ($voided === 0) {
+                    throw new RuntimeException('That transaction is already voided.');
+                }
+
                 Logger::security('Transfer voided', [
                     'group' => $group,
-                    'legs' => count($rows),
+                    'legs' => $voided,
                     'by' => $userId,
                 ]);
 
-                return count($rows);
+                self::notifyVoidAfterCommit($db, $transactionId, $branchId, $voided);
+
+                return $voided;
             }
 
-            $db->update('transactions', $voidData, 'id = :id', ['id' => $transactionId]);
+            if (self::voidRow($db, $transactionId, $voidData) === 0) {
+                throw new RuntimeException('That transaction is already voided.');
+            }
 
             Audit::record('transaction.voided', 'transactions', $transactionId, [
                 'amount' => $transaction['amount'],
@@ -325,7 +338,40 @@ final class TransactionService
                 'by' => $userId,
             ]);
 
+            self::notifyVoidAfterCommit($db, $transactionId, $branchId, 1);
+
             return 1;
+        });
+    }
+
+    /**
+     * Flip one row to void, but only if it is not void already.
+     *
+     * The status check in void() runs before the transaction, so two people
+     * voiding the same row at once could both pass it. Repeating it in the
+     * UPDATE makes the second one change nothing, which the caller turns into
+     * a refusal: one void, one audit entry, one email.
+     *
+     * @param array<string,mixed> $voidData
+     */
+    private static function voidRow(Database $db, int $id, array $voidData): int
+    {
+        return $db->update(
+            'transactions',
+            $voidData,
+            'id = :id AND status <> :void',
+            ['id' => $id, 'void' => 'void']
+        );
+    }
+
+    /**
+     * The email waits for the outermost commit, so a void that fails or is
+     * rolled back never announces itself, and a mail failure cannot undo it.
+     */
+    private static function notifyVoidAfterCommit(Database $db, int $transactionId, int $branchId, int $rows): void
+    {
+        $db->afterCommit(static function () use ($transactionId, $branchId, $rows): void {
+            TransactionVoidNotifier::transactionVoided($transactionId, $branchId, $rows);
         });
     }
 
