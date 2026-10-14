@@ -291,7 +291,12 @@ jobs:
             # is ours and MUST ship: it is what stops an uploaded file from
             # executing as PHP. The include has to precede the exclude, because
             # rsync applies the first matching rule.
+            #
+            # /qform/ is a separate app (iamwaris/qform, deployed by its own
+            # workflow) with a live SQLite database in qform/data/. Excluding it
+            # stops --delete from wiping that app and its data on every deploy.
             rsync -rlptz --delete \
+              --exclude '/qform/***' \
               --include 'uploads/' \
               --include 'uploads/.htaccess' \
               --exclude 'uploads/***' \
