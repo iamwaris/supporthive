@@ -35,7 +35,11 @@ if (!function_exists('old')) {
     function old(string $field, string $default = ''): string
     {
         $values = Session::get('_old', []);
-        return is_array($values) && isset($values[$field]) ? (string) $values[$field] : $default;
+        // A field submitted as an array (name="x[]") has no string form here;
+        // old_array() is the accessor for those.
+        return is_array($values) && isset($values[$field]) && is_scalar($values[$field])
+            ? (string) $values[$field]
+            : $default;
     }
 }
 

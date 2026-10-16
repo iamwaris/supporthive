@@ -84,8 +84,9 @@ $money = static fn (mixed $v): string => number_format((float) $v, 0);
                                 <?= csrf_field() ?>
                                 <p class="text-xs font-medium text-bad-text">
                                     This permanently deletes <?= e((string) $branch['name']) ?> and everything in
-                                    it — every account, category, partner, transaction, budget and login. This
-                                    cannot be undone.
+                                    it — every account, category, partner, customer, transaction, budget,
+                                    receivable and payable, employee document and salary record, and login.
+                                    This cannot be undone.
                                 </p>
                                 <div class="flex flex-wrap items-end gap-3">
                                     <div class="min-w-56">

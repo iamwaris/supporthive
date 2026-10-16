@@ -161,15 +161,21 @@ final class ReceivablePayableTest extends TestCase
      * exiting, so there is no status code for the subprocess runner to read.
      *
      * @param array<string,string> $route
+     * @param array<string,mixed>  $query
      */
-    private function render(string $action, ReceivablePayableKind $kind, array $route = []): string
-    {
-        $_GET = [];
+    private function render(
+        string $action,
+        ReceivablePayableKind $kind,
+        array $route = [],
+        array $query = []
+    ): string {
+        $_GET = $query;
         ob_start();
         try {
             (new ReceivablePayableController())->{$action}(['kind' => $kind->value] + $route);
         } finally {
             $body = (string) ob_get_clean();
+            $_GET = [];
         }
 
         return $body;
@@ -588,6 +594,166 @@ final class ReceivablePayableTest extends TestCase
         self::assertStringContainsString('Record payable', $create);
         self::assertStringContainsString('value="RPT Form Vendor"', $edit);
         self::assertStringContainsString('value="1500.00"', $edit);
+    }
+
+    // --- review follow-ups ---------------------------------------------------
+
+    public function testAnIdenticalReSaveIsNotReportedAsAConflict(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable);
+        $fields = self::fields(['amount' => '1600']);
+
+        // Both saves must land in the same clock second, so the second one
+        // writes byte-identical values (modified_at included) and MySQL
+        // reports zero changed rows: the case that used to be a false
+        // "changed by someone else".
+        $fraction = microtime(true) - floor(microtime(true));
+        if ($fraction > 0.7) {
+            usleep((int) ((1.0 - $fraction) * 1_000_000) + 20_000);
+        }
+        ReceivablePayableService::update($id, ReceivablePayableKind::Receivable, $fields);
+        $first = $this->row($id);
+        ReceivablePayableService::update($id, ReceivablePayableKind::Receivable, $fields);
+
+        self::assertSame($first, $this->row($id), 'the re-save changed nothing and raised nothing');
+
+        $result = $this->act('update', ReceivablePayableKind::Receivable, $fields, ['id' => (string) $id]);
+        self::assertSame(302, $result['status']);
+        self::assertSame('Receivable updated.', $result['session']['_flash']['success'] ?? null);
+    }
+
+    public function testADatabaseFailureIsLoggedAndNeverShownToTheUser(): void
+    {
+        $settleId = $this->seed(ReceivablePayableKind::Receivable);
+        $cancelId = $this->seed(ReceivablePayableKind::Receivable);
+        // A session whose user row is gone makes the UPDATE (settled_by /
+        // cancelled_by) fail a foreign key inside the database: a stand-in
+        // for any PDOException, such as a lock wait timeout, that needs no
+        // extra privileges to provoke.
+        $ghostUserId = (int) Database::instance()->value('SELECT COALESCE(MAX(id), 0) + 1000000 FROM users');
+        $ghostSession = ['_auth_user_id' => $ghostUserId, '_active_branch_id' => $this->branchAId];
+        $log = STORAGE_PATH . '/logs/app-' . date('Y-m-d') . '.log';
+        clearstatcache();
+        $logSizeBefore = is_file($log) ? (int) filesize($log) : 0;
+
+        $results = [
+            'settle' => $this->act('settle', ReceivablePayableKind::Receivable, [
+                'settled_on' => self::day(0),
+            ], ['id' => (string) $settleId], 'POST', $ghostSession),
+            'cancel' => $this->act('cancel', ReceivablePayableKind::Receivable, [
+                'cancel_reason' => 'Duplicate',
+            ], ['id' => (string) $cancelId], 'POST', $ghostSession),
+        ];
+
+        foreach ($results as $result) {
+            self::assertSame(302, $result['status']);
+            $error = (string) ($result['session']['_flash']['error'] ?? '');
+            self::assertStringContainsString('could not be saved', $error);
+            self::assertStringNotContainsString('SQLSTATE', $error);
+            self::assertStringNotContainsString('foreign key', $error);
+        }
+        self::assertSame('open', $this->row($settleId)['status']);
+        self::assertSame('open', $this->row($cancelId)['status']);
+        self::assertSame(0, $this->auditCount($settleId, 'receivable.settled'));
+
+        clearstatcache();
+        $logged = (string) file_get_contents($log, false, null, $logSizeBefore);
+        self::assertStringContainsString('"id":' . $settleId . ',"action":"settle"', $logged);
+        self::assertStringContainsString('"id":' . $cancelId . ',"action":"cancel"', $logged);
+        self::assertSame(2, substr_count($logged, 'Receivables/payables change failed'), 'both failures logged');
+        self::assertStringContainsString('SQLSTATE', $logged, 'the detail goes to the log only');
+    }
+
+    public function testAnOverLargeAmountIsRejectedNextToTheField(): void
+    {
+        $result = $this->act('store', ReceivablePayableKind::Receivable, [
+            'party_name' => 'RPT Huge Co',
+            'amount' => '12345678901234567',
+            'issue_date' => self::day(0),
+        ]);
+
+        self::assertSame(302, $result['status']);
+        self::assertSame(['amount' => ['The amount is too large.']], $result['session']['_flash']['errors'] ?? null);
+        self::assertSame(0, $this->entryCount());
+    }
+
+    public function testArrayShapedInputIsAValidationErrorNotACrash(): void
+    {
+        $result = $this->act('store', ReceivablePayableKind::Receivable, [
+            'party_name' => ['RPT Array'],
+            'amount' => '10',
+            'issue_date' => self::day(0),
+        ]);
+        self::assertSame(302, $result['status']);
+        self::assertArrayHasKey('party_name', $result['session']['_flash']['errors'] ?? []);
+        self::assertSame(0, $this->entryCount());
+
+        // The form re-renders with the flashed array input without choking on it.
+        $_SESSION['_old'] = $result['session']['_old'] ?? [];
+        $_SESSION['_flash'] = $result['session']['_flash'] ?? [];
+        $form = $this->render('create', ReceivablePayableKind::Receivable);
+        self::assertStringContainsString('id="party_name-error"', $form);
+
+        $list = $this->render('index', ReceivablePayableKind::Receivable, [], [
+            'q' => ['x'],
+            'status' => ['open'],
+            'page' => ['2'],
+        ]);
+        self::assertStringContainsString('Open receivables', $list, 'bad filters fall back to the defaults');
+    }
+
+    public function testSearchMatchesPartyNamesWithWildcardsTakenLiterally(): void
+    {
+        $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT 100% Traders']);
+        $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT 1000 Traders']);
+        $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT a_b Supplies']);
+        $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT axb Supplies']);
+        $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT back\\slash Ltd']);
+        $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT backslash Ltd']);
+        $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT 100% Vendor']);
+        $model = new ReceivablePayable();
+        $names = static fn (string $search): array => array_column(
+            $model->listing(ReceivablePayableKind::Receivable, 'all', $search, 1, 25),
+            'party_name'
+        );
+
+        self::assertSame(['RPT 100% Traders'], $names('100%'));
+        self::assertSame(['RPT a_b Supplies'], $names('a_b'));
+        self::assertSame(['RPT back\\slash Ltd'], $names('back\\slash'));
+        self::assertSame(1, $model->listingCount(ReceivablePayableKind::Receivable, 'all', '100%'));
+        self::assertSame(6, $model->listingCount(ReceivablePayableKind::Receivable, 'all', 'rpt'), 'case-insensitive');
+
+        $body = $this->render('index', ReceivablePayableKind::Receivable, [], ['q' => '100%']);
+        self::assertStringContainsString('RPT 100% Traders', $body);
+        self::assertStringNotContainsString('RPT 1000 Traders', $body);
+        self::assertStringNotContainsString('RPT 100% Vendor', $body, 'payables never show under receivables');
+    }
+
+    public function testStatusFilterShowsOneStatusAndFallsBackToOpen(): void
+    {
+        $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Open Vendor']);
+        $settled = $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Paid Vendor']);
+        ReceivablePayableService::settle($settled, ReceivablePayableKind::Payable, self::day(0), null);
+        $cancelled = $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Cancelled Vendor']);
+        ReceivablePayableService::cancel($cancelled, ReceivablePayableKind::Payable, 'Duplicate bill');
+
+        $visible = function (array $query): array {
+            $body = $this->render('index', ReceivablePayableKind::Payable, [], $query);
+
+            return array_values(array_filter(
+                ['RPT Open Vendor', 'RPT Paid Vendor', 'RPT Cancelled Vendor'],
+                static fn (string $name): bool => str_contains($body, $name)
+            ));
+        };
+
+        self::assertSame(['RPT Open Vendor'], $visible([]), 'open is the default');
+        self::assertSame(['RPT Paid Vendor'], $visible(['status' => 'settled']));
+        self::assertSame(['RPT Cancelled Vendor'], $visible(['status' => 'cancelled']));
+        self::assertSame(
+            ['RPT Open Vendor', 'RPT Paid Vendor', 'RPT Cancelled Vendor'],
+            $visible(['status' => 'all'])
+        );
+        self::assertSame(['RPT Open Vendor'], $visible(['status' => 'void']), 'an unknown status falls back to open');
     }
 
     // --- branch deletion -----------------------------------------------------

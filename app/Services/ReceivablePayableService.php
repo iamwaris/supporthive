@@ -185,7 +185,7 @@ final class ReceivablePayableService
         );
 
         if ($row === null) {
-            throw new RuntimeException('That entry no longer exists.');
+            throw new ReceivablePayableRuleViolation(['status' => 'That entry no longer exists.']);
         }
 
         self::assertNoErrors($rule((string) $row['status'], $row));
@@ -193,23 +193,23 @@ final class ReceivablePayableService
         return $row;
     }
 
-    /** @param array<string,mixed> $data */
+    /**
+     * The row is already locked FOR UPDATE and checked open by
+     * lockOpenEntry(), so no concurrent change can slip in between; the
+     * status condition is belt and braces. Zero affected rows is NOT a
+     * conflict: MySQL counts changed rows, so an identical re-save (a double
+     * submit within the same second) legitimately affects none.
+     *
+     * @param array<string,mixed> $data
+     */
     private static function updateWhileOpen(Database $db, int $id, array $data): void
     {
-        $changed = $db->update(
+        $db->update(
             self::TABLE,
             $data,
             'id = :id AND branch_id = :branch AND status = :open',
             ['id' => $id, 'branch' => self::requireBranchId(), 'open' => ReceivablePayableRules::STATUS_OPEN]
         );
-
-        if ($changed === 0) {
-            // Locked and checked a moment ago, so only a concurrent change
-            // gets here; refuse rather than audit a write that did not happen.
-            throw new ReceivablePayableRuleViolation([
-                'status' => 'This entry was changed by someone else. Reload and try again.',
-            ]);
-        }
     }
 
     /**

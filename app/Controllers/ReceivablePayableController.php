@@ -17,7 +17,6 @@ use App\Models\ReceivablePayable;
 use App\Services\ReceivablePayableService;
 use App\Services\Settings;
 use PDOException;
-use RuntimeException;
 
 /**
  * The receivables / payables register (/receivables and /payables).
@@ -205,9 +204,8 @@ final class ReceivablePayableController extends Controller
             );
         } catch (ReceivablePayableRuleViolation $e) {
             $this->backToRow($kind, $id, 'settle', $this->asErrorLists($e), $_POST);
-        } catch (RuntimeException $e) {
-            Session::flash('error', $e->getMessage());
-            Http::redirect($kind->path());
+        } catch (PDOException $e) {
+            $this->databaseFailure($e, $kind, $id, 'settle');
         }
 
         Session::flash(
@@ -232,9 +230,8 @@ final class ReceivablePayableController extends Controller
             ReceivablePayableService::cancel($id, $kind, (string) $input->validated()['cancel_reason']);
         } catch (ReceivablePayableRuleViolation $e) {
             $this->backToRow($kind, $id, 'cancel', $this->asErrorLists($e), $_POST);
-        } catch (RuntimeException $e) {
-            Session::flash('error', $e->getMessage());
-            Http::redirect($kind->path());
+        } catch (PDOException $e) {
+            $this->databaseFailure($e, $kind, $id, 'cancel');
         }
 
         Session::flash('success', ucfirst($kind->singular()) . ' cancelled. It stays listed with its reason.');
@@ -311,6 +308,24 @@ final class ReceivablePayableController extends Controller
             'cancel_reason' => $value('cancel_reason'),
         ]);
         Session::flash('error', (string) (array_values($errors)[0][0] ?? 'That change was not saved.'));
+        Http::redirect($kind->path());
+    }
+
+    /**
+     * A database failure (lock wait timeout, deadlock, lost connection) is
+     * logged with its detail and shown to the user only as a generic message:
+     * SQL error text never reaches the browser (CLAUDE.md rule 11). The
+     * transaction has rolled back, so nothing changed.
+     */
+    private function databaseFailure(PDOException $e, ReceivablePayableKind $kind, int $id, string $action): never
+    {
+        Logger::error('Receivables/payables change failed', [
+            'kind' => $kind->value,
+            'id' => $id,
+            'action' => $action,
+            'error' => $e->getMessage(),
+        ]);
+        Session::flash('error', 'That change could not be saved, and nothing was changed. Please try again.');
         Http::redirect($kind->path());
     }
 

@@ -93,4 +93,25 @@ final class ValidatorTest extends TestCase
         self::assertSame(['amount' => null], $optional->validated());
         self::assertTrue(Validator::make(['amount' => ['1']], $rule)->fails(), 'an array is never money');
     }
+
+    /**
+     * Regression: ?q[]=x used to reach compareLength()/in() as an array and
+     * die on "Array to string conversion" (a 500). It must simply fail.
+     */
+    public function testArrayShapedInputFailsStringRulesInsteadOfCrashing(): void
+    {
+        $input = ['q' => ['x'], 'status' => ['open'], 'name' => ['a', 'b']];
+
+        $validator = Validator::make($input, [
+            'q' => 'nullable|max:160',
+            'status' => 'nullable|in:open,settled',
+            'name' => 'required|min:1',
+        ]);
+
+        self::assertTrue($validator->fails());
+        self::assertSame(['q', 'status', 'name'], array_keys($validator->errors()));
+        self::assertSame([], $validator->validated());
+        self::assertTrue(Validator::make(['v' => 'open'], ['v' => 'in:open'])->passes(), 'scalars still pass');
+        self::assertTrue(Validator::make(['v' => 7], ['v' => 'max:10'])->passes(), 'a number still compares');
+    }
 }

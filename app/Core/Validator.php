@@ -117,7 +117,7 @@ final class Validator
                     'min'      => $this->compareLength($value, (int) $arg, '>='),
                     'max'      => $this->compareLength($value, (int) $arg, '<='),
                     'between'  => $this->between($value, (string) $arg),
-                    'in'       => in_array((string) $value, explode(',', (string) $arg), true),
+                    'in'       => is_scalar($value) && in_array((string) $value, explode(',', (string) $arg), true),
                     'regex'    => is_string($value) && preg_match((string) $arg, $value) === 1,
                     'same'     => $value === ($this->data[(string) $arg] ?? null),
                     default    => true,
@@ -150,6 +150,12 @@ final class Validator
 
     private function compareLength(mixed $value, int $limit, string $operator): bool
     {
+        // An array (e.g. ?q[]=x) has no length to compare; casting it would
+        // raise "Array to string conversion" and turn bad input into a 500.
+        if (!is_scalar($value)) {
+            return false;
+        }
+
         $length = is_numeric($value) && !is_string($value)
             ? (float) $value
             : mb_strlen((string) $value);
