@@ -279,6 +279,8 @@ final class BranchController extends Controller
             // document files are removed only once the delete is durable.
             // Employee profiles cascade with their users rows.
             $db->delete('employee_salaries', 'branch_id = :id', ['id' => $branchId]);
+            // Register entries reference users (created_by) without cascading too.
+            $db->delete('receivables_payables', 'branch_id = :id', ['id' => $branchId]);
             $documentPaths = array_map(
                 static fn (array $row): string => EmployeeDocument::filePath($row),
                 $db->all('SELECT stored_filename FROM employee_documents WHERE branch_id = :id', ['id' => $branchId])

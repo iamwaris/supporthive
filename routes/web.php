@@ -21,9 +21,11 @@
 declare(strict_types=1);
 
 use App\Controllers\DevAuthController;
+use App\Controllers\ReceivablePayableController;
 use App\Core\Auth;
 use App\Core\Http;
 use App\Core\Router;
+use App\Domain\ReceivablePayableKind;
 use App\Services\Access;
 
 /** @var Router $router */
@@ -157,6 +159,30 @@ $router->post('/income/{id}/received', 'IncomeController@markReceived', ['can:wr
 
 $router->get('/capital', 'CapitalController@index', ['can:view']);
 $router->post('/capital', 'CapitalController@store', ['can:write']);
+
+// --- Receivables & payables register (AR/AP-1) ------------------------------
+// A standalone tracking register, independent of the ledger by decision
+// (docs/PLAN.md §5, 2026-10-17). Both sections share one controller; the kind
+// is fixed into the route params here, so a request can never pick its own.
+// Recording, editing, settling and cancelling need the same write ability as
+// any other daily entry; /new is a literal path, resolved before {id}.
+foreach (ReceivablePayableKind::cases() as $registerKind) {
+    $toRegister = static fn (string $action): Closure => static function (array $params) use (
+        $registerKind,
+        $action
+    ): void {
+        (new ReceivablePayableController())->{$action}(['kind' => $registerKind->value] + $params);
+    };
+    $registerPath = $registerKind->path();
+
+    $router->get($registerPath, $toRegister('index'), ['can:view']);
+    $router->get($registerPath . '/new', $toRegister('create'), ['can:write']);
+    $router->post($registerPath, $toRegister('store'), ['can:write']);
+    $router->get($registerPath . '/{id}/edit', $toRegister('edit'), ['can:write']);
+    $router->post($registerPath . '/{id}', $toRegister('update'), ['can:write']);
+    $router->post($registerPath . '/{id}/settle', $toRegister('settle'), ['can:write']);
+    $router->post($registerPath . '/{id}/cancel', $toRegister('cancel'), ['can:write']);
+}
 
 // --- Budgets & profit distribution (M5) ------------------------------------
 $router->get('/budgets', 'BudgetController@index', ['can:view']);

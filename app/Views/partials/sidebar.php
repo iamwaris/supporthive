@@ -45,6 +45,8 @@ $groups = $canManageBranches || $isEmployee ? [] : [
     'Finance' => [
         ['key' => 'accounts', 'label' => 'Accounts', 'href' => '/accounts', 'icon' => 'card', 'show' => true, 'ready' => true],
         ['key' => 'customers', 'label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'show' => true, 'ready' => true],
+        ['key' => 'receivables', 'label' => 'Receivables', 'href' => '/receivables', 'icon' => 'inbox', 'show' => true, 'ready' => true],
+        ['key' => 'payables', 'label' => 'Payables', 'href' => '/payables', 'icon' => 'outbox', 'show' => true, 'ready' => true],
         ['key' => 'budgets', 'label' => 'Budgets', 'href' => '/budgets', 'icon' => 'bars', 'show' => true, 'ready' => true],
     ],
     'Partners' => [

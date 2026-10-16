@@ -23,7 +23,7 @@ What we are building and why. Module breakdown lives in
 | Most important journey | Record a day's expenses in seconds, and have the dashboard and P&L stay correct without reconciliation. |
 | Currency | PKR (spec examples). Single currency in V1. |
 | Success in 3 months | Daily entry habit sustained; month-end P&L and partner statements produced from the system rather than a spreadsheet. |
-| Out of scope for V1 | Approval workflows, forecasting, invoicing, receivables/payables, payroll, tax reporting, inventory, multi-company. Recurring expenses shipped as M9 (`docs/TRACKER.md`) — no longer out of scope. |
+| Out of scope for V1 | Approval workflows, forecasting, invoicing, payroll, tax reporting, inventory, multi-company. Recurring expenses shipped as M9 (`docs/TRACKER.md`) — no longer out of scope. Receivables/payables are in scope since 2026-10-17 **only** as an independent tracking register (AR/AP-1, see §5) — ledger-integrated AR/AP, partial payments, line items and aging remain out of scope. |
 
 ### Branding (spec §2)
 
@@ -115,6 +115,13 @@ Full rationale in [MODULES.md](MODULES.md). Shape:
   `created_by`); the current salary is the latest row in effect today, a
   future-dated row is a scheduled change. Admin-only
 
+**Registers (2026-10-17)**
+- `receivables_payables` — the receivables/payables register (AR/AP-1):
+  `kind` receivable|payable, free-text `party_name`, `amount`
+  DECIMAL(15,2), `issue_date`/`due_date`, `status` open|settled|cancelled
+  with `settled_on`/`settlement_note` and `cancel_reason` (CHECK-enforced).
+  Not a satellite of `transactions` and never read by any ledger aggregate
+
 Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 `audit_log`, `migrations`.
 
@@ -129,6 +136,7 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | Every transaction records creator and time | `created_by`, `created_at` NOT NULL |
 | Dashboard reconciles with transactions | Same table, same filters — by construction |
 | Salary history is never rewritten | `App\Models\EmployeeSalary` has no update/delete path; a change or correction is a new effective-dated, audited row |
+| A register entry leaves `open` exactly once and never touches the ledger | `App\Domain\ReceivablePayableRules` (pure, unit-tested) + `App\Services\ReceivablePayableService` (row lock, `status = 'open'` guard on every UPDATE, audit row in the same DB transaction); cancel reason and settle date enforced by CHECK constraints; no code path from the register to `transactions` |
 
 ## 4. Milestones
 
@@ -177,6 +185,7 @@ Already migrated from the scaffold: `users`, `auth_tokens`, `rate_limits`,
 | 2026-10-08 | **Document visibility is per branch** — "all employees" means all employees of the uploading admin's branch | Every table is branch-scoped; a cross-branch publish would be the first exception to that rule | Global documents visible to every branch |
 | 2026-10-09 | **Employee salary: append-only, effective-dated history, admin-only** (`employee_salaries`, EMP-9). Every change is a new row with an effective date, a note and who recorded it, audited as `employee.salary_changed`; "current" is derived (latest `effective_from` on or before today, ties by id), so a raise can be scheduled ahead. Only admins see it: it lives in its own model and its own card on the admin employee page, never in the shared `partials/employee-profile.php`, the portal, `PortalController` or `EmployeeProfile::findWithUser()`; partners do not see it either. Salary changes only through `POST /employees/{id}/salary`, never the general edit form; an optional starting salary is written with the employee in the same transaction | History and payroll questions ("what were they paid in March?") need every past value with its date; a derived current value cannot drift from the history; keeping salary out of every shared or employee-facing read path makes "the employee never sees it" structural rather than a view-level `if` | A `salary` column on `employee_profiles` overwritten on edit (loses history, and the profile row is what the portal reads); editable/deletable history rows; showing the employee their own salary |
 | 2026-10-09 | **One notification list per branch for every ledger email** (NOTIFY-2). The expense-added email (NOTIFY-1) and the transaction-voided email share the existing `expense_notify_enabled` / `expense_notify_recipients` settings (keys kept to avoid a data migration; only the Settings wording changed). Both are sent from `Database::afterCommit()` so only committed changes are announced, and a mail failure is logged without failing the save or the void. A void sends one email per action, so voiding a transfer leg (which voids both legs) is one email | Whoever needs to hear about new spending also needs to hear when an entry disappears from the totals; one list means an admin cannot forget to keep two in step | A separate void-recipient list and toggle (more UI, and a list that silently goes stale); renaming the setting keys (needs a migration for no user-visible gain) |
+| 2026-10-17 | **Receivables/payables as an independent register, not ledger-integrated** (AR/AP-1, owner's decision). One `receivables_payables` table, two sections (`/receivables`, `/payables`) sharing one controller and views. Counterparty is free text on both sides (no FK to `customers`, no vendors table). An entry is settled in full in one action (`settled_on` + optional note) or cancelled with a mandatory reason; editable only while open; overdue (open and past `due_date`) is computed, never stored. Recording, editing, settling or cancelling never touches `transactions`, `TransactionService`, balances, P&L, budgets or reports. View with `can:view`, every change with `can:write`. Supersedes the "receivables/payables out of scope for V1" line in §1 for this scope only. The existing pending-income flow (`/income`) is unchanged | The owner wants to track who owes what without changing how the books are kept; a standalone register delivers that with zero risk to the cash-basis ledger (D-2) and no reconciliation burden | Posting settlements to the ledger (would duplicate `/income` pending flow and need account/category choices on every settle); partial payments, line items and aging (not needed yet); a vendors table or customer FK (D-5 trade-off: free text keeps entry fast) |
 
 ## 6. Risks
 

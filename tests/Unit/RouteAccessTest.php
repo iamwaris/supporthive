@@ -53,6 +53,12 @@ final class RouteAccessTest extends TestCase
         'GET /income',
         'GET /income/new',
         'GET /capital',
+        'GET /receivables',
+        'GET /receivables/new',
+        'GET /receivables/{id}/edit',
+        'GET /payables',
+        'GET /payables/new',
+        'GET /payables/{id}/edit',
         'GET /budgets',
         'GET /recurring-rules',
         'GET /recurring-occurrences',
@@ -80,6 +86,14 @@ final class RouteAccessTest extends TestCase
         'POST /income',
         'POST /income/{id}/received',
         'POST /capital',
+        'POST /receivables',
+        'POST /receivables/{id}',
+        'POST /receivables/{id}/settle',
+        'POST /receivables/{id}/cancel',
+        'POST /payables',
+        'POST /payables/{id}',
+        'POST /payables/{id}/settle',
+        'POST /payables/{id}/cancel',
         'POST /recurring-occurrences/{id}/approve',
         'POST /recurring-occurrences/{id}/reject',
         'POST /recurring-occurrences/approve-bulk',
@@ -132,6 +146,28 @@ final class RouteAccessTest extends TestCase
         self::assertNotContains('POST /employees/{id}/salary', $this->reachableBy(Access::EMPLOYEE));
         self::assertNotContains('POST /employees/{id}/salary', $this->reachableBy(Access::PARTNER));
         self::assertContains('POST /employees/{id}/salary', $this->reachableBy(Access::ADMIN));
+    }
+
+    public function testRegisterIsReadableWithViewAndChangeableOnlyWithWrite(): void
+    {
+        $routes = $this->routes();
+
+        foreach (['/receivables', '/payables'] as $base) {
+            self::assertSame(['can:view'], $routes['GET ' . $base] ?? null);
+            foreach (
+                [
+                    'GET ' . $base . '/new',
+                    'POST ' . $base,
+                    'GET ' . $base . '/{id}/edit',
+                    'POST ' . $base . '/{id}',
+                    'POST ' . $base . '/{id}/settle',
+                    'POST ' . $base . '/{id}/cancel',
+                ] as $key
+            ) {
+                self::assertSame(['can:write'], $routes[$key] ?? null, $key . ' must need the write ability');
+                self::assertNotContains($key, $this->reachableBy(Access::EMPLOYEE));
+            }
+        }
     }
 
     /** @return list<string> "METHOD /path" for every gated route this role passes every middleware of */
