@@ -51,7 +51,7 @@ final class AiChatController extends Controller
         . 'FINANCIAL DATA — this rule is absolute and applies to every number, in either kind of question: you '
         . 'must never state a number that did not come from a tool result. Always call the appropriate tool '
         . 'before answering any question that involves an amount, total, or balance. If a question mixes '
-        . '"how do I..." with a real figure (e.g. "what is my Marketing budget"), still call a tool for the '
+        . '"how do I..." with a real figure (e.g. "what is my Hiring Ads budget"), still call a tool for the '
         . 'data part — never recall a number from memory or from the app reference below.'
         . "\n\n"
         . 'APP REFERENCE — static knowledge of the app\'s own screens, for "how do I" / "what is" questions; '

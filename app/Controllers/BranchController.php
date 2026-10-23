@@ -35,7 +35,7 @@ final class BranchController extends Controller
         ['Office Rent', 'expense', 20],
         ['Electricity', 'expense', 30],
         ['Internet', 'expense', 40],
-        ['Marketing', 'expense', 50],
+        ['Hiring Ads', 'expense', 50],
         ['Transportation', 'expense', 60],
         ['Software', 'expense', 70],
         ['Equipment', 'expense', 80],
