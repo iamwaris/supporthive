@@ -99,6 +99,24 @@ final class ReceivablePayableRules
     }
 
     /**
+     * May this entry's settlement be undone (back to open) for this reason?
+     * Only a settled entry can be reopened.
+     *
+     * @return array<string,string> field => message; empty when allowed
+     */
+    public static function reopenErrors(string $status, string $reason): array
+    {
+        if ($status !== self::STATUS_SETTLED) {
+            return ['status' => sprintf('Only a settled entry can be reopened; this one is %s.', $status)];
+        }
+        if (trim($reason) === '') {
+            return ['reopen_reason' => 'Reopening an entry requires a reason.'];
+        }
+
+        return [];
+    }
+
+    /**
      * May an entry in this state be edited?
      *
      * @return array<string,string> field => message; empty when allowed
@@ -114,13 +132,19 @@ final class ReceivablePayableRules
      * A field that was not submitted (null) is not a change; a submitted
      * value that differs from the stored one is refused, never ignored.
      *
-     * @param array{amount:string,issue_date:string,account_id:?int} $stored
+     * An entry recorded before the register posted to the ledger is not
+     * posted yet: the one-time backfill posts it as stored (and sets its
+     * account), so the same fields are refused with that explanation.
+     *
+     * @param array{amount:string,issue_date:string,account_id:?int,posted:bool} $stored
      * @param array{amount:?string,issue_date:?string,account_id:?int} $submitted
      * @return array<string,string> field => message; empty when nothing locked changed
      */
     public static function lockedFieldErrors(array $stored, array $submitted): array
     {
-        $message = 'This is locked once posted. To change it, cancel the entry and record it again.';
+        $message = $stored['posted']
+            ? 'This is locked once posted. To change it, cancel the entry and record it again.'
+            : 'This is set when the one-time ledger backfill posts this entry, and cannot be changed by editing.';
         $errors = [];
 
         if ($submitted['amount'] !== null && bccomp($submitted['amount'], $stored['amount'], 2) !== 0) {

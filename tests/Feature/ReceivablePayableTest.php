@@ -9,6 +9,7 @@ use App\Controllers\ReceivablePayableController;
 use App\Controllers\TransactionController;
 use App\Core\Database;
 use App\Domain\ReceivablePayableKind;
+use App\Domain\TransactionType;
 use App\Models\ReceivablePayable;
 use App\Services\DashboardService;
 use App\Services\LedgerQuery;
@@ -1137,6 +1138,270 @@ final class ReceivablePayableTest extends TestCase
             $visible(['status' => 'all'])
         );
         self::assertSame(['RPT Open Vendor'], $visible(['status' => 'void']), 'an unknown status falls back to open');
+    }
+
+    // --- reopen (undo a settlement) -----------------------------------------
+
+    public function testReopeningVoidsTheSettlementRestoresTheBalanceAndAllowsAFreshSettle(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable, ['amount' => '900']);
+        $cashBefore = self::balance($this->cashAId);
+        $bankBefore = self::balance($this->bankAId);
+        $this->settle($id, ReceivablePayableKind::Receivable, $this->bankAId);
+        $wrongPosting = (int) $this->row($id)['settlement_transaction_id'];
+        self::assertSame(bcadd($bankBefore, '900', 2), self::balance($this->bankAId));
+
+        $result = $this->act('reopen', ReceivablePayableKind::Receivable, [
+            'reopen_reason' => 'Collected in cash, not by bank',
+        ], ['id' => (string) $id]);
+
+        self::assertSame(302, $result['status']);
+        $row = $this->row($id);
+        self::assertSame('open', $row['status']);
+        $settlementColumns = [
+            'settled_on', 'settlement_account_id', 'settlement_transaction_id', 'settled_by', 'settled_at',
+        ];
+        foreach ($settlementColumns as $f) {
+            self::assertNull($row[$f], $f . ' is cleared');
+        }
+        $voided = $this->transaction($wrongPosting);
+        self::assertSame('void', $voided['status']);
+        self::assertSame('Collected in cash, not by bank', $voided['void_reason']);
+        self::assertSame($bankBefore, self::balance($this->bankAId), 'the wrong settlement is undone');
+        self::assertSame('posted', $this->transaction((int) $row['issue_transaction_id'])['status'], 'issue stays');
+        self::assertSame(1, $this->auditCount($id, 'receivable.reopened'));
+
+        $this->settle($id, ReceivablePayableKind::Receivable, $this->cashAId);
+
+        $resettled = $this->row($id);
+        self::assertSame('settled', $resettled['status']);
+        self::assertNotSame($wrongPosting, (int) $resettled['settlement_transaction_id'], 'a fresh posting');
+        self::assertSame($this->cashAId, (int) $resettled['settlement_account_id']);
+        self::assertSame(bcadd($cashBefore, '900', 2), self::balance($this->cashAId));
+        self::assertSame($bankBefore, self::balance($this->bankAId));
+    }
+
+    public function testOnlyASettledEntryCanBeReopenedAndOnlyWithAReason(): void
+    {
+        $open = $this->seed(ReceivablePayableKind::Payable);
+        $cancelled = $this->seed(ReceivablePayableKind::Payable);
+        ReceivablePayableService::cancel($cancelled, ReceivablePayableKind::Payable, 'Duplicate');
+        $settled = $this->seed(ReceivablePayableKind::Payable);
+        $this->settle($settled, ReceivablePayableKind::Payable);
+        $ledgerBefore = $this->ledgerCount();
+
+        foreach ([$open, $cancelled] as $id) {
+            $before = $this->row($id);
+            $result = $this->act('reopen', ReceivablePayableKind::Payable, [
+                'reopen_reason' => 'Try anyway',
+            ], ['id' => (string) $id]);
+
+            self::assertSame(302, $result['status']);
+            self::assertStringContainsString(
+                'Only a settled entry can be reopened',
+                (string) ($result['session']['_flash']['error'] ?? '')
+            );
+            self::assertSame($before, $this->row($id));
+        }
+
+        $noReason = $this->act('reopen', ReceivablePayableKind::Payable, [
+            'reopen_reason' => '   ',
+        ], ['id' => (string) $settled]);
+        self::assertSame(302, $noReason['status']);
+        $failure = $noReason['session']['_flash']['rowFailure'] ?? null;
+        self::assertIsArray($failure);
+        self::assertSame('reopen', $failure['action']);
+        self::assertArrayHasKey('reopen_reason', $failure['errors']);
+        self::assertSame('settled', $this->row($settled)['status']);
+        self::assertSame(0, $this->auditCount($settled, 'payable.reopened'));
+        self::assertSame($ledgerBefore, $this->ledgerCount());
+        self::assertSame(1, (int) Database::instance()->value(
+            "SELECT COUNT(*) FROM transactions WHERE branch_id = :b AND status = 'void'",
+            ['b' => $this->branchAId]
+        ), 'only the cancelled entry\'s issue posting is void');
+    }
+
+    public function testAnotherBranchsSettledEntryCannotBeReopened(): void
+    {
+        $this->asBranchB();
+        $foreign = $this->seed(ReceivablePayableKind::Receivable);
+        ReceivablePayableService::settle(
+            $foreign,
+            ReceivablePayableKind::Receivable,
+            self::day(0),
+            null,
+            $this->cashBId
+        );
+        $before = $this->row($foreign);
+        $this->asBranchA();
+
+        $result = $this->act('reopen', ReceivablePayableKind::Receivable, [
+            'reopen_reason' => 'Not mine',
+        ], ['id' => (string) $foreign]);
+
+        self::assertSame(404, $result['status']);
+        self::assertSame($before, $this->row($foreign));
+        self::assertSame('posted', $this->transaction((int) $before['settlement_transaction_id'])['status']);
+    }
+
+    public function testASettledRowOffersAReopenPanelThatWorksWithoutJavascript(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT Reopen Co']);
+        $this->settle($id, ReceivablePayableKind::Receivable);
+        $refused = $this->act('reopen', ReceivablePayableKind::Receivable, [
+            'reopen_reason' => '',
+        ], ['id' => (string) $id]);
+
+        $_SESSION['_flash'] = $refused['session']['_flash'] ?? [];
+        $body = $this->render('index', ReceivablePayableKind::Receivable, [], ['status' => 'settled']);
+
+        self::assertStringContainsString('action="' . url('/receivables/' . $id . '/reopen') . '"', $body);
+        self::assertStringContainsString('name="reopen_reason"', $body);
+        self::assertStringContainsString('name="_csrf"', $body);
+        self::assertMatchesRegularExpression('/<details[^>]*\bopen>/', $body, 'the refused panel is reopened');
+        self::assertStringContainsString('id="reopen-reason-error-' . $id . '"', $body);
+    }
+
+    // --- entries recorded before the register posted ---------------------------
+
+    private function insertLegacyOpen(ReceivablePayableKind $kind): int
+    {
+        return Database::instance()->insert('receivables_payables', [
+            'branch_id' => $this->branchAId,
+            'kind' => $kind->value,
+            'party_name' => 'RPT Legacy',
+            'amount' => '250.00',
+            'issue_date' => self::day(-30),
+            'status' => 'open',
+            'created_by' => $this->adminAId,
+        ]);
+    }
+
+    public function testALegacyUnpostedEntryCancelsWithoutAVoidAndCannotBeSettled(): void
+    {
+        $toCancel = $this->insertLegacyOpen(ReceivablePayableKind::Receivable);
+        $toSettle = $this->insertLegacyOpen(ReceivablePayableKind::Receivable);
+
+        $cancel = $this->act('cancel', ReceivablePayableKind::Receivable, [
+            'cancel_reason' => 'Never happened',
+        ], ['id' => (string) $toCancel]);
+        self::assertSame(302, $cancel['status']);
+        self::assertSame('cancelled', $this->row($toCancel)['status']);
+        self::assertSame(0, $this->ledgerCount(), 'nothing to void, nothing posted');
+
+        $settle = $this->act('settle', ReceivablePayableKind::Receivable, [
+            'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->cashAId,
+        ], ['id' => (string) $toSettle]);
+        self::assertSame(302, $settle['status']);
+        self::assertStringContainsString('backfill', (string) ($settle['session']['_flash']['error'] ?? ''));
+        self::assertSame('open', $this->row($toSettle)['status']);
+        self::assertSame(0, $this->ledgerCount());
+    }
+
+    public function testEditingALegacyEntrysLockedFieldsExplainsTheBackfill(): void
+    {
+        $id = $this->insertLegacyOpen(ReceivablePayableKind::Payable);
+
+        $result = $this->act('update', ReceivablePayableKind::Payable, self::editPost([
+            'account_id' => (string) $this->cashAId,
+        ]), ['id' => (string) $id]);
+
+        $errors = $result['session']['_flash']['errors'] ?? [];
+        self::assertSame(['account_id'], array_keys($errors));
+        self::assertStringContainsString('backfill', (string) $errors['account_id'][0]);
+        self::assertNull($this->row($id)['account_id']);
+    }
+
+    // --- an account closed after the issue -------------------------------------
+
+    public function testAnAccountClosedAfterIssueStillLetsTheEntryBeCancelledOrSettledElsewhere(): void
+    {
+        $toCancel = $this->seed(ReceivablePayableKind::Receivable, ['account_id' => $this->bankAId, 'amount' => '300']);
+        $toSettle = $this->seed(ReceivablePayableKind::Receivable, ['account_id' => $this->bankAId, 'amount' => '200']);
+        Database::instance()->update('accounts', ['is_active' => 0], 'id = :id', ['id' => $this->bankAId]);
+
+        ReceivablePayableService::cancel($toCancel, ReceivablePayableKind::Receivable, 'Bank closed');
+        self::assertSame('void', $this->transaction((int) $this->row($toCancel)['issue_transaction_id'])['status']);
+
+        $intoClosed = $this->act('settle', ReceivablePayableKind::Receivable, [
+            'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->bankAId,
+        ], ['id' => (string) $toSettle]);
+        $failure = $intoClosed['session']['_flash']['rowFailure'] ?? null;
+        self::assertIsArray($failure);
+        self::assertArrayHasKey('settlement_account_id', $failure['errors'], 'refused next to the account field');
+        self::assertSame('open', $this->row($toSettle)['status']);
+
+        $cashBefore = self::balance($this->cashAId);
+        $this->settle($toSettle, ReceivablePayableKind::Receivable, $this->cashAId);
+        self::assertSame('settled', $this->row($toSettle)['status']);
+        self::assertSame(bcadd($cashBefore, '200', 2), self::balance($this->cashAId));
+    }
+
+    // --- reconciliation ----------------------------------------------------------
+
+    public function testEveryPostedRegisterTransactionBelongsToExactlyOneEntry(): void
+    {
+        $a = $this->seed(ReceivablePayableKind::Receivable);
+        $this->settle($a, ReceivablePayableKind::Receivable, $this->bankAId);
+        ReceivablePayableService::reopen($a, ReceivablePayableKind::Receivable, 'Wrong account');
+        $this->settle($a, ReceivablePayableKind::Receivable);
+        $b = $this->seed(ReceivablePayableKind::Payable);
+        $this->settle($b, ReceivablePayableKind::Payable);
+        $c = $this->seed(ReceivablePayableKind::Payable);
+        ReceivablePayableService::cancel($c, ReceivablePayableKind::Payable, 'Duplicate');
+        $this->seed(ReceivablePayableKind::Receivable);
+
+        $rows = Database::instance()->all(
+            "SELECT t.id,
+                    (SELECT COUNT(*) FROM receivables_payables r
+                      WHERE r.issue_transaction_id = t.id OR r.settlement_transaction_id = t.id) AS owners
+             FROM transactions t
+             WHERE t.branch_id = :b AND t.status = 'posted'
+               AND t.type IN ('receivable_issued', 'receivable_collected', 'payable_received', 'payable_repaid')",
+            ['b' => $this->branchAId]
+        );
+
+        self::assertCount(5, $rows, 'issues of a, b and the last entry; settlements of a (re-settled) and b');
+        foreach ($rows as $row) {
+            self::assertSame(1, (int) $row['owners'], 'transaction #' . $row['id'] . ' has exactly one entry');
+        }
+    }
+
+    public function testARegisterPostingCannotBeCreatedWithoutAnEntryToLinkItTo(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable);
+        $ledgerBefore = $this->ledgerCount();
+
+        try {
+            TransactionService::postRegisterMovement(
+                TransactionType::ReceivableIssued,
+                $id,
+                '10',
+                $this->cashAId,
+                self::day(0),
+                'RPT second issue',
+                null
+            );
+            self::fail('the issue slot is already taken');
+        } catch (RuntimeException $e) {
+            self::assertStringContainsString('cannot take this posting', $e->getMessage());
+        }
+        try {
+            TransactionService::postRegisterMovement(
+                TransactionType::PayableReceived,
+                $id,
+                '10',
+                $this->cashAId,
+                self::day(0),
+                'RPT wrong kind',
+                null
+            );
+            self::fail('a payable movement cannot link to a receivable');
+        } catch (RuntimeException) {
+            self::assertSame($ledgerBefore, $this->ledgerCount(), 'both postings were rolled back');
+        }
     }
 
     // --- branch deletion -----------------------------------------------------

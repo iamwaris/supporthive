@@ -90,10 +90,12 @@ final class RouteAccessTest extends TestCase
         'POST /receivables/{id}',
         'POST /receivables/{id}/settle',
         'POST /receivables/{id}/cancel',
+        'POST /receivables/{id}/reopen',
         'POST /payables',
         'POST /payables/{id}',
         'POST /payables/{id}/settle',
         'POST /payables/{id}/cancel',
+        'POST /payables/{id}/reopen',
         'POST /recurring-occurrences/{id}/approve',
         'POST /recurring-occurrences/{id}/reject',
         'POST /recurring-occurrences/approve-bulk',
@@ -162,6 +164,7 @@ final class RouteAccessTest extends TestCase
                     'POST ' . $base . '/{id}',
                     'POST ' . $base . '/{id}/settle',
                     'POST ' . $base . '/{id}/cancel',
+                    'POST ' . $base . '/{id}/reopen',
                 ] as $key
             ) {
                 self::assertSame(['can:write'], $routes[$key] ?? null, $key . ' must need the write ability');

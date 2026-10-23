@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Core\Database;
+use App\Domain\ReceivablePayableKind;
 use App\Models\Account;
 use App\Services\ReceivablePayableBackfill;
+use App\Services\ReceivablePayableService;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Tests\Support\BranchFixture;
 
 /**
@@ -16,9 +19,12 @@ use Tests\Support\BranchFixture;
  *
  * Legacy rows are inserted directly, exactly as AR/AP-1 left them: no
  * account and no posting. The guarantees: open entries get their issue
- * posting, settled entries both postings, cancelled entries nothing; all
- * through the branch's Cash account, as the entry's creator; a branch with
- * no cash account is skipped and reported; a second run posts nothing.
+ * posting, settled entries whatever they are missing, cancelled entries
+ * nothing; all through the branch's account named "Cash" (never a guessed
+ * one), as the entry's creator; a branch without it is skipped with its
+ * candidates listed; a failing entry rolls back alone; a second run posts
+ * nothing. Every run here is scoped to this test's branches, since the test
+ * database is shared.
  */
 final class ReceivablePayableBackfillTest extends TestCase
 {
@@ -26,6 +32,7 @@ final class ReceivablePayableBackfillTest extends TestCase
     private int $bareBranchId;
     private int $creatorId;
     private int $cashId;
+    private int $pettyId;
 
     protected function setUp(): void
     {
@@ -36,7 +43,7 @@ final class ReceivablePayableBackfillTest extends TestCase
         $this->bareBranchId = BranchFixture::create('RPB-NOCASH');
         $this->creatorId = $this->insertUser('rpb-creator@test.local', $this->branchId);
         $this->insertAccount($this->branchId, 'RPB Main Bank', 'bank');
-        $this->insertAccount($this->branchId, 'RPB Petty', 'cash');
+        $this->pettyId = $this->insertAccount($this->branchId, 'RPB Petty', 'cash');
         $this->cashId = $this->insertAccount($this->branchId, 'Cash', 'cash');
         $this->insertAccount($this->bareBranchId, 'RPB Only Bank', 'bank');
         $this->insertAccount($this->bareBranchId, 'RPB Closed Till', 'cash', false);
@@ -90,10 +97,14 @@ final class ReceivablePayableBackfillTest extends TestCase
         ]);
     }
 
-    /** A row as AR/AP-1 wrote it: no account, no posting. */
-    private function insertLegacy(int $branchId, string $kind, string $status, string $amount): int
+    /**
+     * A row as AR/AP-1 wrote it: no account, no posting.
+     *
+     * @param array<string,mixed> $extra
+     */
+    private function insertLegacy(int $branchId, string $kind, string $status, string $amount, array $extra = []): int
     {
-        $row = [
+        $row = $extra + [
             'branch_id' => $branchId,
             'kind' => $kind,
             'party_name' => 'RPB ' . $kind . ' ' . $status,
@@ -152,41 +163,78 @@ final class ReceivablePayableBackfillTest extends TestCase
         return array_map(static fn (array $entry): int => (int) $entry['id'], $entries);
     }
 
-    public function testTheCashAccountRuleIsDeterministic(): void
+    /**
+     * @param array{branches:list<array<string,mixed>>} $report
+     * @return array<string,mixed>
+     */
+    private static function branchLine(array $report, int $branchId): array
     {
-        $accounts = new Account();
-        self::assertSame($this->cashId, $accounts->cashAccountId($this->branchId), '"Cash" beats a lower id');
-        self::assertNull($accounts->cashAccountId($this->bareBranchId), 'a closed cash account does not count');
-
-        $tills = BranchFixture::create('RPB-TILLS');
-        $first = $this->insertAccount($tills, 'RPB Till A', 'cash');
-        $this->insertAccount($tills, 'RPB Till B', 'cash');
-        self::assertSame($first, $accounts->cashAccountId($tills), 'otherwise the lowest id');
+        foreach ($report['branches'] as $branch) {
+            if ($branch['branch_id'] === $branchId) {
+                return $branch;
+            }
+        }
+        self::fail('branch #' . $branchId . ' is not in the report');
     }
 
-    public function testOpenSettledAndCancelledEntriesAreBackfilledAndABranchWithoutCashIsSkipped(): void
+    /** @return array{0:int,1:string} exit code and output of the real CLI script */
+    private static function runScript(string ...$arguments): array
+    {
+        $environment = getenv() + ['LEDGERHIVE_TESTING' => '1'];
+        $environment['LEDGERHIVE_TESTING'] = '1';
+        $process = proc_open(
+            [PHP_BINARY, dirname(__DIR__, 2) . '/scripts/backfill-receivables-payables.php', ...$arguments],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            dirname(__DIR__, 2),
+            $environment
+        );
+        if ($process === false) {
+            throw new RuntimeException('Could not start the backfill script.');
+        }
+        $output = (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        return [proc_close($process), $output];
+    }
+
+    public function testOnlyTheActiveCashAccountNamedCashIsUsed(): void
+    {
+        $accounts = new Account();
+        self::assertSame($this->cashId, $accounts->cashAccountId($this->branchId), '"Cash", not the lower-id petty');
+        self::assertNull($accounts->cashAccountId($this->bareBranchId), 'a closed till is no Cash account');
+
+        $tills = BranchFixture::create('RPB-TILLS');
+        $this->insertAccount($tills, 'RPB Till A', 'cash');
+        $this->insertAccount($tills, 'RPB Till B', 'cash');
+        self::assertNull($accounts->cashAccountId($tills), 'no fallback to the lowest-id cash account');
+
+        $renamed = BranchFixture::create('RPB-CLOSEDCASH');
+        $this->insertAccount($renamed, 'Cash', 'cash', false);
+        self::assertNull($accounts->cashAccountId($renamed), 'a closed "Cash" does not count');
+    }
+
+    public function testOpenSettledAndCancelledEntriesAreBackfilledThroughCash(): void
     {
         $open = $this->insertLegacy($this->branchId, 'receivable', 'open', '300.00');
         $settled = $this->insertLegacy($this->branchId, 'payable', 'settled', '450.00');
         $cancelled = $this->insertLegacy($this->branchId, 'receivable', 'cancelled', '99.00');
-        $stranded = $this->insertLegacy($this->bareBranchId, 'payable', 'open', '120.00');
 
-        $dryRun = ReceivablePayableBackfill::run(true);
-        self::assertContains($open, self::ids($dryRun['posted']));
+        $dryRun = ReceivablePayableBackfill::run(true, $this->branchId);
+        self::assertSame([$open, $settled], self::ids($dryRun['posted']));
+        self::assertSame([$this->cashId, $this->cashId], array_column($dryRun['posted'], 'account_id'));
+        self::assertSame(['Cash', 'Cash'], array_column($dryRun['posted'], 'account_name'));
         self::assertSame(0, $this->branchLedgerCount($this->branchId), 'a dry run writes nothing');
 
-        $report = ReceivablePayableBackfill::run();
+        $report = ReceivablePayableBackfill::run(false, $this->branchId);
 
-        $posted = array_values(array_filter(
-            $report['posted'],
-            fn (array $entry): bool => in_array($entry['id'], [$open, $settled, $cancelled, $stranded], true)
-        ));
-        self::assertSame([$open, $settled], self::ids($posted));
+        self::assertSame([$open, $settled], self::ids($report['posted']));
         self::assertSame([], $report['failed']);
-        self::assertContains($stranded, self::ids($report['skipped']));
-        $skip = array_values(array_filter($report['skipped'], static fn (array $e): bool => $e['id'] === $stranded))[0];
-        self::assertSame($this->bareBranchId, $skip['branch_id']);
-        self::assertStringContainsString('cash', $skip['reason']);
+        $branch = self::branchLine($report, $this->branchId);
+        self::assertSame($this->cashId, $branch['account_id']);
+        self::assertSame('Cash', $branch['account_name']);
+        self::assertCount(2, $branch['entries']);
 
         // Open receivable: money lent out of Cash on its issue date.
         $openRow = $this->row($open);
@@ -219,18 +267,127 @@ final class ReceivablePayableBackfillTest extends TestCase
             ['id' => $settled, 'u' => $this->creatorId]
         ));
 
-        // Cancelled and stranded entries are untouched.
         self::assertNull($this->row($cancelled)['issue_transaction_id']);
         self::assertNull($this->row($cancelled)['account_id']);
-        self::assertNull($this->row($stranded)['issue_transaction_id']);
         self::assertSame(3, $this->branchLedgerCount($this->branchId));
-        self::assertSame(0, $this->branchLedgerCount($this->bareBranchId), 'no account was invented');
+        self::assertSame(0, (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM transactions WHERE account_id = :petty',
+            ['petty' => $this->pettyId]
+        ), 'the other cash account is never used');
         self::assertSame([], $_SESSION, 'the CLI identity is restored afterwards');
 
         // Running it again posts nothing new.
-        $again = ReceivablePayableBackfill::run();
-        self::assertSame([], array_values(array_intersect([$open, $settled, $cancelled], self::ids($again['posted']))));
+        $again = ReceivablePayableBackfill::run(false, $this->branchId);
+        self::assertSame([], $again['posted']);
+        self::assertSame([], $again['branches'], 'nothing left to post');
         self::assertSame(3, $this->branchLedgerCount($this->branchId));
-        self::assertContains($stranded, self::ids($again['skipped']), 'still reported until the branch has cash');
+    }
+
+    public function testABranchWithoutItsCashAccountIsSkippedWithItsCandidatesListed(): void
+    {
+        $stranded = $this->insertLegacy($this->bareBranchId, 'payable', 'open', '120.00');
+
+        $report = ReceivablePayableBackfill::run(false, $this->bareBranchId);
+
+        self::assertSame([], $report['posted']);
+        $branch = self::branchLine($report, $this->bareBranchId);
+        self::assertNull($branch['account_id']);
+        self::assertSame([$stranded], self::ids($branch['entries']));
+        self::assertSame([['name' => 'RPB Closed Till', 'is_active' => false]], array_map(
+            static fn (array $c): array => ['name' => $c['name'], 'is_active' => $c['is_active']],
+            $branch['candidates']
+        ));
+        self::assertNull($this->row($stranded)['issue_transaction_id']);
+        self::assertSame(0, $this->branchLedgerCount($this->bareBranchId), 'no account was invented');
+    }
+
+    public function testAFailingEntryRollsBackAloneAndTheRunCarriesOn(): void
+    {
+        $foreignAccount = $this->insertAccount($this->bareBranchId, 'RPB Foreign', 'bank');
+        // A settlement account from another branch makes the settlement
+        // posting fail after the issue posting succeeded in the same entry.
+        $broken = $this->insertLegacy($this->branchId, 'receivable', 'settled', '70.00', [
+            'settlement_account_id' => $foreignAccount,
+        ]);
+        $healthy = $this->insertLegacy($this->branchId, 'payable', 'open', '80.00');
+
+        $report = ReceivablePayableBackfill::run(false, $this->branchId);
+
+        self::assertSame([$broken], self::ids($report['failed']));
+        self::assertSame([$healthy], self::ids($report['posted']), 'the next entry still posts');
+        $brokenRow = $this->row($broken);
+        self::assertNull($brokenRow['issue_transaction_id'], 'its issue posting was rolled back too');
+        self::assertNull($brokenRow['account_id']);
+        self::assertSame(0, (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM transactions WHERE description LIKE :d',
+            ['d' => '%(register #' . $broken . ')']
+        ));
+        self::assertSame(0, (int) Database::instance()->value(
+            "SELECT COUNT(*) FROM audit_log WHERE entity_type = 'receivables_payables' AND entity_id = :id",
+            ['id' => $broken]
+        ));
+        self::assertSame([], $_SESSION);
+    }
+
+    public function testASettledEntryWithOnlyItsIssuePostingGetsJustTheSettlement(): void
+    {
+        $_SESSION = ['_auth_user_id' => $this->creatorId, '_active_branch_id' => $this->branchId];
+        $id = ReceivablePayableService::record(ReceivablePayableKind::Receivable, [
+            'party_name' => 'RPB Half Done',
+            'reference_no' => null,
+            'description' => null,
+            'amount' => '60',
+            'issue_date' => '2026-10-02',
+            'due_date' => null,
+            'account_id' => $this->pettyId,
+        ]);
+        $_SESSION = [];
+        Database::instance()->update(
+            'receivables_payables',
+            ['status' => 'settled', 'settled_on' => '2026-10-12'],
+            'id = :id',
+            ['id' => $id]
+        );
+        $issueBefore = $this->transaction((int) $this->row($id)['issue_transaction_id']);
+
+        $report = ReceivablePayableBackfill::run(false, $this->branchId);
+
+        self::assertSame([$id], self::ids($report['posted']));
+        self::assertNull($report['posted'][0]['issue_transaction_id'], 'no second issue posting');
+        $row = $this->row($id);
+        self::assertSame($issueBefore, $this->transaction((int) $row['issue_transaction_id']));
+        self::assertSame($this->pettyId, (int) $row['account_id'], 'the issue account is kept');
+        $settlement = $this->transaction((int) $row['settlement_transaction_id']);
+        self::assertSame('receivable_collected', $settlement['type']);
+        self::assertSame('2026-10-12', $settlement['transaction_date']);
+        self::assertSame($this->cashId, (int) $settlement['account_id']);
+    }
+
+    public function testTheScriptPrintsTheAccountsAndExitsZeroOneOrTwo(): void
+    {
+        $this->insertLegacy($this->branchId, 'receivable', 'open', '10.00');
+        [$dryCode, $dryOutput] = self::runScript('--dry-run', '--branch=' . $this->branchId);
+        self::assertSame(0, $dryCode, $dryOutput);
+        self::assertStringContainsString('via account #' . $this->cashId . ' "Cash"', $dryOutput);
+        self::assertStringContainsString('branch #' . $this->branchId, $dryOutput);
+
+        [$code, $output] = self::runScript('--branch=' . $this->branchId);
+        self::assertSame(0, $code, $output);
+        self::assertStringContainsString('posted receivable', $output);
+        self::assertStringContainsString('"Cash"', $output);
+
+        $this->insertLegacy($this->bareBranchId, 'payable', 'open', '20.00');
+        [$skipCode, $skipOutput] = self::runScript('--branch=' . $this->bareBranchId);
+        self::assertSame(2, $skipCode, $skipOutput);
+        self::assertStringContainsString('SKIPPED branch #' . $this->bareBranchId, $skipOutput);
+        self::assertStringContainsString('"RPB Closed Till" (closed)', $skipOutput);
+
+        $foreignAccount = $this->insertAccount($this->bareBranchId, 'RPB Foreign', 'bank');
+        $this->insertLegacy($this->branchId, 'receivable', 'settled', '30.00', [
+            'settlement_account_id' => $foreignAccount,
+        ]);
+        [$failCode, $failOutput] = self::runScript('--branch=' . $this->branchId);
+        self::assertSame(1, $failCode, $failOutput);
+        self::assertStringContainsString('FAILED receivable', $failOutput);
     }
 }

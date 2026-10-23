@@ -106,7 +106,7 @@ final class ReceivablePayableRulesTest extends TestCase
 
     public function testLockedFieldsRefuseAnyDifferenceButIgnoreWhatWasNotSent(): void
     {
-        $stored = ['amount' => '1500.00', 'issue_date' => '2026-10-01', 'account_id' => 7];
+        $stored = ['amount' => '1500.00', 'issue_date' => '2026-10-01', 'account_id' => 7, 'posted' => true];
         $nothingSent = ['amount' => null, 'issue_date' => null, 'account_id' => null];
 
         self::assertSame([], ReceivablePayableRules::lockedFieldErrors($stored, $nothingSent));
@@ -128,10 +128,26 @@ final class ReceivablePayableRulesTest extends TestCase
             $stored,
             ['account_id' => 8] + $nothingSent
         )));
-        self::assertSame(['account_id'], array_keys(ReceivablePayableRules::lockedFieldErrors(
-            ['account_id' => null] + $stored,
-            ['account_id' => 7] + $nothingSent
-        )), 'an unposted entry cannot be given an account by editing');
+        self::assertStringContainsString('locked once posted', ReceivablePayableRules::lockedFieldErrors(
+            $stored,
+            ['account_id' => 8] + $nothingSent
+        )['account_id']);
+
+        $unposted = ReceivablePayableRules::lockedFieldErrors(
+            ['account_id' => null, 'posted' => false] + $stored,
+            ['account_id' => 7, 'amount' => '1'] + $nothingSent
+        );
+        self::assertSame(['amount', 'account_id'], array_keys($unposted), 'an unposted entry is not edited either');
+        self::assertStringContainsString('backfill', $unposted['account_id'], 'and the message says why');
+        self::assertStringNotContainsString('locked once posted', $unposted['account_id']);
+    }
+
+    public function testOnlyASettledEntryCanBeReopenedAndOnlyWithAReason(): void
+    {
+        self::assertSame([], ReceivablePayableRules::reopenErrors('settled', 'Wrong account'));
+        self::assertArrayHasKey('reopen_reason', ReceivablePayableRules::reopenErrors('settled', '  '));
+        self::assertArrayHasKey('status', ReceivablePayableRules::reopenErrors('open', 'Wrong account'));
+        self::assertArrayHasKey('status', ReceivablePayableRules::reopenErrors('cancelled', 'Wrong account'));
     }
 
     public function testSettlingNeedsTheIssuePosting(): void

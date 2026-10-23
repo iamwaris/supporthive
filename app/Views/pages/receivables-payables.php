@@ -6,7 +6,8 @@
  * Settle and cancel are native <details> disclosures holding real POST forms,
  * so both work without JavaScript; Alpine only disables a submit button while
  * its request is in flight. Opening the cancel panel and giving a reason is
- * the confirmation step before anything changes.
+ * the confirmation step before anything changes; a settled row gets the same
+ * kind of Reopen panel (undo the settlement, with a reason).
  *
  * Recording, settling and cancelling post to (or void in) the ledger; each
  * row names the account its money moved through.
@@ -23,7 +24,8 @@
  * @var int                               $perPage
  * @var string                            $today
  * @var array{id:int,action:string,errors:array<string,list<string>>,settled_on:string,
- *            settlement_note:string,cancel_reason:string,settlement_account_id:string}|null $rowFailure
+ *            settlement_note:string,cancel_reason:string,settlement_account_id:string,
+ *            reopen_reason:string}|null $rowFailure
  * @var list<array<string,mixed>>         $accounts         active accounts in this branch
  * @var int|null                          $defaultAccountId the branch's Cash account, preselected
  * @var array<string,mixed>|null          $authUser
@@ -174,6 +176,7 @@ $isFiltered = $search !== '' || $status !== 'open';
                     $failedErrors = $failure['errors'] ?? [];
                     $settleOpen = $failure !== null && $failure['action'] === 'settle';
                     $cancelOpen = $failure !== null && $failure['action'] === 'cancel';
+                    $reopenOpen = $failure !== null && $failure['action'] === 'reopen';
                     $settleAccount = $settleOpen && $failure['settlement_account_id'] !== ''
                         ? $failure['settlement_account_id']
                         : (string) ($defaultAccountId ?? '');
@@ -342,6 +345,40 @@ $isFiltered = $search !== '' || $status !== 'open';
                                         <p class="help sm:col-span-2">
                                             This cannot be undone. The ledger posting is voided with this reason, which
                                             restores the account balance. The entry stays listed; nothing is deleted.
+                                        </p>
+                                    </form>
+                                </details>
+                            </div>
+                        <?php elseif ($canWrite && $rowStatus === ReceivablePayableRules::STATUS_SETTLED) : ?>
+                            <div class="flex flex-wrap items-start gap-2">
+                                <details class="open:basis-full" <?= $reopenOpen ? 'open' : '' ?>>
+                                    <summary class="btn-secondary cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                        Reopen<span class="sr-only"> <?= e($singular) ?> for <?= e((string) $row['party_name']) ?></span>
+                                    </summary>
+                                    <form method="post" action="<?= e(url($base . '/' . $rowId . '/reopen')) ?>"
+                                          class="mt-2 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-[1fr_auto] sm:items-start"
+                                          x-data="{ sending: false }" x-on:submit="sending = true">
+                                        <?= csrf_field() ?>
+                                        <div>
+                                            <label for="reopen-reason-<?= $rowId ?>" class="label">Why is this settlement being undone?</label>
+                                            <input id="reopen-reason-<?= $rowId ?>" name="reopen_reason" type="text" required maxlength="255"
+                                                   value="<?= e($reopenOpen ? $failure['reopen_reason'] : '') ?>"
+                                                   placeholder="e.g. settled into the wrong account"
+                                                   class="<?= isset($failedErrors['reopen_reason']) ? 'input-error' : 'input' ?>"
+                                                   <?= isset($failedErrors['reopen_reason']) ? 'aria-invalid="true" aria-describedby="reopen-reason-error-' . $rowId . '"' : '' ?>>
+                                            <?php if (isset($failedErrors['reopen_reason'][0])) : ?>
+                                                <p id="reopen-reason-error-<?= $rowId ?>" class="error"><?= e($failedErrors['reopen_reason'][0]) ?></p>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="sm:pt-5.5">
+                                            <button type="submit" class="btn-dark w-full sm:w-auto" x-bind:disabled="sending">
+                                                Confirm reopen
+                                            </button>
+                                        </div>
+                                        <p class="help sm:col-span-2">
+                                            The settlement posting (&ldquo;<?= e($kind->settlementType()->label()) ?>&rdquo;) is voided
+                                            with this reason and the entry goes back to open, so it can be settled again with the
+                                            right account and date. The original issue posting stays.
                                         </p>
                                     </form>
                                 </details>

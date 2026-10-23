@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Core\Auth;
 use App\Core\Database;
 use App\Core\Logger;
+use App\Domain\ReceivablePayableKind;
 use App\Domain\TransactionType;
 use InvalidArgumentException;
 use RuntimeException;
@@ -60,22 +61,52 @@ final class TransactionService
     }
 
     /**
-     * Post one receivables / payables movement. Called only by
-     * ReceivablePayableService (and its backfill), which links the new row to
-     * its register entry in the same database transaction; no controller
-     * reaches it directly.
+     * Post one receivables / payables movement AND link it to its register
+     * entry, in one database transaction.
+     *
+     * The link is not optional: an issue movement fills the entry's
+     * issue_transaction_id + account_id, a settlement movement its
+     * settlement_transaction_id + settlement_account_id. If that slot is
+     * already taken, or the entry is not in this branch with the matching
+     * kind, the posting is rolled back. So a register-typed row can never
+     * exist without exactly one entry pointing at it.
      */
     public static function postRegisterMovement(
         TransactionType $type,
+        int $entryId,
         string $amount,
         int $accountId,
         string $date,
         string $description,
         ?string $reference
     ): int {
-        if (!$type->isRegisterMovement()) {
+        $kind = ReceivablePayableKind::fromMovement($type);
+        if ($kind === null) {
             throw new InvalidArgumentException($type->label() . ' is not a receivables / payables movement.');
         }
+
+        [$transactionColumn, $accountColumn] = $kind->issueType() === $type
+            ? ['issue_transaction_id', 'account_id']
+            : ['settlement_transaction_id', 'settlement_account_id'];
+
+        $link = static function (int $transactionId) use (
+            $entryId,
+            $kind,
+            $accountId,
+            $transactionColumn,
+            $accountColumn
+        ): void {
+            $linked = Database::instance()->update(
+                'receivables_payables',
+                [$transactionColumn => $transactionId, $accountColumn => $accountId],
+                'id = :entry AND branch_id = :branch AND kind = :kind AND '
+                    . Database::identifier($transactionColumn) . ' IS NULL',
+                ['entry' => $entryId, 'branch' => self::requireBranchId(), 'kind' => $kind->value]
+            );
+            if ($linked !== 1) {
+                throw new RuntimeException('That register entry cannot take this posting.');
+            }
+        };
 
         return self::postMovement([
             'type' => $type,
@@ -84,7 +115,7 @@ final class TransactionService
             'transaction_date' => $date,
             'description' => $description,
             'reference_no' => $reference,
-        ]);
+        ], $link);
     }
 
     /**

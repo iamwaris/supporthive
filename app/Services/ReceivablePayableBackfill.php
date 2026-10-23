@@ -16,94 +16,131 @@ use Throwable;
  * register on the ledger (scripts/backfill-receivables-payables.php).
  *
  *   - open      -> the issue posting, dated issue_date;
- *   - settled   -> the issue posting on issue_date AND the settlement
- *                  posting on settled_on;
+ *   - settled   -> whichever of the issue posting (issue_date) and the
+ *                  settlement posting (settled_on) is still missing;
  *   - cancelled -> nothing.
  *
- * Every posting goes through the branch's Cash account
- * (Account::cashAccountId(): an active cash-type account named "Cash", else
- * the lowest-id active cash-type account). A branch with none is skipped and
- * reported — an account is never invented.
+ * Every posting goes through the branch's Cash account — exactly the active
+ * cash-type account named "Cash" (Account::cashAccountId()). A branch without
+ * one is skipped and reported with its cash-type candidates; an account is
+ * never guessed or invented.
  *
  * Idempotent: only entries still missing a posting are selected, each is
- * re-read under a row lock inside its own database transaction, and it is
- * posted as the user who recorded it, with an audit row, exactly as
- * TransactionService posts anything else. Running it again posts nothing.
+ * re-read under a row lock inside its own database transaction, posted as
+ * the user who recorded it and linked to the entry by
+ * TransactionService::postRegisterMovement(), with an audit row. A failing
+ * entry rolls back alone and the run carries on. Running it again posts
+ * nothing.
  */
 final class ReceivablePayableBackfill
 {
     /**
+     * @param int|null $branchId limit the run to one branch; null = every branch
      * @return array{
-     *     posted: list<array{id:int,branch_id:int,kind:string,status:string,
+     *     posted: list<array{id:int,branch_id:int,kind:string,status:string,account_id:int,account_name:string,
      *                        issue_transaction_id:?int,settlement_transaction_id:?int}>,
-     *     skipped: list<array{id:int,branch_id:int,branch_name:string,kind:string,status:string,reason:string}>,
-     *     failed: list<array{id:int,branch_id:int,kind:string,status:string,error:string}>
+     *     failed: list<array{id:int,branch_id:int,kind:string,status:string,account_id:int,account_name:string,
+     *                        error:string}>,
+     *     branches: list<array{branch_id:int,branch_name:string,account_id:?int,account_name:?string,
+     *                          entries:list<array{id:int,kind:string,status:string}>,
+     *                          candidates:list<array{id:int,name:string,is_active:bool}>}>
      * }
      */
-    public static function run(bool $dryRun = false): array
+    public static function run(bool $dryRun = false, ?int $branchId = null): array
     {
-        $report = ['posted' => [], 'skipped' => [], 'failed' => []];
-        $cashAccounts = [];
+        $report = ['posted' => [], 'failed' => [], 'branches' => []];
+        $accounts = new Account();
 
-        foreach (self::pendingEntries() as $entry) {
-            $id = (int) $entry['id'];
-            $branchId = (int) $entry['branch_id'];
-            $summary = [
-                'id' => $id,
-                'branch_id' => $branchId,
-                'kind' => (string) $entry['kind'],
-                'status' => (string) $entry['status'],
+        foreach (self::pendingEntriesByBranch($branchId) as $branch => $entries) {
+            $cashAccountId = $accounts->cashAccountId($branch);
+            $cashAccountName = null;
+            $candidates = [];
+            if ($cashAccountId !== null) {
+                $cashAccountName = (string) Database::instance()->value(
+                    'SELECT name FROM accounts WHERE id = :id',
+                    ['id' => $cashAccountId]
+                );
+            } else {
+                $candidates = array_map(static fn (array $account): array => [
+                    'id' => (int) $account['id'],
+                    'name' => (string) $account['name'],
+                    'is_active' => (int) $account['is_active'] === 1,
+                ], $accounts->cashTypeAccounts($branch));
+            }
+
+            $report['branches'][] = [
+                'branch_id' => $branch,
+                'branch_name' => (string) $entries[0]['branch_name'],
+                'account_id' => $cashAccountId,
+                'account_name' => $cashAccountName,
+                'entries' => array_map(static fn (array $entry): array => [
+                    'id' => (int) $entry['id'],
+                    'kind' => (string) $entry['kind'],
+                    'status' => (string) $entry['status'],
+                ], $entries),
+                'candidates' => $candidates,
             ];
 
-            if (!array_key_exists($branchId, $cashAccounts)) {
-                $cashAccounts[$branchId] = (new Account())->cashAccountId($branchId);
+            if ($cashAccountId === null || $cashAccountName === null) {
+                continue;
             }
-            $cashAccountId = $cashAccounts[$branchId];
 
-            if ($cashAccountId === null) {
-                $report['skipped'][] = $summary + [
-                    'branch_name' => (string) $entry['branch_name'],
-                    'reason' => 'the branch has no active cash-type account',
+            foreach ($entries as $entry) {
+                $summary = [
+                    'id' => (int) $entry['id'],
+                    'branch_id' => $branch,
+                    'kind' => (string) $entry['kind'],
+                    'status' => (string) $entry['status'],
+                    'account_id' => $cashAccountId,
+                    'account_name' => $cashAccountName,
                 ];
-                continue;
-            }
 
-            if ($dryRun) {
-                $report['posted'][] = $summary + ['issue_transaction_id' => null, 'settlement_transaction_id' => null];
-                continue;
-            }
-
-            try {
-                $result = self::backfillEntry($id, $branchId, (int) $entry['created_by'], $cashAccountId);
-                if ($result !== null) {
-                    $report['posted'][] = $summary + $result;
+                if ($dryRun) {
+                    $report['posted'][] = $summary
+                        + ['issue_transaction_id' => null, 'settlement_transaction_id' => null];
+                    continue;
                 }
-            } catch (Throwable $e) {
-                $report['failed'][] = $summary + ['error' => $e->getMessage()];
+
+                try {
+                    $result = self::backfillEntry($summary['id'], $branch, (int) $entry['created_by'], $cashAccountId);
+                    if ($result !== null) {
+                        $report['posted'][] = $summary + $result;
+                    }
+                } catch (Throwable $e) {
+                    $report['failed'][] = $summary + ['error' => $e->getMessage()];
+                }
             }
         }
 
         return $report;
     }
 
-    /** @return list<array<string,mixed>> */
-    private static function pendingEntries(): array
+    /** @return array<int,non-empty-list<array<string,mixed>>> branch id => its pending entries */
+    private static function pendingEntriesByBranch(?int $branchId): array
     {
-        return Database::instance()->all(
-            "SELECT r.id, r.branch_id, r.kind, r.status, r.created_by, b.name AS branch_name
-             FROM receivables_payables r
-             JOIN branches b ON b.id = r.branch_id
-             WHERE (r.status = :open AND r.issue_transaction_id IS NULL)
-                OR (r.status = :settled
-                    AND (r.issue_transaction_id IS NULL OR r.settlement_transaction_id IS NULL))
-             ORDER BY r.branch_id, r.id",
-            ['open' => ReceivablePayableRules::STATUS_OPEN, 'settled' => ReceivablePayableRules::STATUS_SETTLED]
-        );
+        $sql = "SELECT r.id, r.branch_id, r.kind, r.status, r.created_by, b.name AS branch_name
+                FROM receivables_payables r
+                JOIN branches b ON b.id = r.branch_id
+                WHERE ((r.status = :open AND r.issue_transaction_id IS NULL)
+                    OR (r.status = :settled
+                        AND (r.issue_transaction_id IS NULL OR r.settlement_transaction_id IS NULL)))";
+        $params = ['open' => ReceivablePayableRules::STATUS_OPEN, 'settled' => ReceivablePayableRules::STATUS_SETTLED];
+        if ($branchId !== null) {
+            $sql .= ' AND r.branch_id = :branch';
+            $params['branch'] = $branchId;
+        }
+
+        $byBranch = [];
+        foreach (Database::instance()->all($sql . ' ORDER BY r.branch_id, r.id', $params) as $entry) {
+            $byBranch[(int) $entry['branch_id']][] = $entry;
+        }
+
+        return $byBranch;
     }
 
     /**
      * Post whatever this entry is still missing, as its creator, in one
-     * database transaction with the link columns and an audit row.
+     * database transaction with the links and an audit row.
      *
      * @return array{issue_transaction_id:?int,settlement_transaction_id:?int}|null null when nothing was missing
      */
@@ -167,7 +204,6 @@ final class ReceivablePayableBackfill
                     return null;
                 }
 
-                $db->update('receivables_payables', $changes, 'id = :id', ['id' => $id]);
                 Audit::record($kind->value . '.backfilled', 'receivables_payables', $id, null, $changes);
 
                 return [

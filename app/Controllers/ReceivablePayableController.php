@@ -297,6 +297,40 @@ final class ReceivablePayableController extends Controller
         Http::redirect($kind->path());
     }
 
+    /**
+     * Undo a settlement (settled -> open) with a mandatory reason: its
+     * settlement posting is voided, so a settle into the wrong account or on
+     * the wrong date can be corrected by settling again.
+     *
+     * @param array<string,string> $params
+     */
+    public function reopen(array $params): void
+    {
+        $kind = $this->kind($params);
+        $id = (int) $this->entryOr404($params, $kind)['id'];
+
+        $input = Validator::make($_POST, ['reopen_reason' => 'required|max:255']);
+        if ($input->fails()) {
+            $this->backToRow($kind, $id, 'reopen', $input->errors(), $_POST);
+        }
+
+        try {
+            ReceivablePayableService::reopen($id, $kind, (string) $input->validated()['reopen_reason']);
+        } catch (ReceivablePayableRuleViolation $e) {
+            $this->backToRow($kind, $id, 'reopen', $this->asErrorLists($e), $_POST);
+        } catch (PDOException $e) {
+            $this->databaseFailure($e, $kind, $id, 'reopen');
+        } catch (RuntimeException $e) {
+            $this->backToRow($kind, $id, 'reopen', ['reopen_reason' => [$e->getMessage()]], $_POST);
+        }
+
+        Session::flash(
+            'success',
+            ucfirst($kind->singular()) . ' reopened and its settlement posting voided. Settle it again when ready.'
+        );
+        Http::redirect($kind->path());
+    }
+
     /** @param array<string,string> $params */
     private function kind(array $params): ReceivablePayableKind
     {
@@ -371,6 +405,7 @@ final class ReceivablePayableController extends Controller
             'settled_on' => $value('settled_on'),
             'settlement_note' => $value('settlement_note'),
             'cancel_reason' => $value('cancel_reason'),
+            'reopen_reason' => $value('reopen_reason'),
             'settlement_account_id' => $value('settlement_account_id'),
         ]);
         Session::flash('error', (string) (array_values($errors)[0][0] ?? 'That change was not saved.'));

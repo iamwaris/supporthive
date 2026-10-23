@@ -56,9 +56,10 @@ final class Account extends Model
      * A branch's "Cash account": the default for register postings and the
      * one the one-time backfill posts legacy entries through.
      *
-     * Deterministic when a branch has several: an active cash-type account
-     * named "Cash" first, otherwise the lowest-id active cash-type account.
-     * Null when there is none; a caller must never invent one.
+     * Exactly the active cash-type account named "Cash" (names are unique
+     * per branch; the comparison follows the column's case-insensitive
+     * collation). No fallback to another cash account: null means the branch
+     * has none, and a caller must never invent or guess one.
      *
      * @param int|null $branchId null means the current session's branch
      */
@@ -66,13 +67,26 @@ final class Account extends Model
     {
         $id = $this->db()->value(
             "SELECT id FROM accounts
-             WHERE branch_id = :branch AND type = 'cash' AND is_active = 1
-             ORDER BY CASE WHEN name = 'Cash' THEN 0 ELSE 1 END, id ASC
+             WHERE branch_id = :branch AND type = 'cash' AND is_active = 1 AND name = 'Cash'
              LIMIT 1",
             ['branch' => $branchId ?? $this->requireBranchId()]
         );
 
         return $id === null ? null : (int) $id;
+    }
+
+    /**
+     * Every cash-type account of a branch, open or closed: what an operator
+     * needs to see when cashAccountId() finds no "Cash" account.
+     *
+     * @return list<array<string,mixed>> id, name, is_active; lowest id first
+     */
+    public function cashTypeAccounts(int $branchId): array
+    {
+        return $this->db()->all(
+            "SELECT id, name, is_active FROM accounts WHERE branch_id = :branch AND type = 'cash' ORDER BY id",
+            ['branch' => $branchId]
+        );
     }
 
     /** @param array<string,mixed> $data */

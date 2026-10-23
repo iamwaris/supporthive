@@ -21,12 +21,13 @@ use RuntimeException;
  * (a receivable takes money out of an account, a payable brings it in) and
  * settling posts the return movement. Neither touches the P&L — see
  * TransactionType::affectsProfitAndLoss(). Cancelling voids the issue
- * posting. Every posting and void goes through TransactionService, in the
+ * posting; reopening a settled entry voids its settlement posting so it can
+ * be settled again. Every posting and void goes through TransactionService, in the
  * same database transaction as the register write and its audit row, so the
  * entry and the ledger can never disagree.
  *
  * Each change re-reads the row under a lock inside that transaction, and the
- * UPDATE itself still requires status = 'open', so two simultaneous settles
+ * UPDATE itself still requires the expected status, so two simultaneous settles
  * (or a settle racing a cancel) leave exactly one winner, one posting and
  * one audit entry.
  */
@@ -78,7 +79,6 @@ final class ReceivablePayableService
                 $accountId,
                 $entry['issue_date']
             );
-            $db->update(self::TABLE, ['issue_transaction_id' => $transactionId], 'id = :id', ['id' => $id]);
 
             Audit::record($kind->value . '.created', self::ENTITY, $id, null, $entry + [
                 'account_id' => $accountId,
@@ -115,12 +115,13 @@ final class ReceivablePayableService
             $locked,
             $userId
         ): void {
-            $before = self::lockOpenEntry($db, $id, $kind, ReceivablePayableRules::editErrors(...));
+            $before = self::lockEntry($db, $id, $kind, ReceivablePayableRules::editErrors(...));
 
             self::assertNoErrors(ReceivablePayableRules::lockedFieldErrors([
                 'amount' => (string) $before['amount'],
                 'issue_date' => (string) $before['issue_date'],
                 'account_id' => $before['account_id'] === null ? null : (int) $before['account_id'],
+                'posted' => $before['issue_transaction_id'] !== null,
             ], $locked));
             self::assertNoErrors(ReceivablePayableRules::entryErrors(
                 (string) $before['amount'],
@@ -128,7 +129,7 @@ final class ReceivablePayableService
                 $after['due_date']
             ));
 
-            self::updateWhileOpen($db, $id, $after + [
+            self::updateWhileStatus($db, $id, ReceivablePayableRules::STATUS_OPEN, $after + [
                 'modified_by' => $userId,
                 'modified_at' => date('Y-m-d H:i:s'),
             ]);
@@ -160,7 +161,7 @@ final class ReceivablePayableService
             $today,
             $userId
         ): void {
-            $row = self::lockOpenEntry(
+            $row = self::lockEntry(
                 $db,
                 $id,
                 $kind,
@@ -175,6 +176,16 @@ final class ReceivablePayableService
             );
             self::assertAccountUsable($settlementAccountId, 'settlement_account_id');
 
+            // Status first: the posting's link sets settlement_transaction_id,
+            // which chk_rp_settlement_posting only allows on a settled row.
+            self::updateWhileStatus($db, $id, ReceivablePayableRules::STATUS_OPEN, [
+                'status' => ReceivablePayableRules::STATUS_SETTLED,
+                'settled_on' => $settledOn,
+                'settlement_note' => $note,
+                'settled_by' => $userId,
+                'settled_at' => date('Y-m-d H:i:s'),
+            ]);
+
             $transactionId = self::postMovement(
                 $kind->settlementType(),
                 $id,
@@ -184,16 +195,6 @@ final class ReceivablePayableService
                 $settlementAccountId,
                 $settledOn
             );
-
-            self::updateWhileOpen($db, $id, [
-                'status' => ReceivablePayableRules::STATUS_SETTLED,
-                'settled_on' => $settledOn,
-                'settlement_account_id' => $settlementAccountId,
-                'settlement_transaction_id' => $transactionId,
-                'settlement_note' => $note,
-                'settled_by' => $userId,
-                'settled_at' => date('Y-m-d H:i:s'),
-            ]);
 
             Audit::record(
                 $kind->value . '.settled',
@@ -222,7 +223,7 @@ final class ReceivablePayableService
         $userId = self::requireUserId();
 
         Database::instance()->transaction(static function (Database $db) use ($id, $kind, $reason, $userId): void {
-            $row = self::lockOpenEntry(
+            $row = self::lockEntry(
                 $db,
                 $id,
                 $kind,
@@ -234,7 +235,7 @@ final class ReceivablePayableService
                 TransactionService::voidRegisterPosting($issueTransactionId, $reason);
             }
 
-            self::updateWhileOpen($db, $id, [
+            self::updateWhileStatus($db, $id, ReceivablePayableRules::STATUS_OPEN, [
                 'status' => ReceivablePayableRules::STATUS_CANCELLED,
                 'cancel_reason' => $reason,
                 'cancelled_by' => $userId,
@@ -256,9 +257,63 @@ final class ReceivablePayableService
     }
 
     /**
-     * Post one register movement for entry $entryId. The description names
-     * the entry so the ledger row reads back to it; the FK on the entry is
-     * the actual link.
+     * Undo a settlement: void the settlement posting with the reason, clear
+     * the settlement, and put the entry back to open — so a settle into the
+     * wrong account or on the wrong date can be corrected by settling again.
+     * The issue posting is untouched.
+     */
+    public static function reopen(int $id, ReceivablePayableKind $kind, string $reason): void
+    {
+        $reason = mb_substr(trim($reason), 0, 255);
+        $userId = self::requireUserId();
+
+        Database::instance()->transaction(static function (Database $db) use ($id, $kind, $reason, $userId): void {
+            $row = self::lockEntry(
+                $db,
+                $id,
+                $kind,
+                static fn (string $status): array => ReceivablePayableRules::reopenErrors($status, $reason)
+            );
+
+            $settlementTransactionId = $row['settlement_transaction_id'] === null
+                ? null
+                : (int) $row['settlement_transaction_id'];
+            if ($settlementTransactionId !== null) {
+                TransactionService::voidRegisterPosting($settlementTransactionId, $reason);
+            }
+
+            self::updateWhileStatus($db, $id, ReceivablePayableRules::STATUS_SETTLED, [
+                'status' => ReceivablePayableRules::STATUS_OPEN,
+                'settled_on' => null,
+                'settlement_account_id' => null,
+                'settlement_transaction_id' => null,
+                'settlement_note' => null,
+                'settled_by' => null,
+                'settled_at' => null,
+                'modified_by' => $userId,
+                'modified_at' => date('Y-m-d H:i:s'),
+            ]);
+
+            Audit::record(
+                $kind->value . '.reopened',
+                self::ENTITY,
+                $id,
+                [
+                    'status' => ReceivablePayableRules::STATUS_SETTLED,
+                    'settled_on' => $row['settled_on'],
+                    'settlement_account_id' => $row['settlement_account_id'],
+                    'settlement_transaction_id' => $settlementTransactionId,
+                ],
+                ['status' => ReceivablePayableRules::STATUS_OPEN, 'reason' => $reason]
+            );
+        });
+    }
+
+    /**
+     * Post one register movement for entry $entryId and link it to that
+     * entry (TransactionService::postRegisterMovement() fills the issue or
+     * settlement slot in the same database transaction, or rolls back). The
+     * description names the entry so the ledger row also reads back to it.
      */
     public static function postMovement(
         TransactionType $type,
@@ -271,6 +326,7 @@ final class ReceivablePayableService
     ): int {
         return TransactionService::postRegisterMovement(
             $type,
+            $entryId,
             $amount,
             $accountId,
             $date,
@@ -285,7 +341,7 @@ final class ReceivablePayableService
      * @param callable(string,array<string,mixed>):array<string,string> $rule
      * @return array<string,mixed>
      */
-    private static function lockOpenEntry(Database $db, int $id, ReceivablePayableKind $kind, callable $rule): array
+    private static function lockEntry(Database $db, int $id, ReceivablePayableKind $kind, callable $rule): array
     {
         $row = $db->first(
             'SELECT * FROM receivables_payables WHERE id = :id AND branch_id = :branch AND kind = :kind FOR UPDATE',
@@ -302,21 +358,21 @@ final class ReceivablePayableService
     }
 
     /**
-     * The row is already locked FOR UPDATE and checked open by
-     * lockOpenEntry(), so no concurrent change can slip in between; the
-     * status condition is belt and braces. Zero affected rows is NOT a
-     * conflict: MySQL counts changed rows, so an identical re-save (a double
-     * submit within the same second) legitimately affects none.
+     * The row is already locked FOR UPDATE and its status checked by
+     * lockEntry(), so no concurrent change can slip in between; the status
+     * condition is belt and braces. Zero affected rows is NOT a conflict:
+     * MySQL counts changed rows, so an identical re-save (a double submit
+     * within the same second) legitimately affects none.
      *
      * @param array<string,mixed> $data
      */
-    private static function updateWhileOpen(Database $db, int $id, array $data): void
+    private static function updateWhileStatus(Database $db, int $id, string $status, array $data): void
     {
         $db->update(
             self::TABLE,
             $data,
-            'id = :id AND branch_id = :branch AND status = :open',
-            ['id' => $id, 'branch' => self::requireBranchId(), 'open' => ReceivablePayableRules::STATUS_OPEN]
+            'id = :id AND branch_id = :branch AND status = :expected',
+            ['id' => $id, 'branch' => self::requireBranchId(), 'expected' => $status]
         );
     }
 

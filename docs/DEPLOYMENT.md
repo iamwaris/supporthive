@@ -225,16 +225,30 @@ the application directory:
 ```bash
 php database/migrate.php --status        # 000018 must show as applied
 php scripts/backfill-receivables-payables.php --dry-run
+# read the "By branch" summary: every branch must name its Cash account
 php scripts/backfill-receivables-payables.php
 ```
 
-It posts each open entry's issue movement and each settled entry's issue and
-settlement movements through the branch's Cash account, as the user who
-recorded the entry; cancelled entries get nothing. It is idempotent: a second
-run posts nothing. Exit code 2 means some entries were **skipped** because
-their branch has no active cash-type account (they are listed): give that
-branch one, then run it again. Until it has run, those legacy open entries
-cannot be settled (the screen says so); everything else works.
+It posts each open entry's issue movement and each settled entry's missing
+issue and settlement movements, as the user who recorded the entry;
+cancelled entries get nothing. Every posting goes through **the branch's
+account named "Cash"** — it must be active and of type *Cash in hand*. Every
+line of output names the account it used (`via account #id "Cash"`), and a
+per-branch summary closes the run.
+
+There is no fallback. A branch with no active cash-type account named "Cash"
+(including one whose cash account is called something else, or is closed) is
+**skipped**, the script exits **2**, and the summary lists that branch, its
+waiting entries and its cash-type accounts. Fix the branch in the app
+(*Accounts*: rename the right account to "Cash", reopen it, or create it),
+then run the dry run and the script again; already-posted entries are not
+touched. `--branch=ID` limits either command to one branch.
+
+Exit codes: **0** everything posted; **1** an entry failed (it is listed with
+the error and rolled back on its own; the others still posted — fix the cause
+and re-run); **2** a branch was skipped as above. The script is idempotent: a
+second run posts nothing. Until it has run, those legacy open entries cannot
+be settled (the screen says so); everything else works.
 
 ## 7. Post-deploy verification
 
