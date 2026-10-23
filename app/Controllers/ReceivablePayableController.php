@@ -13,10 +13,13 @@ use App\Core\Validator;
 use App\Domain\ReceivablePayableKind;
 use App\Domain\ReceivablePayableRules;
 use App\Domain\ReceivablePayableRuleViolation;
+use App\Models\Account;
 use App\Models\ReceivablePayable;
 use App\Services\ReceivablePayableService;
 use App\Services\Settings;
+use InvalidArgumentException;
 use PDOException;
+use RuntimeException;
 
 /**
  * The receivables / payables register (/receivables and /payables).
@@ -26,8 +29,9 @@ use PDOException;
  * Every id is looked up within this branch AND this kind — another branch's
  * entry, or a payable id under /receivables, is a 404.
  *
- * Standalone by decision (docs/PLAN.md §5, 2026-10-17): nothing here posts
- * to the ledger.
+ * Entries are loans / advances that post to the ledger through
+ * ReceivablePayableService (docs/PLAN.md §5, 2026-10-23): every account
+ * picked here is checked server-side to be an active account of this branch.
  */
 final class ReceivablePayableController extends Controller
 {
@@ -40,6 +44,22 @@ final class ReceivablePayableController extends Controller
         'amount' => 'required|max:17|money',
         'issue_date' => 'required|ymd',
         'due_date' => 'nullable|ymd',
+        'account_id' => 'required|int',
+    ];
+
+    /**
+     * Amount, issue date and account are locked once posted, so the edit form
+     * does not send them; if a request does, they are checked for shape here
+     * and refused by the service when they differ from the stored values.
+     */
+    private const EDIT_RULES = [
+        'party_name' => 'required|max:160',
+        'reference_no' => 'nullable|max:80',
+        'description' => 'nullable|max:255',
+        'due_date' => 'nullable|ymd',
+        'amount' => 'nullable|max:17|money',
+        'issue_date' => 'nullable|ymd',
+        'account_id' => 'nullable|int',
     ];
 
     /** @param array<string,string> $params */
@@ -65,8 +85,12 @@ final class ReceivablePayableController extends Controller
         $summary = null;
         $page = 1;
         $pages = 1;
+        $accounts = [];
+        $defaultAccountId = null;
 
         try {
+            $accounts = (new Account())->activeOrdered();
+            $defaultAccountId = (new Account())->cashAccountId();
             $summary = $entries->summary($kind, $today);
             $total = $entries->listingCount($kind, $status, $search);
             $pages = max(1, (int) ceil($total / self::PER_PAGE));
@@ -96,6 +120,8 @@ final class ReceivablePayableController extends Controller
             'perPage' => self::PER_PAGE,
             'today' => $today,
             'rowFailure' => Session::flash('rowFailure'),
+            'accounts' => $accounts,
+            'defaultAccountId' => $defaultAccountId,
         ]);
     }
 
@@ -111,6 +137,9 @@ final class ReceivablePayableController extends Controller
             'pageMeta' => $kind->tagline(),
             'kind' => $kind,
             'entry' => null,
+            'accounts' => (new Account())->activeOrdered(),
+            'defaultAccountId' => (new Account())->cashAccountId(),
+            'accountName' => null,
             'symbol' => Settings::string('currency_symbol', 'Rs'),
         ]);
     }
@@ -126,10 +155,15 @@ final class ReceivablePayableController extends Controller
             ReceivablePayableService::record($kind, $fields);
         } catch (ReceivablePayableRuleViolation $e) {
             $this->backWithFieldErrors($e, $back);
+        } catch (InvalidArgumentException $e) {
+            $this->backWithFieldErrors(new ReceivablePayableRuleViolation(['amount' => $e->getMessage()]), $back);
         }
 
         Session::forget('_old');
-        Session::flash('success', ucfirst($kind->singular()) . ' for ' . $fields['party_name'] . ' recorded.');
+        Session::flash(
+            'success',
+            ucfirst($kind->singular()) . ' for ' . $fields['party_name'] . ' recorded and posted to the ledger.'
+        );
         Http::redirect($kind->path());
     }
 
@@ -152,6 +186,11 @@ final class ReceivablePayableController extends Controller
             'pageMeta' => (string) $entry['party_name'],
             'kind' => $kind,
             'entry' => $entry,
+            'accounts' => [],
+            'defaultAccountId' => null,
+            'accountName' => $entry['account_id'] === null
+                ? null
+                : (string) ((new Account())->find((int) $entry['account_id'])['name'] ?? ''),
             'symbol' => Settings::string('currency_symbol', 'Rs'),
         ]);
     }
@@ -163,10 +202,19 @@ final class ReceivablePayableController extends Controller
         $entry = $this->entryOr404($params, $kind);
         $id = (int) $entry['id'];
         $back = $kind->path() . '/' . $id . '/edit';
-        $fields = $this->entryFields($this->validate(self::ENTRY_RULES, $back));
+        $clean = $this->validate(self::EDIT_RULES, $back);
 
         try {
-            ReceivablePayableService::update($id, $kind, $fields);
+            ReceivablePayableService::update($id, $kind, [
+                'party_name' => (string) $clean['party_name'],
+                'reference_no' => $this->stringOrNull($clean['reference_no']),
+                'description' => $this->stringOrNull($clean['description']),
+                'due_date' => $this->stringOrNull($clean['due_date']),
+            ], [
+                'amount' => $this->stringOrNull($clean['amount']),
+                'issue_date' => $this->stringOrNull($clean['issue_date']),
+                'account_id' => $clean['account_id'] === null ? null : (int) $clean['account_id'],
+            ]);
         } catch (ReceivablePayableRuleViolation $e) {
             if (isset($e->fieldErrors()['status'])) {
                 Session::flash('error', $e->getMessage());
@@ -189,6 +237,7 @@ final class ReceivablePayableController extends Controller
         $input = Validator::make($_POST, [
             'settled_on' => 'required|ymd',
             'settlement_note' => 'nullable|max:255',
+            'settlement_account_id' => 'required|int',
         ]);
         if ($input->fails()) {
             $this->backToRow($kind, $id, 'settle', $input->errors(), $_POST);
@@ -200,17 +249,20 @@ final class ReceivablePayableController extends Controller
                 $id,
                 $kind,
                 (string) $clean['settled_on'],
-                $clean['settlement_note'] === null ? null : (string) $clean['settlement_note']
+                $clean['settlement_note'] === null ? null : (string) $clean['settlement_note'],
+                (int) $clean['settlement_account_id']
             );
         } catch (ReceivablePayableRuleViolation $e) {
             $this->backToRow($kind, $id, 'settle', $this->asErrorLists($e), $_POST);
+        } catch (InvalidArgumentException $e) {
+            $this->backToRow($kind, $id, 'settle', ['settled_on' => [$e->getMessage()]], $_POST);
         } catch (PDOException $e) {
             $this->databaseFailure($e, $kind, $id, 'settle');
         }
 
         Session::flash(
             'success',
-            'Marked as ' . strtolower($kind->settledLabel()) . '. Nothing was posted to the ledger.'
+            'Marked as ' . strtolower($kind->settledLabel()) . ' and posted to the ledger.'
         );
         Http::redirect($kind->path());
     }
@@ -231,10 +283,17 @@ final class ReceivablePayableController extends Controller
         } catch (ReceivablePayableRuleViolation $e) {
             $this->backToRow($kind, $id, 'cancel', $this->asErrorLists($e), $_POST);
         } catch (PDOException $e) {
+            // Before RuntimeException, which PDOException extends: SQL error
+            // text must never reach the browser.
             $this->databaseFailure($e, $kind, $id, 'cancel');
+        } catch (RuntimeException $e) {
+            $this->backToRow($kind, $id, 'cancel', ['cancel_reason' => [$e->getMessage()]], $_POST);
         }
 
-        Session::flash('success', ucfirst($kind->singular()) . ' cancelled. It stays listed with its reason.');
+        Session::flash(
+            'success',
+            ucfirst($kind->singular()) . ' cancelled; any ledger posting was voided. It stays listed with its reason.'
+        );
         Http::redirect($kind->path());
     }
 
@@ -258,18 +317,24 @@ final class ReceivablePayableController extends Controller
     /**
      * @param array<string,mixed> $clean Validator output for ENTRY_RULES
      * @return array{party_name:string,reference_no:?string,description:?string,
-     *               amount:string,issue_date:string,due_date:?string}
+     *               amount:string,issue_date:string,due_date:?string,account_id:int}
      */
     private function entryFields(array $clean): array
     {
         return [
             'party_name' => (string) $clean['party_name'],
-            'reference_no' => $clean['reference_no'] === null ? null : (string) $clean['reference_no'],
-            'description' => $clean['description'] === null ? null : (string) $clean['description'],
+            'reference_no' => $this->stringOrNull($clean['reference_no']),
+            'description' => $this->stringOrNull($clean['description']),
             'amount' => (string) $clean['amount'],
             'issue_date' => (string) $clean['issue_date'],
-            'due_date' => $clean['due_date'] === null ? null : (string) $clean['due_date'],
+            'due_date' => $this->stringOrNull($clean['due_date']),
+            'account_id' => (int) $clean['account_id'],
         ];
+    }
+
+    private function stringOrNull(mixed $value): ?string
+    {
+        return $value === null ? null : (string) $value;
     }
 
     private function backWithFieldErrors(ReceivablePayableRuleViolation $e, string $back): never
@@ -306,6 +371,7 @@ final class ReceivablePayableController extends Controller
             'settled_on' => $value('settled_on'),
             'settlement_note' => $value('settlement_note'),
             'cancel_reason' => $value('cancel_reason'),
+            'settlement_account_id' => $value('settlement_account_id'),
         ]);
         Session::flash('error', (string) (array_values($errors)[0][0] ?? 'That change was not saved.'));
         Http::redirect($kind->path());

@@ -108,6 +108,48 @@ final class ReceivablePayableRules
         return self::isChangeable($status) ? [] : ['status' => self::notOpenMessage($status, 'edited')];
     }
 
+    /**
+     * Amount, issue date and account are fixed once the issue posting
+     * exists: changing them would leave the ledger row saying something else.
+     * A field that was not submitted (null) is not a change; a submitted
+     * value that differs from the stored one is refused, never ignored.
+     *
+     * @param array{amount:string,issue_date:string,account_id:?int} $stored
+     * @param array{amount:?string,issue_date:?string,account_id:?int} $submitted
+     * @return array<string,string> field => message; empty when nothing locked changed
+     */
+    public static function lockedFieldErrors(array $stored, array $submitted): array
+    {
+        $message = 'This is locked once posted. To change it, cancel the entry and record it again.';
+        $errors = [];
+
+        if ($submitted['amount'] !== null && bccomp($submitted['amount'], $stored['amount'], 2) !== 0) {
+            $errors['amount'] = $message;
+        }
+        if ($submitted['issue_date'] !== null && $submitted['issue_date'] !== $stored['issue_date']) {
+            $errors['issue_date'] = $message;
+        }
+        if ($submitted['account_id'] !== null && $submitted['account_id'] !== $stored['account_id']) {
+            $errors['account_id'] = $message;
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Settling and cancelling act on the issue posting, so an entry recorded
+     * before the register posted to the ledger must be backfilled first.
+     *
+     * @return array<string,string> field => message; empty when posted
+     */
+    public static function postingErrors(?int $issueTransactionId): array
+    {
+        return $issueTransactionId === null
+            ? ['status' => 'This entry has not been posted to the ledger yet. Ask an administrator to run '
+                . 'the receivables / payables backfill, then try again.']
+            : [];
+    }
+
     private static function notOpenMessage(string $status, string $verb): string
     {
         return sprintf('Only an open entry can be %s; this one is already %s.', $verb, $status);

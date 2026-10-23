@@ -9,20 +9,26 @@ use App\Core\Database;
 use App\Domain\ReceivablePayableKind;
 use App\Domain\ReceivablePayableRules;
 use App\Domain\ReceivablePayableRuleViolation;
+use App\Domain\TransactionType;
+use App\Models\Account;
 use RuntimeException;
 
 /**
- * Every write to the receivables / payables register.
+ * Every write to the receivables / payables register, and the ledger
+ * postings that go with it (decision 2026-10-23, docs/PLAN.md §5).
  *
- * Independent of the ledger by decision (docs/PLAN.md §5, 2026-10-17):
- * nothing here touches `transactions`, TransactionService, balances or
- * reports. Settling an entry records that it was settled — it does not post
- * the money.
+ * Entries are loans / advances: recording one posts its issue movement
+ * (a receivable takes money out of an account, a payable brings it in) and
+ * settling posts the return movement. Neither touches the P&L — see
+ * TransactionType::affectsProfitAndLoss(). Cancelling voids the issue
+ * posting. Every posting and void goes through TransactionService, in the
+ * same database transaction as the register write and its audit row, so the
+ * entry and the ledger can never disagree.
  *
- * Each change re-reads the row under a lock inside the same database
- * transaction as its audit row, and the UPDATE itself still requires
- * status = 'open', so two simultaneous settles (or a settle racing a cancel)
- * leave exactly one winner and one audit entry.
+ * Each change re-reads the row under a lock inside that transaction, and the
+ * UPDATE itself still requires status = 'open', so two simultaneous settles
+ * (or a settle racing a cancel) leave exactly one winner, one posting and
+ * one audit entry.
  */
 final class ReceivablePayableService
 {
@@ -31,11 +37,12 @@ final class ReceivablePayableService
 
     /**
      * @param array{party_name:string,reference_no:?string,description:?string,
-     *              amount:string,issue_date:string,due_date:?string} $fields
+     *              amount:string,issue_date:string,due_date:?string,account_id:int} $fields
      */
     public static function record(ReceivablePayableKind $kind, array $fields): int
     {
         $entry = self::normalise($fields);
+        $accountId = $fields['account_id'];
         self::assertNoErrors(ReceivablePayableRules::entryErrors(
             $entry['amount'],
             $entry['issue_date'],
@@ -48,38 +55,78 @@ final class ReceivablePayableService
         return (int) Database::instance()->transaction(static function (Database $db) use (
             $kind,
             $entry,
+            $accountId,
             $userId,
             $branchId
         ): int {
+            self::assertAccountUsable($accountId, 'account_id');
+
             $id = $db->insert(self::TABLE, $entry + [
                 'branch_id' => $branchId,
                 'kind' => $kind->value,
+                'account_id' => $accountId,
                 'status' => ReceivablePayableRules::STATUS_OPEN,
                 'created_by' => $userId,
             ]);
-            Audit::record($kind->value . '.created', self::ENTITY, $id, null, $entry);
+
+            $transactionId = self::postMovement(
+                $kind->issueType(),
+                $id,
+                $entry['party_name'],
+                $entry['reference_no'],
+                $entry['amount'],
+                $accountId,
+                $entry['issue_date']
+            );
+            $db->update(self::TABLE, ['issue_transaction_id' => $transactionId], 'id = :id', ['id' => $id]);
+
+            Audit::record($kind->value . '.created', self::ENTITY, $id, null, $entry + [
+                'account_id' => $accountId,
+                'issue_transaction_id' => $transactionId,
+            ]);
 
             return $id;
         });
     }
 
     /**
-     * @param array{party_name:string,reference_no:?string,description:?string,
-     *              amount:string,issue_date:string,due_date:?string} $fields
+     * Only the descriptive fields change. Amount, issue date and account are
+     * locked once posted: $locked carries whatever the request submitted for
+     * them (null = not submitted), and any difference is refused.
+     *
+     * @param array{party_name:string,reference_no:?string,description:?string,due_date:?string} $fields
+     * @param array{amount:?string,issue_date:?string,account_id:?int} $locked
      */
-    public static function update(int $id, ReceivablePayableKind $kind, array $fields): void
+    public static function update(int $id, ReceivablePayableKind $kind, array $fields, array $locked): void
     {
-        $after = self::normalise($fields);
-        self::assertNoErrors(ReceivablePayableRules::entryErrors(
-            $after['amount'],
-            $after['issue_date'],
-            $after['due_date']
-        ));
+        $after = [
+            'party_name' => trim($fields['party_name']),
+            'reference_no' => self::nullIfBlank($fields['reference_no']),
+            'description' => self::nullIfBlank($fields['description']),
+            'due_date' => self::nullIfBlank($fields['due_date']),
+        ];
 
         $userId = self::requireUserId();
 
-        Database::instance()->transaction(static function (Database $db) use ($id, $kind, $after, $userId): void {
+        Database::instance()->transaction(static function (Database $db) use (
+            $id,
+            $kind,
+            $after,
+            $locked,
+            $userId
+        ): void {
             $before = self::lockOpenEntry($db, $id, $kind, ReceivablePayableRules::editErrors(...));
+
+            self::assertNoErrors(ReceivablePayableRules::lockedFieldErrors([
+                'amount' => (string) $before['amount'],
+                'issue_date' => (string) $before['issue_date'],
+                'account_id' => $before['account_id'] === null ? null : (int) $before['account_id'],
+            ], $locked));
+            self::assertNoErrors(ReceivablePayableRules::entryErrors(
+                (string) $before['amount'],
+                (string) $before['issue_date'],
+                $after['due_date']
+            ));
 
             self::updateWhileOpen($db, $id, $after + [
                 'modified_by' => $userId,
@@ -91,11 +138,13 @@ final class ReceivablePayableService
         });
     }
 
+    /** Settle in full: posts the money coming back (receivable) or paid back (payable). */
     public static function settle(
         int $id,
         ReceivablePayableKind $kind,
         string $settledOn,
         ?string $note,
+        int $settlementAccountId,
         ?string $today = null
     ): void {
         $today ??= date('Y-m-d');
@@ -107,10 +156,11 @@ final class ReceivablePayableService
             $kind,
             $settledOn,
             $note,
+            $settlementAccountId,
             $today,
             $userId
         ): void {
-            self::lockOpenEntry(
+            $row = self::lockOpenEntry(
                 $db,
                 $id,
                 $kind,
@@ -119,40 +169,70 @@ final class ReceivablePayableService
                     (string) $row['issue_date'],
                     $settledOn,
                     $today
+                ) ?: ReceivablePayableRules::postingErrors(
+                    $row['issue_transaction_id'] === null ? null : (int) $row['issue_transaction_id']
                 )
             );
+            self::assertAccountUsable($settlementAccountId, 'settlement_account_id');
 
-            $settlement = [
+            $transactionId = self::postMovement(
+                $kind->settlementType(),
+                $id,
+                (string) $row['party_name'],
+                $row['reference_no'] === null ? null : (string) $row['reference_no'],
+                (string) $row['amount'],
+                $settlementAccountId,
+                $settledOn
+            );
+
+            self::updateWhileOpen($db, $id, [
                 'status' => ReceivablePayableRules::STATUS_SETTLED,
                 'settled_on' => $settledOn,
+                'settlement_account_id' => $settlementAccountId,
+                'settlement_transaction_id' => $transactionId,
                 'settlement_note' => $note,
                 'settled_by' => $userId,
                 'settled_at' => date('Y-m-d H:i:s'),
-            ];
-            self::updateWhileOpen($db, $id, $settlement);
+            ]);
 
             Audit::record(
                 $kind->value . '.settled',
                 self::ENTITY,
                 $id,
                 ['status' => ReceivablePayableRules::STATUS_OPEN],
-                ['status' => ReceivablePayableRules::STATUS_SETTLED, 'settled_on' => $settledOn, 'note' => $note]
+                [
+                    'status' => ReceivablePayableRules::STATUS_SETTLED,
+                    'settled_on' => $settledOn,
+                    'note' => $note,
+                    'settlement_account_id' => $settlementAccountId,
+                    'settlement_transaction_id' => $transactionId,
+                ]
             );
         });
     }
 
+    /**
+     * Cancel an open entry and void its issue posting with the same reason,
+     * which restores the account balance. An entry recorded before the
+     * register posted to the ledger has nothing to void.
+     */
     public static function cancel(int $id, ReceivablePayableKind $kind, string $reason): void
     {
         $reason = mb_substr(trim($reason), 0, 255);
         $userId = self::requireUserId();
 
         Database::instance()->transaction(static function (Database $db) use ($id, $kind, $reason, $userId): void {
-            self::lockOpenEntry(
+            $row = self::lockOpenEntry(
                 $db,
                 $id,
                 $kind,
                 static fn (string $status): array => ReceivablePayableRules::cancellationErrors($status, $reason)
             );
+
+            $issueTransactionId = $row['issue_transaction_id'] === null ? null : (int) $row['issue_transaction_id'];
+            if ($issueTransactionId !== null) {
+                TransactionService::voidRegisterPosting($issueTransactionId, $reason);
+            }
 
             self::updateWhileOpen($db, $id, [
                 'status' => ReceivablePayableRules::STATUS_CANCELLED,
@@ -166,9 +246,37 @@ final class ReceivablePayableService
                 self::ENTITY,
                 $id,
                 ['status' => ReceivablePayableRules::STATUS_OPEN],
-                ['status' => ReceivablePayableRules::STATUS_CANCELLED, 'reason' => $reason]
+                [
+                    'status' => ReceivablePayableRules::STATUS_CANCELLED,
+                    'reason' => $reason,
+                    'voided_transaction_id' => $issueTransactionId,
+                ]
             );
         });
+    }
+
+    /**
+     * Post one register movement for entry $entryId. The description names
+     * the entry so the ledger row reads back to it; the FK on the entry is
+     * the actual link.
+     */
+    public static function postMovement(
+        TransactionType $type,
+        int $entryId,
+        string $partyName,
+        ?string $reference,
+        string $amount,
+        int $accountId,
+        string $date
+    ): int {
+        return TransactionService::postRegisterMovement(
+            $type,
+            $amount,
+            $accountId,
+            $date,
+            sprintf('%s: %s (register #%d)', $type->label(), $partyName, $entryId),
+            $reference
+        );
     }
 
     /**
@@ -213,6 +321,17 @@ final class ReceivablePayableService
     }
 
     /**
+     * The account must be this branch's and still open. Checked here, not
+     * only in TransactionService, so the refusal lands next to the field.
+     */
+    private static function assertAccountUsable(int $accountId, string $field): void
+    {
+        if ((new Account())->findActive($accountId) === null) {
+            throw new ReceivablePayableRuleViolation([$field => 'Choose an active account in this branch.']);
+        }
+    }
+
+    /**
      * @param array{party_name:string,reference_no:?string,description:?string,
      *              amount:string,issue_date:string,due_date:?string} $fields
      * @return array{party_name:string,reference_no:?string,description:?string,
@@ -224,8 +343,7 @@ final class ReceivablePayableService
             'party_name' => trim($fields['party_name']),
             'reference_no' => self::nullIfBlank($fields['reference_no']),
             'description' => self::nullIfBlank($fields['description']),
-            // Scale 2, so an unchanged "1500" never shows as a change from
-            // the stored "1500.00" in the audit diff.
+            // Scale 2, so "1500" is stored and audited as "1500.00".
             'amount' => bcadd(trim($fields['amount']), '0', 2),
             'issue_date' => $fields['issue_date'],
             'due_date' => self::nullIfBlank($fields['due_date']),

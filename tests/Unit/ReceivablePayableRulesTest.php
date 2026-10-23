@@ -103,4 +103,40 @@ final class ReceivablePayableRulesTest extends TestCase
         self::assertSame('Paid', ReceivablePayableKind::Payable->settledLabel());
         self::assertNull(ReceivablePayableKind::tryFrom('transaction'));
     }
+
+    public function testLockedFieldsRefuseAnyDifferenceButIgnoreWhatWasNotSent(): void
+    {
+        $stored = ['amount' => '1500.00', 'issue_date' => '2026-10-01', 'account_id' => 7];
+        $nothingSent = ['amount' => null, 'issue_date' => null, 'account_id' => null];
+
+        self::assertSame([], ReceivablePayableRules::lockedFieldErrors($stored, $nothingSent));
+        self::assertSame([], ReceivablePayableRules::lockedFieldErrors($stored, [
+            'amount' => '1500',
+            'issue_date' => '2026-10-01',
+            'account_id' => 7,
+        ]), 'the same values in another spelling are not a change');
+
+        self::assertSame(['amount'], array_keys(ReceivablePayableRules::lockedFieldErrors(
+            $stored,
+            ['amount' => '1500.01'] + $nothingSent
+        )));
+        self::assertSame(['issue_date'], array_keys(ReceivablePayableRules::lockedFieldErrors(
+            $stored,
+            ['issue_date' => '2026-10-02'] + $nothingSent
+        )));
+        self::assertSame(['account_id'], array_keys(ReceivablePayableRules::lockedFieldErrors(
+            $stored,
+            ['account_id' => 8] + $nothingSent
+        )));
+        self::assertSame(['account_id'], array_keys(ReceivablePayableRules::lockedFieldErrors(
+            ['account_id' => null] + $stored,
+            ['account_id' => 7] + $nothingSent
+        )), 'an unposted entry cannot be given an account by editing');
+    }
+
+    public function testSettlingNeedsTheIssuePosting(): void
+    {
+        self::assertSame([], ReceivablePayableRules::postingErrors(42));
+        self::assertArrayHasKey('status', ReceivablePayableRules::postingErrors(null));
+    }
 }

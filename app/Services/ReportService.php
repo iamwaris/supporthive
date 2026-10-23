@@ -46,18 +46,11 @@ final class ReportService
      */
     public static function cashFlow(string $from, string $to): array
     {
-        $inbound = LedgerQuery::posted()->between($from, $to)->types([
-            TransactionType::Income,
-            TransactionType::TransferIn,
-            TransactionType::PartnerContribution,
-        ])->totalAmount();
+        $inbound = LedgerQuery::posted()->between($from, $to)
+            ->types(TransactionType::moneyInValues())->totalAmount();
 
-        $outbound = LedgerQuery::posted()->between($from, $to)->types([
-            TransactionType::Expense,
-            TransactionType::TransferOut,
-            TransactionType::PartnerWithdrawal,
-            TransactionType::ProfitDistribution,
-        ])->totalAmount();
+        $outbound = LedgerQuery::posted()->between($from, $to)
+            ->types(TransactionType::moneyOutValues())->totalAmount();
 
         return [
             'inbound' => $inbound,

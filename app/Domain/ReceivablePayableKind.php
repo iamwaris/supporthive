@@ -62,8 +62,65 @@ enum ReceivablePayableKind: string
     public function tagline(): string
     {
         return match ($this) {
-            self::Receivable => 'Money owed to the business. Tracked here only — never posted to the ledger.',
-            self::Payable => 'Money the business owes. Tracked here only — never posted to the ledger.',
+            self::Receivable => 'Money lent or advanced by the business. Moves account balances, never profit or loss.',
+            self::Payable => 'Money borrowed by the business. Moves account balances, never profit and loss.',
+        };
+    }
+
+    /**
+     * The ledger movement recording an entry posts: a receivable is money
+     * going out (lent), a payable is money coming in (borrowed).
+     */
+    public function issueType(): TransactionType
+    {
+        return match ($this) {
+            self::Receivable => TransactionType::ReceivableIssued,
+            self::Payable => TransactionType::PayableReceived,
+        };
+    }
+
+    /** The ledger movement settling an entry posts: the money coming back, or paid back. */
+    public function settlementType(): TransactionType
+    {
+        return match ($this) {
+            self::Receivable => TransactionType::ReceivableCollected,
+            self::Payable => TransactionType::PayableRepaid,
+        };
+    }
+
+    /** The section a ledger movement belongs to; null for any non-register type. */
+    public static function fromMovement(TransactionType $type): ?self
+    {
+        return match ($type) {
+            TransactionType::ReceivableIssued, TransactionType::ReceivableCollected => self::Receivable,
+            TransactionType::PayableReceived, TransactionType::PayableRepaid => self::Payable,
+            default => null,
+        };
+    }
+
+    /** Label for the account the issue posting moves. */
+    public function issueAccountLabel(): string
+    {
+        return match ($this) {
+            self::Receivable => 'Paid out from',
+            self::Payable => 'Received into',
+        };
+    }
+
+    public function issueAccountHelp(): string
+    {
+        return match ($this) {
+            self::Receivable => 'The money leaves this account when you record the entry.',
+            self::Payable => 'The money arrives in this account when you record the entry.',
+        };
+    }
+
+    /** Label for the account the settlement posting moves. */
+    public function settlementAccountLabel(): string
+    {
+        return match ($this) {
+            self::Receivable => 'Received into',
+            self::Payable => 'Paid from',
         };
     }
 

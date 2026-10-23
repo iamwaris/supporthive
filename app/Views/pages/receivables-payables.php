@@ -8,6 +8,9 @@
  * its request is in flight. Opening the cancel panel and giving a reason is
  * the confirmation step before anything changes.
  *
+ * Recording, settling and cancelling post to (or void in) the ledger; each
+ * row names the account its money moved through.
+ *
  * @var \App\Domain\ReceivablePayableKind $kind
  * @var list<array<string,mixed>>         $rows
  * @var array{open_total:string,open_count:int,overdue_total:string,overdue_count:int}|null $summary
@@ -20,7 +23,9 @@
  * @var int                               $perPage
  * @var string                            $today
  * @var array{id:int,action:string,errors:array<string,list<string>>,settled_on:string,
- *            settlement_note:string,cancel_reason:string}|null $rowFailure
+ *            settlement_note:string,cancel_reason:string,settlement_account_id:string}|null $rowFailure
+ * @var list<array<string,mixed>>         $accounts         active accounts in this branch
+ * @var int|null                          $defaultAccountId the branch's Cash account, preselected
  * @var array<string,mixed>|null          $authUser
  */
 
@@ -169,6 +174,9 @@ $isFiltered = $search !== '' || $status !== 'open';
                     $failedErrors = $failure['errors'] ?? [];
                     $settleOpen = $failure !== null && $failure['action'] === 'settle';
                     $cancelOpen = $failure !== null && $failure['action'] === 'cancel';
+                    $settleAccount = $settleOpen && $failure['settlement_account_id'] !== ''
+                        ? $failure['settlement_account_id']
+                        : (string) ($defaultAccountId ?? '');
                     ?>
                     <li class="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 last:border-b-0">
                         <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -190,9 +198,25 @@ $isFiltered = $search !== '' || $status !== 'open';
                                     &middot;
                                     <?= e($dueDate === null ? 'No due date' : 'Due ' . $day($dueDate)) ?>
                                 </p>
+                                <?php if ($row['account_name'] !== null) : ?>
+                                    <p class="mt-0.5 text-[11.5px] text-slate-500">
+                                        <?= e($kind->issueAccountLabel()) ?> <?= e((string) $row['account_name']) ?>
+                                        <?php if ($rowStatus === ReceivablePayableRules::STATUS_CANCELLED) : ?>
+                                            &middot; posting voided
+                                        <?php endif; ?>
+                                    </p>
+                                <?php elseif ($isOpen) : ?>
+                                    <p class="mt-0.5 text-[11.5px] text-brand-900">
+                                        Not posted to the ledger yet &mdash; waiting for the one-time backfill.
+                                    </p>
+                                <?php endif; ?>
                                 <?php if ($rowStatus === ReceivablePayableRules::STATUS_SETTLED) : ?>
                                     <p class="mt-0.5 text-[11.5px] text-ok-text">
                                         <?= e($kind->settledLabel()) ?> on <?= e($day($row['settled_on'])) ?>
+                                        <?php if ($row['settlement_account_name'] !== null) : ?>
+                                            &middot; <?= e(strtolower($kind->settlementAccountLabel())) ?>
+                                            <?= e((string) $row['settlement_account_name']) ?>
+                                        <?php endif; ?>
                                         by <?= e((string) ($row['settled_by_name'] ?? 'unknown')) ?>
                                         <?php if (!empty($row['settlement_note'])) : ?>
                                             &mdash; &ldquo;<?= e((string) $row['settlement_note']) ?>&rdquo;
@@ -236,7 +260,7 @@ $isFiltered = $search !== '' || $status !== 'open';
                                         <?= e($kind->settleLabel()) ?><span class="sr-only"> for <?= e((string) $row['party_name']) ?></span>
                                     </summary>
                                     <form method="post" action="<?= e(url($base . '/' . $rowId . '/settle')) ?>"
-                                          class="mt-2 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-[12rem_1fr_auto] sm:items-start"
+                                          class="mt-2 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 sm:items-start lg:grid-cols-[11rem_13rem_1fr_auto]"
                                           x-data="{ sending: false }" x-on:submit="sending = true">
                                         <?= csrf_field() ?>
                                         <div>
@@ -248,6 +272,21 @@ $isFiltered = $search !== '' || $status !== 'open';
                                                    <?= isset($failedErrors['settled_on']) ? 'aria-invalid="true" aria-describedby="settled-on-error-' . $rowId . '"' : '' ?>>
                                             <?php if (isset($failedErrors['settled_on'][0])) : ?>
                                                 <p id="settled-on-error-<?= $rowId ?>" class="error"><?= e($failedErrors['settled_on'][0]) ?></p>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div>
+                                            <label for="settle-account-<?= $rowId ?>" class="label"><?= e($kind->settlementAccountLabel()) ?></label>
+                                            <select id="settle-account-<?= $rowId ?>" name="settlement_account_id" required
+                                                    class="<?= isset($failedErrors['settlement_account_id']) ? 'input-error' : 'input' ?>"
+                                                    <?= isset($failedErrors['settlement_account_id']) ? 'aria-invalid="true" aria-describedby="settle-account-error-' . $rowId . '"' : '' ?>>
+                                                <?php foreach ($accounts as $account) : ?>
+                                                    <option value="<?= e((string) $account['id']) ?>" <?= $settleAccount === (string) $account['id'] ? 'selected' : '' ?>>
+                                                        <?= e((string) $account['name']) ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <?php if (isset($failedErrors['settlement_account_id'][0])) : ?>
+                                                <p id="settle-account-error-<?= $rowId ?>" class="error"><?= e($failedErrors['settlement_account_id'][0]) ?></p>
                                             <?php endif; ?>
                                         </div>
                                         <div>
@@ -263,14 +302,15 @@ $isFiltered = $search !== '' || $status !== 'open';
                                                 <p id="settle-note-error-<?= $rowId ?>" class="error"><?= e($failedErrors['settlement_note'][0]) ?></p>
                                             <?php endif; ?>
                                         </div>
-                                        <div class="sm:pt-5.5">
+                                        <div class="lg:pt-5.5">
                                             <button type="submit" class="btn-primary w-full sm:w-auto" x-bind:disabled="sending">
                                                 Confirm <?= e(strtolower($kind->settledLabel())) ?>
                                             </button>
                                         </div>
-                                        <p class="help sm:col-span-3">
-                                            Settles the full <?= e($symbol) ?> <?= e($money($row['amount'])) ?>.
-                                            Recorded here only &mdash; nothing is posted to the ledger.
+                                        <p class="help sm:col-span-2 lg:col-span-4">
+                                            Settles the full <?= e($symbol) ?> <?= e($money($row['amount'])) ?> and posts it to the
+                                            ledger as &ldquo;<?= e($kind->settlementType()->label()) ?>&rdquo; in the account chosen
+                                            here, which can differ from the one it was issued through. Profit is unaffected.
                                         </p>
                                     </form>
                                 </details>
@@ -300,7 +340,8 @@ $isFiltered = $search !== '' || $status !== 'open';
                                             </button>
                                         </div>
                                         <p class="help sm:col-span-2">
-                                            This cannot be undone. The entry stays listed with this reason; nothing is deleted.
+                                            This cannot be undone. The ledger posting is voided with this reason, which
+                                            restores the account balance. The entry stays listed; nothing is deleted.
                                         </p>
                                     </form>
                                 </details>

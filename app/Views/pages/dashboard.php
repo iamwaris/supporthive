@@ -39,6 +39,10 @@ $typeBadge = [
     'partner_contribution' => 'badge bg-indigo-50 text-indigo-800',
     'partner_withdrawal' => 'badge bg-fuchsia-50 text-fuchsia-800',
     'profit_distribution' => 'badge-warn',
+    'receivable_issued' => 'badge bg-sky-50 text-sky-800',
+    'receivable_collected' => 'badge bg-sky-50 text-sky-800',
+    'payable_received' => 'badge bg-teal-50 text-teal-800',
+    'payable_repaid' => 'badge bg-teal-50 text-teal-800',
 ];
 
 $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badge-bad' : 'badge-warn';

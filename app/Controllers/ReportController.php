@@ -380,18 +380,9 @@ final class ReportController extends Controller
 
         $query = LedgerQuery::posted()->between($date, $date);
 
-        $inbound = (clone $query)->types([
-            TransactionType::Income,
-            TransactionType::TransferIn,
-            TransactionType::PartnerContribution,
-        ])->totalAmount();
+        $inbound = (clone $query)->types(TransactionType::moneyInValues())->totalAmount();
 
-        $outbound = (clone $query)->types([
-            TransactionType::Expense,
-            TransactionType::TransferOut,
-            TransactionType::PartnerWithdrawal,
-            TransactionType::ProfitDistribution,
-        ])->totalAmount();
+        $outbound = (clone $query)->types(TransactionType::moneyOutValues())->totalAmount();
 
         $rows = $query->page(1, self::PER_PAGE);
 

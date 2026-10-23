@@ -32,13 +32,20 @@ enum TransactionType: string
     case PartnerContribution = 'partner_contribution';
     case PartnerWithdrawal = 'partner_withdrawal';
     case ProfitDistribution = 'profit_distribution';
+    // Loans / advances, posted only by the receivables / payables register.
+    case ReceivableIssued = 'receivable_issued';
+    case ReceivableCollected = 'receivable_collected';
+    case PayableReceived = 'payable_received';
+    case PayableRepaid = 'payable_repaid';
 
     /** +1 increases the account balance, -1 decreases it. */
     public function direction(): int
     {
         return match ($this) {
-            self::Income, self::TransferIn, self::PartnerContribution => 1,
-            self::Expense, self::TransferOut, self::PartnerWithdrawal, self::ProfitDistribution => -1,
+            self::Income, self::TransferIn, self::PartnerContribution,
+            self::ReceivableCollected, self::PayableReceived => 1,
+            self::Expense, self::TransferOut, self::PartnerWithdrawal, self::ProfitDistribution,
+            self::ReceivableIssued, self::PayableRepaid => -1,
         };
     }
 
@@ -48,7 +55,8 @@ enum TransactionType: string
      * Only trading does. Moving your own money between your own accounts is
      * not revenue or cost; partner capital going in or out is a balance-sheet
      * movement; and distributing profit is paying out a result, not earning
-     * or spending one.
+     * or spending one. Money lent or borrowed, and its repayment, is owed
+     * back, so it is not revenue or cost either.
      */
     public function affectsProfitAndLoss(): bool
     {
@@ -56,7 +64,9 @@ enum TransactionType: string
             self::Income, self::Expense => true,
             self::TransferIn, self::TransferOut,
             self::PartnerContribution, self::PartnerWithdrawal,
-            self::ProfitDistribution => false,
+            self::ProfitDistribution,
+            self::ReceivableIssued, self::ReceivableCollected,
+            self::PayableReceived, self::PayableRepaid => false,
         };
     }
 
@@ -81,6 +91,19 @@ enum TransactionType: string
         return $this === self::PartnerContribution || $this === self::PartnerWithdrawal;
     }
 
+    /**
+     * A receivables / payables movement. Only the register posts or voids
+     * one, so a ledger row can never drift from the entry it belongs to.
+     */
+    public function isRegisterMovement(): bool
+    {
+        return match ($this) {
+            self::ReceivableIssued, self::ReceivableCollected,
+            self::PayableReceived, self::PayableRepaid => true,
+            default => false,
+        };
+    }
+
     public function requiresCategory(): bool
     {
         return $this === self::Income || $this === self::Expense;
@@ -101,6 +124,10 @@ enum TransactionType: string
             self::PartnerContribution => 'Contribution',
             self::PartnerWithdrawal => 'Withdrawal',
             self::ProfitDistribution => 'Distribution',
+            self::ReceivableIssued => 'Receivable issued',
+            self::ReceivableCollected => 'Receivable collected',
+            self::PayableReceived => 'Payable received',
+            self::PayableRepaid => 'Payable repaid',
         };
     }
 
@@ -131,6 +158,23 @@ enum TransactionType: string
         ));
     }
 
+    /**
+     * Every type that puts money into an account: the cash-flow "money in"
+     * side. Derived from direction(), so a new type cannot be left out.
+     *
+     * @return list<string>
+     */
+    public static function moneyInValues(): array
+    {
+        return self::valuesWithDirection(1);
+    }
+
+    /** @return list<string> every type that takes money out of an account */
+    public static function moneyOutValues(): array
+    {
+        return self::valuesWithDirection(-1);
+    }
+
     /** @return array<string,string> value => label, for form controls */
     public static function options(): array
     {
@@ -140,5 +184,14 @@ enum TransactionType: string
         }
 
         return $options;
+    }
+
+    /** @return list<string> */
+    private static function valuesWithDirection(int $direction): array
+    {
+        return array_values(array_map(
+            static fn (self $type): string => $type->value,
+            array_filter(self::cases(), static fn (self $type): bool => $type->direction() === $direction)
+        ));
     }
 }

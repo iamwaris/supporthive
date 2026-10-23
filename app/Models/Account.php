@@ -34,6 +34,47 @@ final class Account extends Model
         );
     }
 
+    /** @return list<array<string,mixed>> the accounts money can move through today, by name */
+    public function activeOrdered(): array
+    {
+        return $this->db()->all(
+            'SELECT id, name, type FROM accounts WHERE branch_id = :branch AND is_active = 1 ORDER BY name ASC',
+            ['branch' => $this->requireBranchId()]
+        );
+    }
+
+    /** @return array<string,mixed>|null this branch's account, only while it is open for postings */
+    public function findActive(int $id): ?array
+    {
+        return $this->db()->first(
+            'SELECT id, name, type FROM accounts WHERE id = :id AND branch_id = :branch AND is_active = 1',
+            ['id' => $id, 'branch' => $this->requireBranchId()]
+        );
+    }
+
+    /**
+     * A branch's "Cash account": the default for register postings and the
+     * one the one-time backfill posts legacy entries through.
+     *
+     * Deterministic when a branch has several: an active cash-type account
+     * named "Cash" first, otherwise the lowest-id active cash-type account.
+     * Null when there is none; a caller must never invent one.
+     *
+     * @param int|null $branchId null means the current session's branch
+     */
+    public function cashAccountId(?int $branchId = null): ?int
+    {
+        $id = $this->db()->value(
+            "SELECT id FROM accounts
+             WHERE branch_id = :branch AND type = 'cash' AND is_active = 1
+             ORDER BY CASE WHEN name = 'Cash' THEN 0 ELSE 1 END, id ASC
+             LIMIT 1",
+            ['branch' => $branchId ?? $this->requireBranchId()]
+        );
+
+        return $id === null ? null : (int) $id;
+    }
+
     /** @param array<string,mixed> $data */
     public function createFor(array $data): int
     {

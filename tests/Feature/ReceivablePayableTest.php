@@ -6,22 +6,32 @@ namespace Tests\Feature;
 
 use App\Controllers\BranchController;
 use App\Controllers\ReceivablePayableController;
+use App\Controllers\TransactionController;
 use App\Core\Database;
 use App\Domain\ReceivablePayableKind;
 use App\Models\ReceivablePayable;
+use App\Services\DashboardService;
+use App\Services\LedgerQuery;
+use App\Services\ProfitDistributionService;
 use App\Services\ReceivablePayableService;
+use App\Services\ReportService;
+use App\Services\TransactionService;
+use InvalidArgumentException;
 use PDOException;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
 
 /**
- * The receivables / payables register (AR/AP-1).
+ * The receivables / payables register (AR/AP-1, posting to the ledger since
+ * AR/AP-3).
  *
  * The guarantees: an entry leaves 'open' exactly once (settled in full, or
- * cancelled with a reason) and is editable only while open; every change is
- * audited; every id is confined to this branch and this kind; and nothing
- * the register does ever writes to the ledger.
+ * cancelled with a reason) and is editable only while open, with amount,
+ * issue date and account locked once posted; every change is audited; every
+ * id and account is confined to this branch (and the id to this kind); and
+ * each step moves the account balance it should — never the P&L.
  */
 final class ReceivablePayableTest extends TestCase
 {
@@ -31,6 +41,10 @@ final class ReceivablePayableTest extends TestCase
     private int $branchBId;
     private int $adminAId;
     private int $adminBId;
+    private int $cashAId;
+    private int $bankAId;
+    private int $closedAId;
+    private int $cashBId;
 
     protected function setUp(): void
     {
@@ -41,6 +55,10 @@ final class ReceivablePayableTest extends TestCase
         $this->branchBId = BranchFixture::create('RPT-B');
         $this->adminAId = $this->insertUser('rpt-admin-a@test.local', 'admin', $this->branchAId);
         $this->adminBId = $this->insertUser('rpt-admin-b@test.local', 'admin', $this->branchBId);
+        $this->bankAId = $this->insertAccount($this->branchAId, 'RPT Main Bank', 'bank');
+        $this->cashAId = $this->insertAccount($this->branchAId, 'Cash', 'cash');
+        $this->closedAId = $this->insertAccount($this->branchAId, 'RPT Old Till', 'cash', false);
+        $this->cashBId = $this->insertAccount($this->branchBId, 'Cash', 'cash');
         $this->asBranchA();
     }
 
@@ -53,10 +71,18 @@ final class ReceivablePayableTest extends TestCase
     private function cleanUp(): void
     {
         $db = Database::instance();
-        // Register rows reference users without cascading on created_by, so
-        // they go first.
+        // Register rows reference transactions, accounts and users, and
+        // transactions reference accounts and users, none cascading.
         $db->run(
             'DELETE r FROM receivables_payables r JOIN branches b ON b.id = r.branch_id WHERE b.name LIKE :n',
+            ['n' => 'RPT-%']
+        );
+        $db->run(
+            'DELETE t FROM transactions t JOIN branches b ON b.id = t.branch_id WHERE b.name LIKE :n',
+            ['n' => 'RPT-%']
+        );
+        $db->run(
+            'DELETE a FROM accounts a JOIN branches b ON b.id = a.branch_id WHERE b.name LIKE :n',
             ['n' => 'RPT-%']
         );
         $db->run(
@@ -83,6 +109,18 @@ final class ReceivablePayableTest extends TestCase
         ]);
     }
 
+    private function insertAccount(int $branchId, string $name, string $type, bool $active = true): int
+    {
+        return Database::instance()->insert('accounts', [
+            'branch_id' => $branchId,
+            'name' => $name,
+            'type' => $type,
+            'opening_balance' => '10000.00',
+            'opening_date' => '2026-01-01',
+            'is_active' => $active ? 1 : 0,
+        ]);
+    }
+
     /** @return array<string,int> */
     private function sessionA(): array
     {
@@ -105,14 +143,14 @@ final class ReceivablePayableTest extends TestCase
     }
 
     /**
-     * @param array<string,string> $overrides
+     * @param array<string,mixed> $overrides
      * @return array{party_name:string,reference_no:?string,description:?string,
-     *               amount:string,issue_date:string,due_date:?string}
+     *               amount:string,issue_date:string,due_date:?string,account_id:int}
      */
-    private static function fields(array $overrides = []): array
+    private function fields(array $overrides = []): array
     {
         /** @var array{party_name:string,reference_no:?string,description:?string,
-         *             amount:string,issue_date:string,due_date:?string} $fields */
+         *             amount:string,issue_date:string,due_date:?string,account_id:int} $fields */
         $fields = $overrides + [
             'party_name' => 'RPT Acme Traders',
             'reference_no' => 'INV-1001',
@@ -120,19 +158,49 @@ final class ReceivablePayableTest extends TestCase
             'amount' => '1500',
             'issue_date' => self::day(-20),
             'due_date' => self::day(10),
+            'account_id' => $this->cashAId,
         ];
 
         return $fields;
     }
 
-    /** Create an entry in the current session's branch through the service. */
-    private function seed(ReceivablePayableKind $kind, array $overrides = []): int
+    /**
+     * The editable fields only, as the edit form posts them.
+     *
+     * @param array<string,string> $overrides
+     * @return array<string,string>
+     */
+    private static function editPost(array $overrides = []): array
     {
-        return ReceivablePayableService::record($kind, self::fields($overrides));
+        return $overrides + [
+            'party_name' => 'RPT Acme Traders',
+            'reference_no' => 'INV-1001',
+            'description' => 'October retainer',
+            'due_date' => self::day(10),
+        ];
     }
 
     /**
-     * @param array<string,string> $post
+     * Create an entry in the current session's branch through the service.
+     *
+     * @param array<string,mixed> $overrides
+     */
+    private function seed(ReceivablePayableKind $kind, array $overrides = []): int
+    {
+        if (!isset($overrides['account_id']) && ($_SESSION['_active_branch_id'] ?? null) === $this->branchBId) {
+            $overrides['account_id'] = $this->cashBId;
+        }
+
+        return ReceivablePayableService::record($kind, $this->fields($overrides));
+    }
+
+    private function settle(int $id, ReceivablePayableKind $kind, ?int $accountId = null): void
+    {
+        ReceivablePayableService::settle($id, $kind, self::day(0), null, $accountId ?? $this->cashAId);
+    }
+
+    /**
+     * @param array<string,mixed> $post
      * @param array<string,string> $route
      * @param array<string,int>|null $session
      * @return array{status:int,body:string,session:array<string,mixed>}
@@ -190,6 +258,15 @@ final class ReceivablePayableTest extends TestCase
         return $row;
     }
 
+    /** @return array<string,mixed> */
+    private function transaction(int $id): array
+    {
+        $row = Database::instance()->first('SELECT * FROM transactions WHERE id = :id', ['id' => $id]);
+        self::assertNotNull($row);
+
+        return $row;
+    }
+
     private function auditCount(int $id, string $action): int
     {
         return (int) Database::instance()->value(
@@ -207,9 +284,17 @@ final class ReceivablePayableTest extends TestCase
         );
     }
 
-    private static function ledgerCount(): int
+    private function ledgerCount(): int
     {
-        return (int) Database::instance()->value('SELECT COUNT(*) FROM transactions');
+        return (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM transactions WHERE branch_id IN (:a, :b)',
+            ['a' => $this->branchAId, 'b' => $this->branchBId]
+        );
+    }
+
+    private static function balance(int $accountId): string
+    {
+        return TransactionService::accountBalance($accountId);
     }
 
     // --- create --------------------------------------------------------------
@@ -223,6 +308,7 @@ final class ReceivablePayableTest extends TestCase
             'amount' => '2500.5',
             'issue_date' => self::day(-3),
             'due_date' => self::day(27),
+            'account_id' => (string) $this->bankAId,
         ]);
 
         self::assertSame(302, $result['status']);
@@ -236,6 +322,8 @@ final class ReceivablePayableTest extends TestCase
         self::assertSame('RPT Paper Mill', $row['party_name'], 'party name is trimmed');
         self::assertNull($row['description'], 'a blank optional field is stored as NULL');
         self::assertSame('2500.50', $row['amount']);
+        self::assertSame($this->bankAId, (int) $row['account_id']);
+        self::assertNotNull($row['issue_transaction_id']);
         self::assertSame($this->adminAId, (int) $row['created_by']);
         self::assertSame(1, $this->auditCount((int) $row['id'], 'payable.created'));
     }
@@ -256,8 +344,10 @@ final class ReceivablePayableTest extends TestCase
         self::assertArrayHasKey('amount', $errors);
         self::assertArrayHasKey('issue_date', $errors);
         self::assertArrayHasKey('due_date', $errors);
+        self::assertArrayHasKey('account_id', $errors);
         self::assertSame('12.345', $result['session']['_old']['amount'] ?? null, 'the submitted value is kept');
         self::assertSame(0, $this->entryCount());
+        self::assertSame(0, $this->ledgerCount());
     }
 
     public function testStoreRejectsAZeroAmountAndADueDateBeforeTheIssueDate(): void
@@ -267,6 +357,7 @@ final class ReceivablePayableTest extends TestCase
             'amount' => '0.00',
             'issue_date' => self::day(-1),
             'due_date' => self::day(-2),
+            'account_id' => (string) $this->cashAId,
         ]);
 
         self::assertSame(302, $result['status']);
@@ -276,22 +367,236 @@ final class ReceivablePayableTest extends TestCase
         self::assertSame(0, $this->entryCount());
     }
 
+    // --- ledger postings -----------------------------------------------------
+
+    public function testRecordingAReceivablePostsMoneyOutOfTheChosenAccount(): void
+    {
+        $before = self::balance($this->cashAId);
+        $id = $this->seed(ReceivablePayableKind::Receivable, ['amount' => '1500']);
+
+        $row = $this->row($id);
+        $posting = $this->transaction((int) $row['issue_transaction_id']);
+        self::assertSame('receivable_issued', $posting['type']);
+        self::assertSame(-1, (int) $posting['direction']);
+        self::assertSame('1500.00', $posting['amount']);
+        self::assertSame($this->cashAId, (int) $posting['account_id']);
+        self::assertSame($row['issue_date'], $posting['transaction_date']);
+        self::assertSame('posted', $posting['status']);
+        self::assertNull($posting['category_id']);
+        self::assertSame($this->adminAId, (int) $posting['created_by']);
+        self::assertStringContainsString('register #' . $id, (string) $posting['description']);
+        self::assertSame('INV-1001', $posting['reference_no']);
+        self::assertSame(bcsub($before, '1500', 2), self::balance($this->cashAId), 'the balance goes down');
+    }
+
+    public function testRecordingAPayablePostsMoneyIntoTheChosenAccount(): void
+    {
+        $before = self::balance($this->bankAId);
+        $id = $this->seed(ReceivablePayableKind::Payable, ['amount' => '800', 'account_id' => $this->bankAId]);
+
+        $posting = $this->transaction((int) $this->row($id)['issue_transaction_id']);
+        self::assertSame('payable_received', $posting['type']);
+        self::assertSame(1, (int) $posting['direction']);
+        self::assertSame(bcadd($before, '800', 2), self::balance($this->bankAId), 'the balance goes up');
+    }
+
+    public function testSettlingAReceivableCollectsIntoADifferentAccount(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable, ['amount' => '1500']);
+        $cashBefore = self::balance($this->cashAId);
+        $bankBefore = self::balance($this->bankAId);
+
+        $result = $this->act('settle', ReceivablePayableKind::Receivable, [
+            'settled_on' => self::day(-1),
+            'settlement_account_id' => (string) $this->bankAId,
+        ], ['id' => (string) $id]);
+
+        self::assertSame(302, $result['status']);
+        $row = $this->row($id);
+        self::assertSame($this->bankAId, (int) $row['settlement_account_id']);
+        $posting = $this->transaction((int) $row['settlement_transaction_id']);
+        self::assertSame('receivable_collected', $posting['type']);
+        self::assertSame(1, (int) $posting['direction']);
+        self::assertSame(self::day(-1), $posting['transaction_date']);
+        self::assertSame($cashBefore, self::balance($this->cashAId), 'the issue account is untouched');
+        self::assertSame(bcadd($bankBefore, '1500', 2), self::balance($this->bankAId), 'money comes back in');
+    }
+
+    public function testSettlingAPayableRepaysOutOfTheChosenAccount(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Payable, ['amount' => '700']);
+        $before = self::balance($this->cashAId);
+
+        $this->settle($id, ReceivablePayableKind::Payable);
+
+        $posting = $this->transaction((int) $this->row($id)['settlement_transaction_id']);
+        self::assertSame('payable_repaid', $posting['type']);
+        self::assertSame(-1, (int) $posting['direction']);
+        self::assertSame(bcsub($before, '700', 2), self::balance($this->cashAId), 'money goes back out');
+    }
+
+    public function testRegisterMovementsNeverReachProfitAndLossButDoReachCashFlow(): void
+    {
+        $from = self::day(-30);
+        $to = self::day(0);
+        $receivable = $this->seed(ReceivablePayableKind::Receivable, ['amount' => '1000']);
+        $this->settle($receivable, ReceivablePayableKind::Receivable);
+        $payable = $this->seed(ReceivablePayableKind::Payable, ['amount' => '400']);
+        $this->settle($payable, ReceivablePayableKind::Payable);
+
+        $profitLoss = ReportService::profitLoss($from, $to);
+        self::assertSame(0.0, (float) $profitLoss['revenue']);
+        self::assertSame(0.0, (float) $profitLoss['expenses']);
+        self::assertSame(0.0, (float) $profitLoss['net']);
+        self::assertSame(0.0, (float) DashboardService::revenueBetween($from, $to));
+        self::assertSame(0.0, (float) DashboardService::expensesBetween($from, $to));
+        self::assertSame(0.0, (float) DashboardService::profitBetween($from, $to));
+        self::assertSame(0.0, (float) ProfitDistributionService::distributableProfit($from, $to));
+        self::assertSame(0.0, (float) LedgerQuery::posted()->expensesOnly()->between($from, $to)->totalAmount());
+
+        $cashFlow = ReportService::cashFlow($from, $to);
+        self::assertSame(1400.0, (float) $cashFlow['inbound'], 'collected 1000 + borrowed 400');
+        self::assertSame(1400.0, (float) $cashFlow['outbound'], 'lent 1000 + repaid 400');
+        self::assertSame(4, LedgerQuery::posted()->count(), 'all four movements are in the ledger');
+    }
+
+    public function testCancellingVoidsTheIssuePostingAndRestoresTheBalance(): void
+    {
+        $before = self::balance($this->cashAId);
+        $id = $this->seed(ReceivablePayableKind::Receivable, ['amount' => '1200']);
+        self::assertSame(bcsub($before, '1200', 2), self::balance($this->cashAId));
+
+        $result = $this->act('cancel', ReceivablePayableKind::Receivable, [
+            'cancel_reason' => 'Raised in error',
+        ], ['id' => (string) $id]);
+
+        self::assertSame(302, $result['status']);
+        $row = $this->row($id);
+        self::assertSame('cancelled', $row['status']);
+        $posting = $this->transaction((int) $row['issue_transaction_id']);
+        self::assertSame('void', $posting['status']);
+        self::assertSame('Raised in error', $posting['void_reason']);
+        self::assertSame($this->adminAId, (int) $posting['voided_by']);
+        self::assertSame($before, self::balance($this->cashAId), 'the balance is back where it was');
+    }
+
+    public function testARegisterPostingCannotBeVoidedDirectly(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Payable);
+        $transactionId = (int) $this->row($id)['issue_transaction_id'];
+
+        $result = ControllerActionRunner::run(
+            TransactionController::class,
+            'void',
+            $this->sessionA(),
+            ['void_reason' => 'Trying the back door'],
+            [],
+            'POST',
+            ['id' => (string) $transactionId]
+        );
+
+        self::assertSame(302, $result['status']);
+        $error = (string) ($result['session']['_flash']['error'] ?? '');
+        self::assertStringContainsString('Receivables or Payables', $error);
+        self::assertSame('posted', $this->transaction($transactionId)['status']);
+
+        $this->expectException(RuntimeException::class);
+        TransactionService::void($transactionId, 'Direct call');
+    }
+
+    public function testTheRegisterVoidPathRefusesAnOrdinaryTransaction(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Payable);
+        $transferGroup = TransactionService::postTransfer(
+            $this->cashAId,
+            $this->bankAId,
+            '10',
+            self::day(0),
+            'RPT move'
+        );
+        $legId = (int) Database::instance()->value(
+            'SELECT id FROM transactions WHERE transfer_group = :g LIMIT 1',
+            ['g' => $transferGroup]
+        );
+
+        try {
+            TransactionService::voidRegisterPosting($legId, 'Not a register row');
+            self::fail('an ordinary transaction must not be voidable through the register path');
+        } catch (RuntimeException $e) {
+            self::assertStringContainsString('not a receivables / payables posting', $e->getMessage());
+        }
+        self::assertSame('posted', $this->transaction($legId)['status']);
+        self::assertSame('open', $this->row($id)['status']);
+    }
+
+    public function testRegisterTypesCannotBePostedThroughTheGenericPath(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        TransactionService::post([
+            'type' => 'receivable_issued',
+            'amount' => '50',
+            'account_id' => $this->cashAId,
+            'transaction_date' => self::day(0),
+            'description' => 'RPT sneaky loan',
+        ]);
+    }
+
+    // --- account ownership ---------------------------------------------------
+
+    public function testAnotherBranchsOrAClosedAccountIsRejectedOnRecord(): void
+    {
+        foreach ([$this->cashBId, $this->closedAId, 999999999] as $accountId) {
+            $result = $this->act('store', ReceivablePayableKind::Receivable, [
+                'party_name' => 'RPT Foreign Account',
+                'amount' => '100',
+                'issue_date' => self::day(0),
+                'account_id' => (string) $accountId,
+            ]);
+
+            self::assertSame(302, $result['status']);
+            self::assertArrayHasKey('account_id', $result['session']['_flash']['errors'] ?? []);
+        }
+
+        self::assertSame(0, $this->entryCount());
+        self::assertSame(0, $this->ledgerCount());
+    }
+
+    public function testAnotherBranchsAccountIsRejectedOnSettle(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable);
+        $ledgerBefore = $this->ledgerCount();
+
+        $result = $this->act('settle', ReceivablePayableKind::Receivable, [
+            'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->cashBId,
+        ], ['id' => (string) $id]);
+
+        self::assertSame(302, $result['status']);
+        $failure = $result['session']['_flash']['rowFailure'] ?? null;
+        self::assertIsArray($failure);
+        self::assertArrayHasKey('settlement_account_id', $failure['errors']);
+        self::assertSame('open', $this->row($id)['status']);
+        self::assertSame($ledgerBefore, $this->ledgerCount());
+    }
+
     // --- edit ----------------------------------------------------------------
 
     public function testAnOpenEntryCanBeEditedAndOnlyTheChangeIsAudited(): void
     {
         $id = $this->seed(ReceivablePayableKind::Receivable);
+        $postingBefore = $this->transaction((int) $this->row($id)['issue_transaction_id']);
 
-        $result = $this->act('update', ReceivablePayableKind::Receivable, self::fields([
-            'amount' => '1750.00',
+        $result = $this->act('update', ReceivablePayableKind::Receivable, self::editPost([
+            'party_name' => 'RPT Acme Traders Ltd',
             'due_date' => self::day(30),
         ]), ['id' => (string) $id]);
 
         self::assertSame(302, $result['status']);
         $row = $this->row($id);
-        self::assertSame('1750.00', $row['amount']);
+        self::assertSame('RPT Acme Traders Ltd', $row['party_name']);
         self::assertSame(self::day(30), $row['due_date']);
         self::assertSame($this->adminAId, (int) $row['modified_by']);
+        self::assertSame($postingBefore, $this->transaction((int) $row['issue_transaction_id']), 'ledger untouched');
 
         $meta = Database::instance()->value(
             "SELECT meta FROM audit_log WHERE entity_id = :id AND action = 'receivable.updated'",
@@ -299,14 +604,47 @@ final class ReceivablePayableTest extends TestCase
         );
         $decoded = json_decode((string) $meta, true);
         self::assertIsArray($decoded);
-        self::assertSame(['amount', 'due_date'], array_keys($decoded['after']), 'unchanged fields are not in the diff');
-        self::assertSame('1500.00', $decoded['before']['amount']);
+        self::assertSame(['party_name', 'due_date'], array_keys($decoded['after']), 'only changed fields are diffed');
+    }
+
+    public function testLockedFieldsCannotBeChangedOnEdit(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable);
+        $before = $this->row($id);
+
+        $attempts = [
+            'amount' => ['amount' => '1750.00'],
+            'issue_date' => ['issue_date' => self::day(-19)],
+            'account_id' => ['account_id' => (string) $this->bankAId],
+        ];
+        foreach ($attempts as $field => $change) {
+            $result = $this->act(
+                'update',
+                ReceivablePayableKind::Receivable,
+                self::editPost(['party_name' => 'RPT Renamed']) + $change,
+                ['id' => (string) $id]
+            );
+
+            self::assertSame(302, $result['status']);
+            $errors = $result['session']['_flash']['errors'] ?? [];
+            self::assertSame([$field], array_keys($errors), $field . ' is refused next to its field');
+            self::assertStringContainsString('locked', (string) $errors[$field][0]);
+            self::assertSame($before, $this->row($id), 'nothing changed, the party name included');
+        }
+
+        // Submitting the stored values unchanged is not a change.
+        $same = $this->act('update', ReceivablePayableKind::Receivable, self::editPost([
+            'amount' => '1500',
+            'issue_date' => (string) $before['issue_date'],
+            'account_id' => (string) $this->cashAId,
+        ]), ['id' => (string) $id]);
+        self::assertSame('Receivable updated.', $same['session']['_flash']['success'] ?? null);
     }
 
     public function testASettledOrCancelledEntryCannotBeEdited(): void
     {
         $settled = $this->seed(ReceivablePayableKind::Receivable);
-        ReceivablePayableService::settle($settled, ReceivablePayableKind::Receivable, self::day(0), null);
+        $this->settle($settled, ReceivablePayableKind::Receivable);
         $cancelled = $this->seed(ReceivablePayableKind::Receivable);
         ReceivablePayableService::cancel($cancelled, ReceivablePayableKind::Receivable, 'Raised in error');
 
@@ -319,7 +657,7 @@ final class ReceivablePayableTest extends TestCase
             $result = $this->act(
                 'update',
                 ReceivablePayableKind::Receivable,
-                self::fields(['amount' => '99']),
+                self::editPost(['party_name' => 'RPT Too Late']),
                 ['id' => (string) $id]
             );
             self::assertSame(302, $result['status']);
@@ -339,6 +677,7 @@ final class ReceivablePayableTest extends TestCase
         $result = $this->act('settle', ReceivablePayableKind::Payable, [
             'settled_on' => self::day(-1),
             'settlement_note' => 'Bank transfer 4471',
+            'settlement_account_id' => (string) $this->cashAId,
         ], ['id' => (string) $id]);
 
         self::assertSame(302, $result['status']);
@@ -349,14 +688,17 @@ final class ReceivablePayableTest extends TestCase
         self::assertSame($this->adminAId, (int) $row['settled_by']);
         self::assertNotNull($row['settled_at']);
         self::assertSame(1, $this->auditCount($id, 'payable.settled'));
+        $ledgerAfterFirst = $this->ledgerCount();
 
         $again = $this->act('settle', ReceivablePayableKind::Payable, [
             'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->cashAId,
         ], ['id' => (string) $id]);
         self::assertSame(302, $again['status']);
         self::assertStringContainsString('already settled', (string) ($again['session']['_flash']['error'] ?? ''));
         self::assertSame(self::day(-1), $this->row($id)['settled_on'], 'the first settlement stands');
         self::assertSame(1, $this->auditCount($id, 'payable.settled'));
+        self::assertSame($ledgerAfterFirst, $this->ledgerCount(), 'no second settlement posting');
     }
 
     public function testSettlementDateCannotBeInTheFutureOrBeforeTheIssueDate(): void
@@ -366,6 +708,7 @@ final class ReceivablePayableTest extends TestCase
         foreach ([self::day(1), self::day(-6), 'not-a-date', ''] as $date) {
             $result = $this->act('settle', ReceivablePayableKind::Receivable, [
                 'settled_on' => $date,
+                'settlement_account_id' => (string) $this->cashAId,
             ], ['id' => (string) $id]);
 
             self::assertSame(302, $result['status']);
@@ -386,6 +729,7 @@ final class ReceivablePayableTest extends TestCase
         $result = $this->act('settle', ReceivablePayableKind::Receivable, [
             'settled_on' => self::day(2),
             'settlement_note' => 'Cheque 12',
+            'settlement_account_id' => (string) $this->bankAId,
         ], ['id' => (string) $id]);
 
         $_SESSION['_flash'] = $result['session']['_flash'] ?? [];
@@ -396,6 +740,11 @@ final class ReceivablePayableTest extends TestCase
         self::assertStringContainsString('The settlement date cannot be in the future.', $body);
         self::assertStringContainsString('value="' . self::day(2) . '"', $body, 'the submitted date is kept');
         self::assertStringContainsString('value="Cheque 12"', $body);
+        self::assertMatchesRegularExpression(
+            '/<option value="' . $this->bankAId . '" selected>/',
+            $body,
+            'the chosen account is kept'
+        );
     }
 
     public function testACancelledEntryCannotBeSettled(): void
@@ -405,12 +754,14 @@ final class ReceivablePayableTest extends TestCase
 
         $result = $this->act('settle', ReceivablePayableKind::Receivable, [
             'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->cashAId,
         ], ['id' => (string) $id]);
 
         self::assertSame(302, $result['status']);
         $row = $this->row($id);
         self::assertSame('cancelled', $row['status']);
         self::assertNull($row['settled_on']);
+        self::assertNull($row['settlement_transaction_id']);
     }
 
     // --- cancel --------------------------------------------------------------
@@ -441,7 +792,7 @@ final class ReceivablePayableTest extends TestCase
     public function testASettledOrCancelledEntryCannotBeCancelled(): void
     {
         $settled = $this->seed(ReceivablePayableKind::Payable);
-        ReceivablePayableService::settle($settled, ReceivablePayableKind::Payable, self::day(0), null);
+        $this->settle($settled, ReceivablePayableKind::Payable);
         $cancelled = $this->seed(ReceivablePayableKind::Payable);
         ReceivablePayableService::cancel($cancelled, ReceivablePayableKind::Payable, 'First reason');
 
@@ -455,6 +806,11 @@ final class ReceivablePayableTest extends TestCase
             self::assertSame($before, $this->row($id));
         }
         self::assertSame(1, $this->auditCount($cancelled, 'payable.cancelled'));
+        self::assertSame(
+            'posted',
+            $this->transaction((int) $this->row($settled)['issue_transaction_id'])['status'],
+            'a settled entry keeps both postings'
+        );
     }
 
     public function testTheDatabaseRefusesACancellationWithoutAReason(): void
@@ -481,10 +837,11 @@ final class ReceivablePayableTest extends TestCase
 
         $route = ['id' => (string) $foreign];
         self::assertSame(404, $this->act('edit', ReceivablePayableKind::Receivable, [], $route, 'GET')['status']);
-        $update = $this->act('update', ReceivablePayableKind::Receivable, self::fields(), $route);
+        $update = $this->act('update', ReceivablePayableKind::Receivable, self::editPost(), $route);
         self::assertSame(404, $update['status']);
         self::assertSame(404, $this->act('settle', ReceivablePayableKind::Receivable, [
             'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->cashAId,
         ], $route)['status']);
         self::assertSame(404, $this->act('cancel', ReceivablePayableKind::Receivable, [
             'cancel_reason' => 'Not mine',
@@ -503,44 +860,14 @@ final class ReceivablePayableTest extends TestCase
 
         $result = $this->act('settle', ReceivablePayableKind::Receivable, [
             'settled_on' => self::day(0),
+            'settlement_account_id' => (string) $this->cashAId,
         ], ['id' => (string) $payable]);
 
         self::assertSame(404, $result['status']);
         self::assertSame('open', $this->row($payable)['status']);
     }
 
-    // --- the ledger is never touched -----------------------------------------
-
-    public function testNoActionOnTheRegisterWritesToTheLedger(): void
-    {
-        $ledgerBefore = self::ledgerCount();
-
-        $this->act('store', ReceivablePayableKind::Receivable, [
-            'party_name' => 'RPT Ledger Check',
-            'amount' => '900',
-            'issue_date' => self::day(-2),
-        ]);
-        $id = (int) Database::instance()->value(
-            'SELECT id FROM receivables_payables WHERE branch_id = :b',
-            ['b' => $this->branchAId]
-        );
-        $this->act('update', ReceivablePayableKind::Receivable, self::fields(['amount' => '950']), [
-            'id' => (string) $id,
-        ]);
-        $this->act('settle', ReceivablePayableKind::Receivable, ['settled_on' => self::day(0)], [
-            'id' => (string) $id,
-        ]);
-        $other = $this->seed(ReceivablePayableKind::Payable);
-        $this->act('cancel', ReceivablePayableKind::Payable, ['cancel_reason' => 'Not needed'], [
-            'id' => (string) $other,
-        ]);
-
-        self::assertSame('settled', $this->row($id)['status']);
-        self::assertSame('cancelled', $this->row($other)['status']);
-        self::assertSame($ledgerBefore, self::ledgerCount(), 'no transactions row was created');
-    }
-
-    // --- list ----------------------------------------------------------------
+    // --- list and forms ------------------------------------------------------
 
     public function testSummaryCountsOnlyOpenEntriesAndOverdueByDueDate(): void
     {
@@ -548,7 +875,7 @@ final class ReceivablePayableTest extends TestCase
         $this->seed(ReceivablePayableKind::Receivable, ['amount' => '200', 'due_date' => self::day(0)]);
         $this->seed(ReceivablePayableKind::Receivable, ['amount' => '400', 'due_date' => '']);
         $settled = $this->seed(ReceivablePayableKind::Receivable, ['amount' => '800', 'due_date' => self::day(-5)]);
-        ReceivablePayableService::settle($settled, ReceivablePayableKind::Receivable, self::day(0), null);
+        $this->settle($settled, ReceivablePayableKind::Receivable);
         $this->seed(ReceivablePayableKind::Payable, ['amount' => '1600', 'due_date' => self::day(-5)]);
 
         $summary = (new ReceivablePayable())->summary(ReceivablePayableKind::Receivable, self::day(0));
@@ -576,6 +903,17 @@ final class ReceivablePayableTest extends TestCase
         self::assertStringContainsString('href="' . url('/receivables') . '"', $body, 'linked from the sidebar');
     }
 
+    public function testIndexShowsTheIssueAndSettlementAccounts(): void
+    {
+        $settled = $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT Settled Co']);
+        $this->settle($settled, ReceivablePayableKind::Receivable, $this->bankAId);
+
+        $body = $this->render('index', ReceivablePayableKind::Receivable, [], ['status' => 'all']);
+
+        self::assertStringContainsString('Paid out from Cash', $body);
+        self::assertMatchesRegularExpression('/received into\s+RPT Main Bank/', $body);
+    }
+
     public function testIndexShowsAnEmptyState(): void
     {
         $body = $this->render('index', ReceivablePayableKind::Payable);
@@ -584,16 +922,47 @@ final class ReceivablePayableTest extends TestCase
         self::assertStringContainsString('Record a payable', $body);
     }
 
-    public function testCreateAndEditFormsRender(): void
+    public function testCreateFormPreselectsCashAndListsOnlyThisBranchsActiveAccounts(): void
+    {
+        $create = $this->render('create', ReceivablePayableKind::Payable);
+
+        self::assertStringContainsString('Record payable', $create);
+        self::assertMatchesRegularExpression('/<option value="' . $this->cashAId . '" selected>/', $create);
+        self::assertStringContainsString('<option value="' . $this->bankAId . '" >', $create);
+        self::assertStringNotContainsString('value="' . $this->closedAId . '"', $create, 'closed accounts are hidden');
+        self::assertStringNotContainsString('value="' . $this->cashBId . '"', $create, 'other branches are hidden');
+    }
+
+    public function testEditFormShowsLockedFieldsReadOnly(): void
     {
         $id = $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Form Vendor']);
 
-        $create = $this->render('create', ReceivablePayableKind::Payable);
         $edit = $this->render('edit', ReceivablePayableKind::Payable, ['id' => (string) $id]);
 
-        self::assertStringContainsString('Record payable', $create);
         self::assertStringContainsString('value="RPT Form Vendor"', $edit);
-        self::assertStringContainsString('value="1500.00"', $edit);
+        self::assertStringContainsString('1,500.00', $edit);
+        self::assertStringNotContainsString('name="amount"', $edit, 'amount is not an input once posted');
+        self::assertStringNotContainsString('name="issue_date"', $edit);
+        self::assertStringNotContainsString('name="account_id"', $edit);
+        self::assertStringContainsString('cancel this entry', $edit, 'the help text says how to correct it');
+    }
+
+    public function testTheLedgerListOffersTheRegisterInsteadOfAVoid(): void
+    {
+        $id = $this->seed(ReceivablePayableKind::Receivable, ['party_name' => 'RPT Ledger Row']);
+        $transactionId = (int) $this->row($id)['issue_transaction_id'];
+
+        $_GET = [];
+        ob_start();
+        try {
+            (new TransactionController())->index();
+        } finally {
+            $body = (string) ob_get_clean();
+        }
+
+        self::assertStringContainsString('Receivable issued', $body, 'the type has a readable label');
+        self::assertStringContainsString('Manage in Receivables', $body);
+        self::assertStringNotContainsString('/transactions/' . $transactionId . '/void', $body);
     }
 
     // --- review follow-ups ---------------------------------------------------
@@ -601,7 +970,8 @@ final class ReceivablePayableTest extends TestCase
     public function testAnIdenticalReSaveIsNotReportedAsAConflict(): void
     {
         $id = $this->seed(ReceivablePayableKind::Receivable);
-        $fields = self::fields(['amount' => '1600']);
+        $fields = ['party_name' => 'RPT Renamed', 'reference_no' => null, 'description' => null, 'due_date' => null];
+        $locked = ['amount' => null, 'issue_date' => null, 'account_id' => null];
 
         // Both saves must land in the same clock second, so the second one
         // writes byte-identical values (modified_at included) and MySQL
@@ -611,13 +981,18 @@ final class ReceivablePayableTest extends TestCase
         if ($fraction > 0.7) {
             usleep((int) ((1.0 - $fraction) * 1_000_000) + 20_000);
         }
-        ReceivablePayableService::update($id, ReceivablePayableKind::Receivable, $fields);
+        ReceivablePayableService::update($id, ReceivablePayableKind::Receivable, $fields, $locked);
         $first = $this->row($id);
-        ReceivablePayableService::update($id, ReceivablePayableKind::Receivable, $fields);
+        ReceivablePayableService::update($id, ReceivablePayableKind::Receivable, $fields, $locked);
 
         self::assertSame($first, $this->row($id), 'the re-save changed nothing and raised nothing');
 
-        $result = $this->act('update', ReceivablePayableKind::Receivable, $fields, ['id' => (string) $id]);
+        $result = $this->act('update', ReceivablePayableKind::Receivable, self::editPost([
+            'party_name' => 'RPT Renamed',
+            'reference_no' => '',
+            'description' => '',
+            'due_date' => '',
+        ]), ['id' => (string) $id]);
         self::assertSame(302, $result['status']);
         self::assertSame('Receivable updated.', $result['session']['_flash']['success'] ?? null);
     }
@@ -626,10 +1001,10 @@ final class ReceivablePayableTest extends TestCase
     {
         $settleId = $this->seed(ReceivablePayableKind::Receivable);
         $cancelId = $this->seed(ReceivablePayableKind::Receivable);
-        // A session whose user row is gone makes the UPDATE (settled_by /
-        // cancelled_by) fail a foreign key inside the database: a stand-in
-        // for any PDOException, such as a lock wait timeout, that needs no
-        // extra privileges to provoke.
+        // A session whose user row is gone makes the writes (the settlement
+        // posting's created_by, the void's voided_by) fail a foreign key
+        // inside the database: a stand-in for any PDOException, such as a
+        // lock wait timeout, that needs no extra privileges to provoke.
         $ghostUserId = (int) Database::instance()->value('SELECT COALESCE(MAX(id), 0) + 1000000 FROM users');
         $ghostSession = ['_auth_user_id' => $ghostUserId, '_active_branch_id' => $this->branchAId];
         $log = STORAGE_PATH . '/logs/app-' . date('Y-m-d') . '.log';
@@ -639,6 +1014,7 @@ final class ReceivablePayableTest extends TestCase
         $results = [
             'settle' => $this->act('settle', ReceivablePayableKind::Receivable, [
                 'settled_on' => self::day(0),
+                'settlement_account_id' => (string) $this->cashAId,
             ], ['id' => (string) $settleId], 'POST', $ghostSession),
             'cancel' => $this->act('cancel', ReceivablePayableKind::Receivable, [
                 'cancel_reason' => 'Duplicate',
@@ -654,6 +1030,11 @@ final class ReceivablePayableTest extends TestCase
         }
         self::assertSame('open', $this->row($settleId)['status']);
         self::assertSame('open', $this->row($cancelId)['status']);
+        self::assertSame(
+            'posted',
+            $this->transaction((int) $this->row($cancelId)['issue_transaction_id'])['status'],
+            'the rolled-back cancel left its posting in place'
+        );
         self::assertSame(0, $this->auditCount($settleId, 'receivable.settled'));
 
         clearstatcache();
@@ -670,6 +1051,7 @@ final class ReceivablePayableTest extends TestCase
             'party_name' => 'RPT Huge Co',
             'amount' => '12345678901234567',
             'issue_date' => self::day(0),
+            'account_id' => (string) $this->cashAId,
         ]);
 
         self::assertSame(302, $result['status']);
@@ -683,6 +1065,7 @@ final class ReceivablePayableTest extends TestCase
             'party_name' => ['RPT Array'],
             'amount' => '10',
             'issue_date' => self::day(0),
+            'account_id' => (string) $this->cashAId,
         ]);
         self::assertSame(302, $result['status']);
         self::assertArrayHasKey('party_name', $result['session']['_flash']['errors'] ?? []);
@@ -733,7 +1116,7 @@ final class ReceivablePayableTest extends TestCase
     {
         $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Open Vendor']);
         $settled = $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Paid Vendor']);
-        ReceivablePayableService::settle($settled, ReceivablePayableKind::Payable, self::day(0), null);
+        $this->settle($settled, ReceivablePayableKind::Payable);
         $cancelled = $this->seed(ReceivablePayableKind::Payable, ['party_name' => 'RPT Cancelled Vendor']);
         ReceivablePayableService::cancel($cancelled, ReceivablePayableKind::Payable, 'Duplicate bill');
 
@@ -760,7 +1143,8 @@ final class ReceivablePayableTest extends TestCase
 
     public function testDeletingABranchWithRegisterEntriesSucceeds(): void
     {
-        $this->seed(ReceivablePayableKind::Receivable);
+        $settled = $this->seed(ReceivablePayableKind::Receivable);
+        $this->settle($settled, ReceivablePayableKind::Receivable);
         $superAdminId = $this->insertUser('rpt-super@test.local', 'super_admin', null, self::SUPER_ADMIN_PASSWORD);
         $branchName = (string) Database::instance()->value(
             'SELECT name FROM branches WHERE id = :id',

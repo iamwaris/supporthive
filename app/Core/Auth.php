@@ -196,6 +196,43 @@ final class Auth
         }
     }
 
+    /**
+     * Run $work attributed to a user inside a branch, then restore whatever
+     * identity was there before.
+     *
+     * For one-off CLI maintenance (the AR/AP backfill posts each legacy entry
+     * as the user who recorded it). It refuses to run under a web server, so
+     * no request can ever reach it to impersonate anyone.
+     */
+    public static function actAsInCli(int $userId, int $branchId, callable $work): mixed
+    {
+        if (PHP_SAPI !== 'cli') {
+            throw new RuntimeException('Acting as another user is only possible from the command line.');
+        }
+
+        $previousUser = $_SESSION[self::SESSION_KEY] ?? null;
+        $previousBranch = $_SESSION[self::BRANCH_SESSION_KEY] ?? null;
+        $_SESSION[self::SESSION_KEY] = $userId;
+        $_SESSION[self::BRANCH_SESSION_KEY] = $branchId;
+        self::$cached = null;
+
+        try {
+            return $work();
+        } finally {
+            if ($previousUser === null) {
+                unset($_SESSION[self::SESSION_KEY]);
+            } else {
+                $_SESSION[self::SESSION_KEY] = $previousUser;
+            }
+            if ($previousBranch === null) {
+                unset($_SESSION[self::BRANCH_SESSION_KEY]);
+            } else {
+                $_SESSION[self::BRANCH_SESSION_KEY] = $previousBranch;
+            }
+            self::$cached = null;
+        }
+    }
+
     public static function check(): bool
     {
         return self::id() !== null;

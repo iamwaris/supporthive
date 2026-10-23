@@ -216,6 +216,26 @@ mv .env.local.bak .env      # restore immediately
 Always take a backup first (hPanel → *Files* → **Backups**), and prefer additive changes (new nullable column) over destructive
 ones so a rollback of the code does not break the live schema.
 
+### One-time data steps
+
+**AR/AP-3 (migration `2026_10_23_000018`, 2026-10-23).** After that migration is
+applied, post the receivables/payables entries recorded before it, over SSH in
+the application directory:
+
+```bash
+php database/migrate.php --status        # 000018 must show as applied
+php scripts/backfill-receivables-payables.php --dry-run
+php scripts/backfill-receivables-payables.php
+```
+
+It posts each open entry's issue movement and each settled entry's issue and
+settlement movements through the branch's Cash account, as the user who
+recorded the entry; cancelled entries get nothing. It is idempotent: a second
+run posts nothing. Exit code 2 means some entries were **skipped** because
+their branch has no active cash-type account (they are listed): give that
+branch one, then run it again. Until it has run, those legacy open entries
+cannot be settled (the screen says so); everything else works.
+
 ## 7. Post-deploy verification
 
 - [ ] `https://yourdomain.com/build.txt` shows the expected commit

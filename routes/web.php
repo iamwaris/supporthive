@@ -160,9 +160,9 @@ $router->post('/income/{id}/received', 'IncomeController@markReceived', ['can:wr
 $router->get('/capital', 'CapitalController@index', ['can:view']);
 $router->post('/capital', 'CapitalController@store', ['can:write']);
 
-// --- Receivables & payables register (AR/AP-1) ------------------------------
-// A standalone tracking register, independent of the ledger by decision
-// (docs/PLAN.md §5, 2026-10-17). Both sections share one controller; the kind
+// --- Receivables & payables register (AR/AP-1, AR/AP-3) ---------------------
+// Loans / advances that post to the ledger through ReceivablePayableService
+// (docs/PLAN.md §5, 2026-10-23). Both sections share one controller; the kind
 // is fixed into the route params here, so a request can never pick its own.
 // Recording, editing, settling and cancelling need the same write ability as
 // any other daily entry; /new is a literal path, resolved before {id}.

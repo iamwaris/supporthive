@@ -22,8 +22,9 @@ final class ReceivablePayable extends Model
 
     /** @var list<string> */
     protected array $fillable = [
-        'kind', 'party_name', 'reference_no', 'description', 'amount', 'issue_date', 'due_date',
-        'status', 'settled_on', 'settlement_note', 'settled_by', 'settled_at',
+        'kind', 'party_name', 'reference_no', 'description', 'amount', 'account_id', 'issue_transaction_id',
+        'issue_date', 'due_date', 'status', 'settled_on', 'settlement_account_id', 'settlement_transaction_id',
+        'settlement_note', 'settled_by', 'settled_at',
         'cancel_reason', 'cancelled_by', 'cancelled_at', 'created_by', 'modified_by', 'modified_at',
     ];
 
@@ -43,7 +44,7 @@ final class ReceivablePayable extends Model
         return $row !== null && (string) $row['kind'] === $kind->value ? $row : null;
     }
 
-    /** @return list<array<string,mixed>> newest issue first, with who settled/cancelled it */
+    /** @return list<array<string,mixed>> newest issue first, with its accounts and who settled/cancelled it */
     public function listing(
         ReceivablePayableKind $kind,
         string $status,
@@ -56,8 +57,11 @@ final class ReceivablePayable extends Model
         $params['offset'] = max(0, ($page - 1) * $params['limit']);
 
         return $this->db()->all(
-            'SELECT r.*, su.name AS settled_by_name, cu.name AS cancelled_by_name
+            'SELECT r.*, su.name AS settled_by_name, cu.name AS cancelled_by_name,
+                    a.name AS account_name, sa.name AS settlement_account_name
              FROM receivables_payables r
+             LEFT JOIN accounts a ON a.id = r.account_id
+             LEFT JOIN accounts sa ON sa.id = r.settlement_account_id
              LEFT JOIN users su ON su.id = r.settled_by
              LEFT JOIN users cu ON cu.id = r.cancelled_by
              WHERE ' . $where . '

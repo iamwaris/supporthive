@@ -28,6 +28,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\ReceivablePayableKind;
 use App\Domain\TransactionType;
 use App\Services\Access;
 use App\Services\Settings;
@@ -46,6 +47,10 @@ $typeBadge = [
     'partner_contribution' => 'badge bg-indigo-50 text-indigo-800',
     'partner_withdrawal' => 'badge bg-fuchsia-50 text-fuchsia-800',
     'profit_distribution' => 'badge-warn',
+    'receivable_issued' => 'badge bg-sky-50 text-sky-800',
+    'receivable_collected' => 'badge bg-sky-50 text-sky-800',
+    'payable_received' => 'badge bg-teal-50 text-teal-800',
+    'payable_repaid' => 'badge bg-teal-50 text-teal-800',
 ];
 
 $netValue = (float) $net;
@@ -357,6 +362,8 @@ $shareSummary = $inShare === null
                     <?php
                     $isVoid = (string) $row['status'] === 'void';
                     $type = TransactionType::from((string) $row['type']);
+                    // A register posting is voided only by cancelling its entry.
+                    $registerKind = ReceivablePayableKind::fromMovement($type);
                     $signed = ((int) $row['direction'] === 1 ? '+' : '−') . $money($row['amount']);
                     $category = $row['parent_category_name'] !== null
                         ? (string) $row['parent_category_name'] . ' · ' . (string) $row['category_name']
@@ -419,7 +426,13 @@ $shareSummary = $inShare === null
                                         class="rounded-md px-2 py-1 text-[11.5px] font-medium text-slate-600 hover:bg-slate-100">
                                     Attach
                                 </button>
-                                <?php if (!$isVoid) : ?>
+                                <?php if ($registerKind !== null && !$isVoid) : ?>
+                                    <a href="<?= e(url($registerKind->path())) ?>"
+                                       class="rounded-md px-2 py-1 text-[11.5px] font-medium text-slate-600 hover:bg-slate-100"
+                                       title="Cancel the entry in <?= e($registerKind->title()) ?> to void this posting">
+                                        Manage in <?= e($registerKind->title()) ?>
+                                    </a>
+                                <?php elseif (!$isVoid) : ?>
                                     <button type="button"
                                             x-on:click="openId = openId === <?= $rowId ?> ? null : <?= $rowId ?>"
                                             class="rounded-md px-2 py-1 text-[11.5px] font-medium text-bad-text hover:bg-bad-bg">
@@ -452,7 +465,7 @@ $shareSummary = $inShare === null
                         </tr>
                     <?php endif; ?>
 
-                    <?php if ($canWrite && !$isVoid) : ?>
+                    <?php if ($canWrite && !$isVoid && $registerKind === null) : ?>
                         <tr x-show="openId === <?= $rowId ?>" x-cloak>
                             <td class="border-b border-slate-100 bg-bad-bg px-3.5 py-4" colspan="8">
                                 <form method="post" action="<?= e(url('/transactions/' . $rowId . '/void')) ?>"

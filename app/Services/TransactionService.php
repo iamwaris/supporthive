@@ -50,6 +50,58 @@ final class TransactionService
      */
     public static function post(array $data, ?callable $writeDetail = null): int
     {
+        if (self::resolveType($data['type'])->isRegisterMovement()) {
+            throw new InvalidArgumentException(
+                'Loans and advances are recorded from Receivables or Payables, not posted directly.'
+            );
+        }
+
+        return self::postMovement($data, $writeDetail);
+    }
+
+    /**
+     * Post one receivables / payables movement. Called only by
+     * ReceivablePayableService (and its backfill), which links the new row to
+     * its register entry in the same database transaction; no controller
+     * reaches it directly.
+     */
+    public static function postRegisterMovement(
+        TransactionType $type,
+        string $amount,
+        int $accountId,
+        string $date,
+        string $description,
+        ?string $reference
+    ): int {
+        if (!$type->isRegisterMovement()) {
+            throw new InvalidArgumentException($type->label() . ' is not a receivables / payables movement.');
+        }
+
+        return self::postMovement([
+            'type' => $type,
+            'amount' => $amount,
+            'account_id' => $accountId,
+            'transaction_date' => $date,
+            'description' => $description,
+            'reference_no' => $reference,
+        ]);
+    }
+
+    /**
+     * @param array{
+     *     type: TransactionType|string,
+     *     amount: string|int,
+     *     account_id: int,
+     *     transaction_date: string,
+     *     description: string,
+     *     category_id?: int|null,
+     *     partner_id?: int|null,
+     *     reference_no?: string|null,
+     *     transfer_group?: string|null
+     * } $data
+     */
+    private static function postMovement(array $data, ?callable $writeDetail = null): int
+    {
         $type = self::resolveType($data['type']);
         $amount = self::normaliseAmount((string) $data['amount']);
         $date = self::normaliseDate((string) $data['transaction_date']);
@@ -241,9 +293,28 @@ final class TransactionService
      * a voided transfer would show money leaving one account and never
      * arriving in the other — a balance that is simply wrong.
      *
+     * A receivables / payables posting is refused here: its register entry
+     * would still claim the money moved. It is voided only by cancelling the
+     * entry, through voidRegisterPosting().
+     *
      * @return int how many rows were voided
      */
     public static function void(int $transactionId, string $reason): int
+    {
+        return self::voidTransaction($transactionId, $reason, false);
+    }
+
+    /**
+     * Void the issue posting of a register entry being cancelled. Called only
+     * by ReceivablePayableService::cancel(), inside its own database
+     * transaction with the status change; refuses any other kind of row.
+     */
+    public static function voidRegisterPosting(int $transactionId, string $reason): int
+    {
+        return self::voidTransaction($transactionId, $reason, true);
+    }
+
+    private static function voidTransaction(int $transactionId, string $reason, bool $forRegister): int
     {
         $reason = trim($reason);
 
@@ -265,6 +336,17 @@ final class TransactionService
         }
         if ((string) $transaction['status'] === 'void') {
             throw new RuntimeException('That transaction is already voided.');
+        }
+
+        $isRegisterRow = TransactionType::tryFrom((string) $transaction['type'])?->isRegisterMovement() === true;
+        if ($isRegisterRow && !$forRegister) {
+            throw new RuntimeException(
+                'This transaction belongs to a receivable or payable. Cancel the entry from '
+                . 'Receivables or Payables instead; that voids this posting with it.'
+            );
+        }
+        if (!$isRegisterRow && $forRegister) {
+            throw new RuntimeException('That transaction is not a receivables / payables posting.');
         }
 
         $userId = Auth::id();
