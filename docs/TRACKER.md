@@ -131,6 +131,7 @@ widgets, §15 lists 8 chart types, §16 lists 12 reports.
 | M6-9 | Expected-income report (pending sales) | S | done | Folded into the Monthly Income report (separate "Expected income" section) and the Cash Flow report ("Expected, not counted" line) |
 | M6-6 | CSV export | M | done | `App\Core\Csv::download()`, native `fputcsv`, streamed with UTF-8 BOM; every report has an Export CSV link that preserves its filters |
 | M6-7 | PDF export | M | done | `dompdf/dompdf` (decision 2026-09-24, `docs/PLAN.md`) via `App\Core\Pdf` + `app/Views/pdf/report.php`; deploy pipeline now ships a production `vendor/` (`composer install --no-dev`) since this is the app's first runtime Composer dependency |
+| M6-10 | Dashboard "All time" period | S | done | Started and landed 2026-10-23, owner's request. Period select (Month / All time, `?period=all`) beside the month picker; `App\Services\DashboardPeriod` validates `period`/`month` via `Validator` (allow-list, invalid falls back to the current month). All time = no lower bound, upper bound end of the current month (same as the default month filter). Expenses/Revenue/Net Profit/Expense by Category cover the full history; Revenue vs Expenses regroups by year (`DashboardService::revenueExpenseByYear()`, one grouped query); Budget Used/Remaining and Budget vs Actual are hidden with a note (budgets are monthly); Alerts follow the current month; Today's Expenses, Account Balance, Recent Transactions unchanged. Tests: `DashboardPeriodTest` (unit), `DashboardServiceTest` (+4) |
 
 ## M7 — Documents & audit
 

@@ -39,8 +39,8 @@ final class DashboardService
         return LedgerQuery::posted()->expensesOnly()->between($today, $today)->totalAmount();
     }
 
-    /** Spec §14 "Monthly Expenses" — current-month spending. */
-    public static function expensesBetween(string $from, string $to): string
+    /** Spec §14 "Monthly Expenses" — spending for the period; a null $from means all time. */
+    public static function expensesBetween(?string $from, string $to): string
     {
         return LedgerQuery::posted()->expensesOnly()->between($from, $to)->totalAmount();
     }
@@ -51,7 +51,7 @@ final class DashboardService
      * Cash basis (decision D-2): posted() excludes rows still sitting at
      * 'pending', so invoiced-but-unpaid money is not revenue here.
      */
-    public static function revenueBetween(string $from, string $to): string
+    public static function revenueBetween(?string $from, string $to): string
     {
         return LedgerQuery::posted()->revenueOnly()->between($from, $to)->totalAmount();
     }
@@ -63,7 +63,7 @@ final class DashboardService
      * transfers and partner capital are excluded by construction rather than
      * by a filter someone has to remember.
      */
-    public static function profitBetween(string $from, string $to): string
+    public static function profitBetween(?string $from, string $to): string
     {
         return LedgerQuery::posted()->profitAndLossOnly()->between($from, $to)->netAmount();
     }
@@ -158,11 +158,67 @@ final class DashboardService
     }
 
     /**
+     * "Revenue vs Expenses" for the All time view: one bar pair per year, from
+     * the first year with activity up to the year of $to.
+     *
+     * Six months would show a fraction of the history and one bar per month
+     * would be unreadable after a few years, so all time groups by year. Still
+     * one grouped query; quiet years are filled in like quiet months above.
+     *
+     * @return list<array{year:string,label:string,revenue:string,expense:string,profit:string}>
+     */
+    public static function revenueExpenseByYear(string $to): array
+    {
+        $branchId = Auth::branchId();
+        if ($branchId === null) {
+            throw new RuntimeException('No active branch — cannot read the dashboard.');
+        }
+
+        $rows = Database::instance()->all(
+            "SELECT YEAR(COALESCE(t.received_at, t.transaction_date)) AS y,
+                    COALESCE(SUM(CASE WHEN t.type = 'income'  THEN t.amount END), 0) AS revenue,
+                    COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0) AS expense
+             FROM transactions t
+             WHERE t.status = 'posted'
+               AND t.branch_id = :branch
+               AND t.type IN ('income', 'expense')
+               AND COALESCE(t.received_at, t.transaction_date) <= :upper
+             GROUP BY y
+             ORDER BY y",
+            ['branch' => $branchId, 'upper' => $to]
+        );
+
+        $byYear = [];
+        foreach ($rows as $row) {
+            $byYear[(int) $row['y']] = $row;
+        }
+
+        $lastYear = (int) substr($to, 0, 4);
+        $firstYear = array_key_first($byYear) ?? $lastYear;
+
+        $series = [];
+        for ($year = $firstYear; $year <= $lastYear; $year++) {
+            $revenue = (string) ($byYear[$year]['revenue'] ?? '0.00');
+            $expense = (string) ($byYear[$year]['expense'] ?? '0.00');
+
+            $series[] = [
+                'year' => (string) $year,
+                'label' => (string) $year,
+                'revenue' => $revenue,
+                'expense' => $expense,
+                'profit' => number_format((float) $revenue - (float) $expense, 2, '.', ''),
+            ];
+        }
+
+        return $series;
+    }
+
+    /**
      * Spec §14/§15 "Expense by Category" — spending mix for the period.
      *
      * @return list<array<string,mixed>>
      */
-    public static function expenseByCategory(string $from, string $to, int $limit = 8): array
+    public static function expenseByCategory(?string $from, string $to, int $limit = 8): array
     {
         $rows = LedgerQuery::posted()->expensesOnly()->between($from, $to)->groupedByCategory();
 

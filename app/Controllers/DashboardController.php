@@ -7,8 +7,9 @@ namespace App\Controllers;
 use App\Core\Controller;
 use App\Models\RecurringOccurrence;
 use App\Services\BudgetService;
+use App\Services\DashboardPeriod;
 use App\Services\DashboardService;
-use InvalidArgumentException;
+use DateTimeImmutable;
 
 /**
  * The dashboard, spec §14.
@@ -26,26 +27,26 @@ final class DashboardController extends Controller
 {
     public function index(): void
     {
-        [$year, $month] = $this->periodFromRequest();
-        [$from, $to] = BudgetService::periodBounds($year, $month);
+        $period = $this->periodFromRequest();
 
-        $budgetSummary = BudgetService::summaryForPeriod($year, $month);
-        $budgetTotals = BudgetService::totals($budgetSummary);
+        // Budgets are set per calendar month, so "All time" has no budget
+        // figures to show; alerts stay actionable by following the current month.
+        $budgetSummary = BudgetService::summaryForPeriod($period->year, $period->month);
 
         $this->view('pages/dashboard', [
             'title' => 'Dashboard',
             'nav' => 'dashboard',
             'pageTitle' => 'Dashboard',
-            'pageMeta' => date('F Y', (int) strtotime($from)) . ' · all accounts',
+            'pageMeta' => $period->label() . ' · all accounts',
             'pageScripts' => '<link rel="stylesheet" href="' . e(asset('assets/vendor/apexcharts.css')) . '">'
                 . '<script src="' . e(asset('assets/vendor/apexcharts.min.js')) . '" defer></script>'
                 . '<script src="' . e(asset('assets/js/dashboard.js')) . '" defer></script>',
-            'monthValue' => sprintf('%04d-%02d', $year, $month),
+            'period' => $period,
             'todayExpenses' => DashboardService::todayExpenses(),
-            'monthExpenses' => DashboardService::expensesBetween($from, $to),
-            'monthRevenue' => DashboardService::revenueBetween($from, $to),
-            'monthProfit' => DashboardService::profitBetween($from, $to),
-            'budgetTotals' => $budgetTotals,
+            'monthExpenses' => DashboardService::expensesBetween($period->from, $period->to),
+            'monthRevenue' => DashboardService::revenueBetween($period->from, $period->to),
+            'monthProfit' => DashboardService::profitBetween($period->from, $period->to),
+            'budgetTotals' => BudgetService::totals($budgetSummary),
             'accountBalances' => DashboardService::accountBalances(),
             'recentTransactions' => DashboardService::recentTransactions(8),
             'alerts' => BudgetService::alerts($budgetSummary),
@@ -55,36 +56,41 @@ final class DashboardController extends Controller
         ]);
     }
 
-    /** Spec §14/§15 "Revenue vs Expenses" trend, last 6 months. */
+    /** Spec §14/§15 "Revenue vs Expenses" trend: last 6 months, or by year for All time. */
     public function trendChart(): void
     {
-        $this->json(['series' => DashboardService::revenueExpenseTrend()]);
+        $period = $this->periodFromRequest();
+
+        $this->json(['series' => $period->allTime
+            ? DashboardService::revenueExpenseByYear($period->to)
+            : DashboardService::revenueExpenseTrend()]);
     }
 
-    /** Spec §14/§15 "Expense by Category" for the selected month. */
+    /** Spec §14/§15 "Expense by Category" for the selected month or all time. */
     public function categoryChart(): void
     {
-        [$year, $month] = $this->periodFromRequest();
-        [$from, $to] = BudgetService::periodBounds($year, $month);
+        $period = $this->periodFromRequest();
 
-        $this->json(['categories' => DashboardService::expenseByCategory($from, $to)]);
+        $this->json(['categories' => DashboardService::expenseByCategory($period->from, $period->to)]);
     }
 
-    /** Spec §14/§15 "Budget vs Actual" for the selected month. */
+    /**
+     * Spec §14/§15 "Budget vs Actual" for the selected month.
+     *
+     * Budgets are monthly, so "All time" has none: the dashboard hides this
+     * chart then, and the endpoint answers with an empty list to match.
+     */
     public function budgetChart(): void
     {
-        [$year, $month] = $this->periodFromRequest();
+        $period = $this->periodFromRequest();
 
-        $this->json(['budgets' => BudgetService::summaryForPeriod($year, $month)]);
+        $this->json(['budgets' => $period->allTime
+            ? []
+            : BudgetService::summaryForPeriod($period->year, $period->month)]);
     }
 
-    /** @return array{0:int,1:int} */
-    private function periodFromRequest(): array
+    private function periodFromRequest(): DashboardPeriod
     {
-        try {
-            return DashboardService::parseMonth($_GET['month'] ?? null);
-        } catch (InvalidArgumentException) {
-            return [(int) date('Y'), (int) date('n')];
-        }
+        return DashboardPeriod::fromQuery($_GET, new DateTimeImmutable('today'));
     }
 }

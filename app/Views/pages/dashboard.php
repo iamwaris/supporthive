@@ -9,7 +9,7 @@
  * Every number arrived as a bounded SQL aggregate via DashboardService /
  * BudgetService — nothing here loops over the transaction table.
  *
- * @var string                     $monthValue
+ * @var DashboardPeriod            $period
  * @var string                     $todayExpenses
  * @var string                     $monthExpenses
  * @var string                     $monthRevenue
@@ -25,11 +25,13 @@
 declare(strict_types=1);
 
 use App\Domain\TransactionType;
+use App\Services\DashboardPeriod;
 use App\Services\Settings;
 
 $symbol = Settings::string('currency_symbol', 'Rs');
 $money = static fn (mixed $v): string => number_format((float) $v, 2);
-$monthLabel = date('F Y', (int) strtotime($monthValue . '-01'));
+$periodLabel = $period->label();
+$chartQuery = '?' . $period->queryString();
 
 $typeBadge = [
     'income' => 'badge-ok',
@@ -50,9 +52,17 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
 
 <form method="get" action="<?= e(url('/dashboard')) ?>" class="card mb-5 flex flex-wrap items-end gap-3 px-5 py-4">
     <div>
+        <label for="dash-period" class="label">Period</label>
+        <select id="dash-period" name="period" class="input" x-on:change="$el.form.submit()">
+            <option value="<?= e(DashboardPeriod::MONTH) ?>" <?= $period->allTime ? '' : 'selected' ?>>Month</option>
+            <option value="<?= e(DashboardPeriod::ALL_TIME) ?>" <?= $period->allTime ? 'selected' : '' ?>>All time</option>
+        </select>
+    </div>
+    <div>
         <label for="dash-month" class="label">Month</label>
-        <input id="dash-month" name="month" type="month" value="<?= e($monthValue) ?>" class="input"
-               x-on:change="$el.form.submit()">
+        <?php // Picking a month means "show that month", so with JS it also leaves All time. ?>
+        <input id="dash-month" name="month" type="month" value="<?= e($period->monthValue()) ?>" class="input"
+               x-on:change="$el.form.elements.period.value = 'month'; $el.form.submit()">
     </div>
     <noscript><button type="submit" class="btn-secondary">Go</button></noscript>
     <p class="ml-auto text-[11px] text-slate-500">Today's Expenses and Account Balance are always as of right now.</p>
@@ -77,26 +87,29 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
         <p class="mt-1.5 text-[11.5px] text-slate-500"><?= e(date('j M Y')) ?></p>
     </div>
     <div class="card p-4">
-        <p class="kpi-label">Monthly Expenses</p>
+        <p class="kpi-label"><?= e($period->allTime ? 'All-time Expenses' : 'Monthly Expenses') ?></p>
         <p class="kpi-value money text-ink"><?= e($symbol) ?> <?= e($money($monthExpenses)) ?></p>
-        <p class="mt-1.5 text-[11.5px] text-slate-500"><?= e($monthLabel) ?></p>
+        <p class="mt-1.5 text-[11.5px] text-slate-500"><?= e($periodLabel) ?></p>
     </div>
     <div class="card p-4">
-        <p class="kpi-label">Monthly Revenue</p>
+        <p class="kpi-label"><?= e($period->allTime ? 'All-time Revenue' : 'Monthly Revenue') ?></p>
         <p class="kpi-value money text-ok-text"><?= e($symbol) ?> <?= e($money($monthRevenue)) ?></p>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">Received only, cash basis</p>
+        <p class="mt-1.5 text-[11.5px] text-slate-500"><?= e($periodLabel) ?> · received only, cash basis</p>
     </div>
     <div class="card p-4">
         <p class="kpi-label">Net Profit</p>
         <p class="kpi-value money <?= (float) $monthProfit < 0 ? 'text-bad-text' : 'text-ink' ?>">
             <?= e($symbol) ?> <?= e($money($monthProfit)) ?>
         </p>
-        <p class="mt-1.5 text-[11.5px] text-slate-500">Revenue minus expenses</p>
+        <p class="mt-1.5 text-[11.5px] text-slate-500"><?= e($periodLabel) ?> · revenue minus expenses</p>
     </div>
 
     <div class="card p-4">
         <p class="kpi-label">Budget Used</p>
-        <?php if ((int) $budgetTotals['count'] === 0) : ?>
+        <?php if ($period->allTime) : ?>
+            <p class="kpi-value money text-slate-300">&mdash;</p>
+            <p class="mt-1.5 text-[11.5px] text-slate-500">Budgets are monthly. Pick a month to see them.</p>
+        <?php elseif ((int) $budgetTotals['count'] === 0) : ?>
             <p class="kpi-value money text-slate-300">&mdash;</p>
             <p class="mt-1.5 text-[11.5px] text-slate-500">
                 <a href="<?= e(url('/budgets')) ?>" class="underline">No budgets set</a>
@@ -110,7 +123,10 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
     </div>
     <div class="card p-4">
         <p class="kpi-label">Budget Remaining</p>
-        <?php if ((int) $budgetTotals['count'] === 0) : ?>
+        <?php if ($period->allTime) : ?>
+            <p class="kpi-value money text-slate-300">&mdash;</p>
+            <p class="mt-1.5 text-[11.5px] text-slate-500">Budgets are monthly. Pick a month to see them.</p>
+        <?php elseif ((int) $budgetTotals['count'] === 0) : ?>
             <p class="kpi-value money text-slate-300">&mdash;</p>
             <p class="mt-1.5 text-[11.5px] text-slate-500">Across <?= (int) $budgetTotals['count'] ?> budgets</p>
         <?php else : ?>
@@ -142,26 +158,35 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
 
 <!-- Charts -->
 <div id="dashboard-charts"
-     data-trend-url="<?= e(url('/dashboard/charts/trend')) ?>"
-     data-category-url="<?= e(url('/dashboard/charts/category') . '?month=' . urlencode($monthValue)) ?>"
-     data-budget-url="<?= e(url('/dashboard/charts/budget') . '?month=' . urlencode($monthValue)) ?>"
+     data-trend-url="<?= e(url('/dashboard/charts/trend') . $chartQuery) ?>"
+     data-category-url="<?= e(url('/dashboard/charts/category') . $chartQuery) ?>"
+     <?php if (!$period->allTime) : ?>
+     data-budget-url="<?= e(url('/dashboard/charts/budget') . $chartQuery) ?>"
+     <?php endif; ?>
      class="mt-5 grid gap-4 xl:grid-cols-[1fr_360px]">
     <div class="card p-4">
         <h2 class="font-display text-sm font-semibold text-ink">Revenue vs Expenses</h2>
-        <p class="text-[11.5px] text-slate-500">Last 6 months</p>
+        <p class="text-[11.5px] text-slate-500"><?= e($period->allTime ? 'All time, by year' : 'Last 6 months') ?></p>
         <div id="chart-trend" class="mt-2"></div>
     </div>
     <div class="card p-4">
         <h2 class="font-display text-sm font-semibold text-ink">Expense by Category</h2>
-        <p class="text-[11.5px] text-slate-500"><?= e($monthLabel) ?></p>
+        <p class="text-[11.5px] text-slate-500"><?= e($periodLabel) ?></p>
         <div id="chart-category" class="mt-2"></div>
     </div>
 </div>
 
 <div class="card mt-4 p-4">
     <h2 class="font-display text-sm font-semibold text-ink">Budget vs Actual</h2>
-    <p class="text-[11.5px] text-slate-500"><?= e($monthLabel) ?></p>
-    <div id="chart-budget" class="mt-2"></div>
+    <?php if ($period->allTime) : ?>
+        <p class="text-[11.5px] text-slate-500">All time</p>
+        <p class="mt-4 rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">
+            Budgets are set per month, so there is no all-time comparison. Pick a month above to see it.
+        </p>
+    <?php else : ?>
+        <p class="text-[11.5px] text-slate-500"><?= e($periodLabel) ?></p>
+        <div id="chart-budget" class="mt-2"></div>
+    <?php endif; ?>
 </div>
 
 <!-- Recent Transactions + Alerts -->
@@ -205,7 +230,9 @@ $alertBadge = static fn (string $state): string => $state === 'exceeded' ? 'badg
 
     <div class="card p-5">
         <h2 class="font-display text-sm font-semibold text-ink">Alerts</h2>
-        <p class="text-[11.5px] text-slate-500">Budgets needing attention</p>
+        <p class="text-[11.5px] text-slate-500">
+            Budgets needing attention<?= e($period->allTime ? ' · this month (budgets are monthly)' : '') ?>
+        </p>
 
         <?php if ($alerts === []) : ?>
             <p class="mt-4 rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">

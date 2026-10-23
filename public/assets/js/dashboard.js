@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(({ categories }) => {
       const el = document.getElementById('chart-category');
       if (categories.length === 0) {
-        emptyState(el, 'No expenses recorded this month.');
+        emptyState(el, 'No expenses recorded in this period.');
         return;
       }
       new ApexCharts(el, {
@@ -53,6 +53,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }).render();
     })
     .catch(() => emptyState(document.getElementById('chart-category'), 'Could not load this chart.'));
+
+  // The All time view has no budget chart (budgets are monthly), so no URL.
+  if (!root.dataset.budgetUrl) {
+    return;
+  }
 
   fetch(root.dataset.budgetUrl)
     .then((r) => r.json())

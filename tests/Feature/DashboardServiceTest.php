@@ -6,9 +6,11 @@ namespace Tests\Feature;
 
 use App\Core\Database;
 use App\Domain\TransactionType;
+use App\Services\DashboardPeriod;
 use App\Services\DashboardService;
 use App\Services\LedgerQuery;
 use App\Services\TransactionService;
+use DateTimeImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\BranchFixture;
@@ -272,6 +274,124 @@ final class DashboardServiceTest extends TestCase
         // single-query implementation.
         $series = DashboardService::revenueExpenseTrend(12);
         self::assertCount(12, $series);
+    }
+
+    private function allTime(): DashboardPeriod
+    {
+        return DashboardPeriod::fromQuery(['period' => DashboardPeriod::ALL_TIME], new DateTimeImmutable('today'));
+    }
+
+    /**
+     * The fixture branch is fresh, so its all-time totals are exactly the
+     * rows posted here: the assertions can be exact rather than ">=".
+     */
+    public function testAllTimeTotalsCountRowsAcrossMonthsAndYearsUpToTheUpperBound(): void
+    {
+        $this->postExpense('100.00', '2024-03-10');
+        $this->postExpense('200.00', '2025-07-01');
+        $this->postExpense('300.00', '2026-09-05');
+        $this->postIncome('1000.00', '2025-01-15');
+        $this->postIncome('500.00', '2026-02-20');
+        $this->postIncome('9999.00', '2026-03-01', 'pending'); // cash basis: never revenue
+        // Past the month filter's upper bound (end of the current month).
+        $this->postExpense('5000.00', date('Y-m-d', (int) strtotime('first day of +2 months')));
+
+        $period = $this->allTime();
+
+        self::assertSame('600.00', DashboardService::expensesBetween($period->from, $period->to));
+        self::assertSame('1500.00', DashboardService::revenueBetween($period->from, $period->to));
+        self::assertSame('900.00', DashboardService::profitBetween($period->from, $period->to));
+
+        $categories = DashboardService::expenseByCategory($period->from, $period->to);
+        self::assertCount(1, $categories);
+        self::assertSame('600.00', number_format((float) $categories[0]['total'], 2, '.', ''));
+
+        // Independent read: the same rows hand-filtered with explicit bounds.
+        self::assertSame(
+            '600.00',
+            LedgerQuery::posted()->expensesOnly()->between('2000-01-01', $period->to)->totalAmount()
+        );
+    }
+
+    public function testAllTimeTotalsExcludeOtherBranches(): void
+    {
+        $this->postExpense('100.00', '2025-05-05');
+        $this->postIncome('400.00', '2025-05-06');
+
+        $otherBranchId = BranchFixture::create('DB');
+        $db = Database::instance();
+        $otherBank = $db->insert('accounts', [
+            'branch_id' => $otherBranchId,
+            'name' => 'DB Other Bank',
+            'type' => 'bank',
+            'opening_balance' => '0.00',
+            'opening_date' => '2024-01-01',
+            'is_active' => 1,
+        ]);
+        $otherExpense = $db->insert('categories', [
+            'branch_id' => $otherBranchId,
+            'name' => 'DB Other Expense',
+            'type' => 'expense',
+            'is_active' => 1,
+        ]);
+        $otherIncome = $db->insert('categories', [
+            'branch_id' => $otherBranchId,
+            'name' => 'DB Other Income',
+            'type' => 'income',
+            'is_active' => 1,
+        ]);
+
+        $_SESSION['_active_branch_id'] = $otherBranchId;
+        foreach ([['expense', $otherExpense], ['income', $otherIncome]] as [$type, $categoryId]) {
+            TransactionService::post([
+                'type' => TransactionType::from($type),
+                'amount' => '7777.00',
+                'account_id' => $otherBank,
+                'category_id' => $categoryId,
+                'transaction_date' => '2024-06-01',
+                'description' => 'DB other branch',
+            ]);
+        }
+        $_SESSION['_active_branch_id'] = $this->branchId;
+
+        $period = $this->allTime();
+
+        self::assertSame('100.00', DashboardService::expensesBetween($period->from, $period->to));
+        self::assertSame('400.00', DashboardService::revenueBetween($period->from, $period->to));
+        self::assertSame('300.00', DashboardService::profitBetween($period->from, $period->to));
+
+        $series = DashboardService::revenueExpenseByYear($period->to);
+        self::assertSame('2025', $series[0]['year'], 'a 2024 row from another branch must not start the axis');
+    }
+
+    public function testRevenueExpenseByYearCoversTheFullHistoryAndFillsQuietYears(): void
+    {
+        $this->postExpense('100.00', '2023-04-01');
+        $this->postExpense('50.00', '2023-11-30');
+        $this->postIncome('800.00', '2025-06-15');
+
+        $period = $this->allTime();
+        $series = DashboardService::revenueExpenseByYear($period->to);
+
+        $byYear = array_column($series, null, 'year');
+        $lastYear = (int) substr($period->to, 0, 4);
+
+        self::assertSame(range(2023, $lastYear), array_map('intval', array_keys($byYear)));
+        self::assertSame('150.00', number_format((float) $byYear['2023']['expense'], 2, '.', ''));
+        self::assertSame('0.00', number_format((float) $byYear['2024']['revenue'], 2, '.', ''), 'quiet year filled');
+        self::assertSame('800.00', number_format((float) $byYear['2025']['revenue'], 2, '.', ''));
+        self::assertSame('800.00', $byYear['2025']['profit']);
+    }
+
+    public function testInvalidPeriodFallsBackToTheCurrentMonthTotals(): void
+    {
+        $this->postExpense('100.00', '2024-03-10');
+        $this->postExpense('25.00', date('Y-m-d'));
+
+        $period = DashboardPeriod::fromQuery(['period' => 'everything'], new DateTimeImmutable('today'));
+
+        self::assertFalse($period->allTime);
+        self::assertSame('25.00', DashboardService::expensesBetween($period->from, $period->to));
     }
 
     public function testParseMonthRejectsGarbageRatherThanGuessing(): void
