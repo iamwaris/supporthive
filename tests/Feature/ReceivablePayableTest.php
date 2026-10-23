@@ -605,7 +605,12 @@ final class ReceivablePayableTest extends TestCase
         );
         $decoded = json_decode((string) $meta, true);
         self::assertIsArray($decoded);
-        self::assertSame(['party_name', 'due_date'], array_keys($decoded['after']), 'only changed fields are diffed');
+        // MySQL's JSON type reorders object keys on storage; MariaDB's keeps insertion order.
+        self::assertEqualsCanonicalizing(
+            ['party_name', 'due_date'],
+            array_keys($decoded['after']),
+            'only changed fields are diffed'
+        );
     }
 
     public function testLockedFieldsCannotBeChangedOnEdit(): void
