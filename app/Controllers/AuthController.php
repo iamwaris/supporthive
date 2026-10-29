@@ -10,6 +10,7 @@ use App\Core\Controller;
 use App\Core\Http;
 use App\Core\Logger;
 use App\Core\RateLimiter;
+use App\Core\RememberMe;
 use App\Core\Session;
 use App\Core\Validator;
 use App\Services\Access;
@@ -26,15 +27,18 @@ final class AuthController extends Controller
         $validator = Validator::make($_POST, [
             'email' => 'required|email|max:190',
             'password' => 'required|max:200',
+            // A checkbox: absent when unticked, "1" when ticked. Anything
+            // else (an array, another value) fails like any other bad field.
+            'remember' => 'nullable|in:1',
         ]);
 
         // Deliberately vague on validation failure too: "enter a valid email"
         // on a login form tells an attacker which half they got wrong.
         if ($validator->fails()) {
-            $this->failLogin((string) ($_POST['email'] ?? ''));
+            $this->failLogin((string) ($_POST['email'] ?? ''), ($_POST['remember'] ?? null) === '1');
         }
 
-        /** @var array{email:string,password:string} $input */
+        /** @var array{email:string,password:string,remember:?string} $input */
         $input = $validator->validated();
         $email = strtolower(trim($input['email']));
 
@@ -48,10 +52,17 @@ final class AuthController extends Controller
         RateLimiter::guard('login-ip:' . Http::clientIp(), $maxAttempts * 4, $lockout);
 
         if (!Auth::attempt($email, $input['password'])) {
-            $this->failLogin($email);
+            $this->failLogin($email, $input['remember'] === '1');
         }
 
         RateLimiter::clear('login:' . $email);
+
+        // Drop any token this browser still holds (a different account's, or
+        // one that is no longer valid) before deciding whether to issue one.
+        RememberMe::forgetCurrentDevice();
+        if ($input['remember'] === '1') {
+            RememberMe::remember((int) Auth::id());
+        }
 
         Session::forget('_old');
         Http::redirect(Access::landingPath((string) (Auth::user()['role'] ?? '')));
@@ -70,11 +81,11 @@ final class AuthController extends Controller
      * wrong password, inactive account. Anything that distinguishes them turns
      * the form into an account-existence oracle.
      */
-    private function failLogin(string $email): never
+    private function failLogin(string $email, bool $remember): never
     {
         Logger::security('Login rejected', ['email_given' => $email !== '', 'ip' => Http::clientIp()]);
 
-        Session::set('_old', ['email' => $email]);
+        Session::set('_old', ['email' => $email, 'remember' => $remember ? '1' : '']);
         Session::flash('error', 'Those details do not match an account.');
         Http::redirect('/login');
     }

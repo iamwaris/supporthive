@@ -48,6 +48,7 @@ require dirname(__DIR__) . '/app/bootstrap.php';
 use App\Core\Auth;
 use App\Core\Config;
 use App\Core\Database;
+use App\Core\RememberMe;
 use App\Services\Access;
 
 $name = trim($argv[1] ?? '');
@@ -172,6 +173,8 @@ if ($existing !== null) {
         'id = :id',
         ['id' => $existing['id']]
     );
+    // New password, and possibly a new role or branch: no device stays remembered.
+    RememberMe::revokeAllForUser((int) $existing['id']);
     echo "Updated existing user #{$existing['id']} ({$email}) as {$role} in {$branch['name']}."
         . " Must change password on next login.\n";
     exit(0);

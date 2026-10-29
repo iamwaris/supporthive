@@ -50,6 +50,11 @@ final class Router
         $method = Http::method() === 'HEAD' ? 'GET' : Http::method();
         $path = Http::path();
 
+        // Before middleware, so `auth` and `guest` see the restored login.
+        // GET/HEAD only (see RememberMe::restoreSession()), so it never
+        // touches a request that Csrf::check() below has to validate.
+        RememberMe::restoreSession();
+
         // CSRF is enforced for every unsafe method before any handler runs.
         Csrf::check();
 

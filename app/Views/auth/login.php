@@ -62,6 +62,20 @@ $passwordError = $errors['password'][0] ?? null;
         <?php endif; ?>
     </div>
 
+    <div class="mt-5 flex items-start gap-2.5">
+        <input id="remember" name="remember" type="checkbox" value="1"
+               <?= old('remember') === '1' ? 'checked' : '' ?>
+               aria-describedby="remember-help"
+               class="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400">
+        <div>
+            <label for="remember" class="text-sm font-medium text-ink">Remember me on this device</label>
+            <p id="remember-help" class="mt-0.5 text-xs text-slate-500">
+                Stay signed in for <?= e((string) (int) Config::get('session.remember_days', 30)) ?> days.
+                Don't tick this on a shared computer.
+            </p>
+        </div>
+    </div>
+
     <button type="submit" class="btn-primary mt-7 w-full">Sign in</button>
 
     <div class="mt-6 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">

@@ -8,6 +8,7 @@ use App\Core\Auth;
 use App\Core\Controller;
 use App\Core\Http;
 use App\Core\Logger;
+use App\Core\RememberMe;
 use App\Core\Session;
 use App\Models\User;
 use App\Services\Access;
@@ -136,6 +137,10 @@ final class UserController extends Controller
 
         $after = ['name' => trim((string) $clean['name']), 'role' => $clean['role']];
         $users->updateById($id, $after);
+        if ($clean['role'] !== $target['role']) {
+            // A role change is a privilege change: remembered devices sign in again.
+            RememberMe::revokeAllForUser($id);
+        }
 
         Logger::security('User updated', ['user_id' => $id, 'role' => $clean['role'], 'by' => Auth::id()]);
         $diff = Audit::diff(['name' => $target['name'], 'role' => $target['role']], $after);
@@ -165,6 +170,9 @@ final class UserController extends Controller
 
         $wasActive = (string) $target['status'] === 'active';
         $users->updateById($id, ['status' => $wasActive ? 'suspended' : 'active']);
+        if ($wasActive) {
+            RememberMe::revokeAllForUser($id);
+        }
 
         Logger::security($wasActive ? 'User suspended' : 'User reactivated', ['user_id' => $id, 'by' => Auth::id()]);
         Audit::record(
@@ -199,6 +207,7 @@ final class UserController extends Controller
 
         $tempPassword = bin2hex(random_bytes(9));
         $users->updateById($id, ['password_hash' => Auth::hash($tempPassword), 'must_change_password' => 1]);
+        RememberMe::revokeAllForUser($id);
 
         Logger::security('User password reset', ['user_id' => $id, 'by' => Auth::id()]);
         Audit::record('user.password_reset', 'users', $id, null, null);

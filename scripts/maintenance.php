@@ -22,12 +22,18 @@ require dirname(__DIR__) . '/app/bootstrap.php';
 
 use App\Core\Logger;
 use App\Core\RateLimiter;
+use App\Core\RememberMe;
 
 // Rate-limit rows only ever matter for the decay window they were written
 // for (the longest currently configured is the login lockout); a day past
 // that they exist purely as dead weight in the table.
 RateLimiter::prune(86400);
 echo "rate_limits: pruned rows older than 1 day\n";
+
+// An expired token can never sign anyone in (RememberMe::consume() checks
+// expires_at); pruning only keeps the table down to live devices.
+$expiredTokens = RememberMe::prune();
+echo "remember_tokens: deleted {$expiredTokens} expired token(s)\n";
 
 // Each day already gets its own log file; this only removes whole files
 // past the retention window, never touches the one being written to today.

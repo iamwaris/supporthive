@@ -56,19 +56,10 @@ final class Auth
             return false;
         }
 
-        if (($user['status'] ?? 'active') !== 'active') {
-            Logger::security('Login blocked: inactive account', ['user_id' => $user['id']]);
-            return false;
-        }
-
-        // Locked by a super admin. Checked after the password so this can
-        // never be used to probe whether an email/password pair is valid —
-        // a wrong password always fails first, regardless of branch state.
-        if ($user['branch_id'] !== null && (int) ($user['branch_active'] ?? 0) !== 1) {
-            Logger::security(
-                'Login blocked: branch locked',
-                ['user_id' => $user['id'], 'branch_id' => $user['branch_id']]
-            );
+        // Checked after the password so this can never be used to probe
+        // whether an email/password pair is valid — a wrong password always
+        // fails first, regardless of account or branch state.
+        if (!self::passesSignInGates($user)) {
             return false;
         }
 
@@ -77,6 +68,45 @@ final class Auth
         }
 
         self::login((int) $user['id']);
+        return true;
+    }
+
+    /**
+     * The gates attempt() applies after the password, for a sign-in that has
+     * no password: a remember-me cookie (App\Core\RememberMe). Keeping one
+     * implementation means a suspended account or locked branch is refused
+     * identically on both paths.
+     */
+    public static function mayStillSignIn(int $userId): bool
+    {
+        $user = Database::instance()->first(
+            'SELECT u.id, u.status, u.branch_id, b.is_active AS branch_active
+             FROM users u
+             LEFT JOIN branches b ON b.id = u.branch_id
+             WHERE u.id = :id LIMIT 1',
+            ['id' => $userId]
+        );
+
+        return $user !== null && self::passesSignInGates($user);
+    }
+
+    /** @param array<string,mixed> $user a users row joined with its branch's is_active as branch_active */
+    private static function passesSignInGates(array $user): bool
+    {
+        if (($user['status'] ?? 'active') !== 'active') {
+            Logger::security('Login blocked: inactive account', ['user_id' => $user['id']]);
+            return false;
+        }
+
+        // Locked by a super admin.
+        if ($user['branch_id'] !== null && (int) ($user['branch_active'] ?? 0) !== 1) {
+            Logger::security(
+                'Login blocked: branch locked',
+                ['user_id' => $user['id'], 'branch_id' => $user['branch_id']]
+            );
+            return false;
+        }
+
         return true;
     }
 
@@ -121,6 +151,10 @@ final class Auth
         // Recorded before Session::destroy(), since Audit::record() reads
         // Auth::id()/Auth::branchId() from the very session being destroyed.
         Audit::record('auth.logout', 'users', $id, null, null);
+        // Every logout path — the button, a deactivated account, a locked
+        // branch — also ends "remember me" on this device; otherwise the
+        // next request would quietly sign the same browser back in.
+        RememberMe::forgetCurrentDevice();
         Session::destroy();
         self::$cached = null;
         Logger::security('Logout', ['user_id' => $id]);
@@ -130,6 +164,11 @@ final class Auth
      * Set a new password for the signed-in user and clear the forced-change
      * flag. Rotates the session id — a changed password is exactly the kind
      * of privilege-adjacent event login()/logout() already rotate for.
+     *
+     * Revokes "remember me" on every device, so a changed password signs out
+     * anyone else holding a remembered login. The device making the change
+     * has just proved the password, so if it was remembered it gets a fresh
+     * token rather than being signed out at its next idle timeout.
      */
     public static function updatePassword(string $newPassword): void
     {
@@ -144,6 +183,12 @@ final class Auth
             'id = :id',
             ['id' => $userId]
         );
+
+        $wasRemembered = RememberMe::deviceIsRemembered();
+        RememberMe::revokeAllForUser($userId);
+        if ($wasRemembered) {
+            RememberMe::remember($userId);
+        }
 
         Session::regenerate();
         self::$cached = null;

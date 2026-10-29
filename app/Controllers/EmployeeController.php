@@ -9,6 +9,7 @@ use App\Core\Controller;
 use App\Core\Csrf;
 use App\Core\Http;
 use App\Core\Logger;
+use App\Core\RememberMe;
 use App\Core\Session;
 use App\Core\Validator;
 use App\Models\EmployeeProfile;
@@ -201,6 +202,9 @@ final class EmployeeController extends Controller
         $newStatus = $wasActive ? 'suspended' : 'active';
 
         (new User())->updateById($id, ['status' => $newStatus]);
+        if ($wasActive) {
+            RememberMe::revokeAllForUser($id);
+        }
 
         Logger::security($wasActive ? 'Employee deactivated' : 'Employee reactivated', [
             'user_id' => $id,
@@ -225,6 +229,7 @@ final class EmployeeController extends Controller
 
         $tempPassword = bin2hex(random_bytes(9));
         (new User())->updateById($id, ['password_hash' => Auth::hash($tempPassword), 'must_change_password' => 1]);
+        RememberMe::revokeAllForUser($id);
 
         Logger::security('Employee password reset', ['user_id' => $id, 'by' => Auth::id()]);
         Audit::record('employee.password_reset', 'users', $id, null, null);

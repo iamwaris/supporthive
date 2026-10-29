@@ -10,6 +10,7 @@ use App\Core\Controller;
 use App\Core\Database;
 use App\Core\Http;
 use App\Core\Logger;
+use App\Core\RememberMe;
 use App\Core\Session;
 use App\Services\Access;
 
@@ -108,6 +109,8 @@ final class DevAuthController extends Controller
             Auth::logout();
             Session::start();
         }
+        // Switching identity must not leave the previous account remembered here.
+        RememberMe::forgetCurrentDevice();
 
         Auth::login((int) $user['id']);
 
