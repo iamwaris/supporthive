@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Controllers\AuthController;
+use App\Controllers\BranchController;
 use App\Controllers\EmployeeController;
 use App\Controllers\UserController;
 use App\Core\Auth;
@@ -90,6 +91,45 @@ final class RememberMeTest extends TestCase
             'SELECT COUNT(*) FROM remember_tokens WHERE user_id = :id',
             ['id' => $userId]
         );
+    }
+
+    /** Tokens that can still sign in: not yet consumed by a rotation. */
+    private function liveTokenCount(int $userId): int
+    {
+        return (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM remember_tokens WHERE user_id = :id AND consumed_at IS NULL',
+            ['id' => $userId]
+        );
+    }
+
+    /** Backdate a token's consumed_at, as if its rotation happened $secondsAgo. */
+    private function markConsumed(string $cookie, int $secondsAgo): void
+    {
+        Database::instance()->update(
+            'remember_tokens',
+            ['consumed_at' => date('Y-m-d H:i:s', time() - $secondsAgo)],
+            'selector = :s',
+            ['s' => RememberMe::parse($cookie)['selector'] ?? '']
+        );
+    }
+
+    private function securityLogSince(int $offset): string
+    {
+        $file = STORAGE_PATH . '/logs/security-' . date('Y-m-d') . '.log';
+        clearstatcache();
+        if (!is_file($file)) {
+            return '';
+        }
+
+        return (string) file_get_contents($file, false, null, $offset);
+    }
+
+    private function securityLogSize(): int
+    {
+        $file = STORAGE_PATH . '/logs/security-' . date('Y-m-d') . '.log';
+        clearstatcache();
+
+        return is_file($file) ? (int) filesize($file) : 0;
     }
 
     /** @return array<string,mixed>|null */
@@ -197,16 +237,110 @@ final class RememberMeTest extends TestCase
         $rotated = $_COOKIE[RememberMe::COOKIE] ?? null;
         self::assertIsString($rotated);
         self::assertNotSame($original, $rotated);
-        self::assertNull($this->tokenRow($original), 'the presented token is deleted');
-        self::assertNotNull($this->tokenRow($rotated), 'a replacement token is issued');
+        $spent = $this->tokenRow($original);
+        self::assertNotNull($spent, 'the presented token is kept, so a later replay is recognisable');
+        self::assertNotNull($spent['consumed_at'], 'the presented token is marked consumed');
+        $replacement = $this->tokenRow($rotated);
+        self::assertNotNull($replacement, 'a replacement token is issued');
+        self::assertNull($replacement['consumed_at']);
         self::assertNotSame(
             RememberMe::parse($original)['selector'] ?? null,
             RememberMe::parse($rotated)['selector'] ?? null,
             'rotation issues a new selector as well as a new validator'
         );
-        self::assertSame(1, $this->tokenCount($this->userId));
+        self::assertSame(1, $this->liveTokenCount($this->userId));
+    }
 
-        self::assertNull(RememberMe::consume($original, 'Browser'), 'the old cookie must not work twice');
+    public function testSequentialDoubleConsumeFailsTheSecondTimeWithoutRevoking(): void
+    {
+        $cookie = RememberMe::issue($this->userId, 'Browser');
+
+        $first = RememberMe::consume($cookie, 'Browser');
+        self::assertNotNull($first);
+        self::assertSame($this->userId, $first['user_id']);
+
+        // Immediately again: inside the grace window, e.g. a second tab.
+        self::assertNull(RememberMe::consume($cookie, 'Browser'), 'a cookie signs in exactly once');
+        self::assertNotNull(
+            $this->tokenRow($first['cookie']),
+            'a replay inside the grace window must not sign the owner out everywhere'
+        );
+        self::assertSame(1, $this->liveTokenCount($this->userId));
+    }
+
+    public function testReplayInsideTheGraceWindowOnlyFails(): void
+    {
+        $other = RememberMe::issue($this->userId, 'Phone');
+        $replayed = RememberMe::issue($this->userId, 'Laptop');
+        $this->markConsumed($replayed, RememberMe::REPLAY_GRACE_SECONDS - 20);
+        $_COOKIE[RememberMe::COOKIE] = $replayed;
+        $logOffset = $this->securityLogSize();
+
+        RememberMe::restoreSession();
+
+        self::assertFalse(Auth::check());
+        self::assertArrayNotHasKey(RememberMe::COOKIE, $_COOKIE);
+        self::assertNotNull($this->tokenRow($other), 'nothing is revoked');
+        self::assertStringNotContainsString('reused after rotation', $this->securityLogSince($logOffset));
+    }
+
+    public function testReplayAfterRotationRevokesEveryTokenAndLogsIt(): void
+    {
+        // The thief used the cookie first; it rotated, and the thief now
+        // holds a live token. The owner's browser then presents the old one.
+        $stolen = RememberMe::issue($this->userId, 'Laptop');
+        $thief = RememberMe::consume($stolen, 'Thief');
+        self::assertNotNull($thief);
+        $otherDevice = RememberMe::issue($this->userId, 'Phone');
+        $this->markConsumed($stolen, RememberMe::REPLAY_GRACE_SECONDS + 60);
+
+        $bystander = $this->createUser('rmb-bystander@test.local', 'partner');
+        $bystanderCookie = RememberMe::issue($bystander, 'Browser');
+
+        $_COOKIE[RememberMe::COOKIE] = $stolen;
+        $logOffset = $this->securityLogSize();
+
+        RememberMe::restoreSession();
+
+        self::assertFalse(Auth::check());
+        self::assertArrayNotHasKey(RememberMe::COOKIE, $_COOKIE);
+        self::assertSame(0, $this->tokenCount($this->userId), 'every token, the thief\'s included, is revoked');
+        self::assertNull($this->tokenRow($thief['cookie']));
+        self::assertNull($this->tokenRow($otherDevice));
+        self::assertNotNull($this->tokenRow($bystanderCookie), 'other users are untouched');
+
+        $log = $this->securityLogSince($logOffset);
+        self::assertStringContainsString('reused after rotation', $log);
+        self::assertStringContainsString('"user_id":' . $this->userId, $log);
+        self::assertStringContainsString('"revoked_count":3', $log);
+        foreach ([$stolen, $thief['cookie']] as $cookie) {
+            $parts = RememberMe::parse($cookie);
+            self::assertStringNotContainsString($parts['validator'] ?? '', $log, 'the token is never logged');
+            self::assertStringNotContainsString($parts['selector'] ?? '', $log, 'the token is never logged');
+        }
+    }
+
+    public function testHeadRequestAlsoRestores(): void
+    {
+        $_SERVER['REQUEST_METHOD'] = 'HEAD';
+        $_COOKIE[RememberMe::COOKIE] = RememberMe::issue($this->userId, 'Browser');
+
+        RememberMe::restoreSession();
+
+        self::assertSame($this->userId, Auth::id());
+    }
+
+    public function testLogoutNeverDeletesAnotherUsersToken(): void
+    {
+        $other = $this->createUser('rmb-other@test.local', 'partner');
+        $othersToken = RememberMe::issue($other, 'Browser');
+        $_SESSION['_auth_user_id'] = $this->userId;
+        $_COOKIE[RememberMe::COOKIE] = $othersToken;
+
+        Auth::logout();
+
+        self::assertArrayNotHasKey(RememberMe::COOKIE, $_COOKIE, 'the cookie is still cleared from this browser');
+        self::assertNotNull($this->tokenRow($othersToken), 'but another user\'s token row is not deleted');
     }
 
     public function testAutoLoginWritesTheSameAuditRowAsAPasswordLogin(): void
@@ -439,20 +573,99 @@ final class RememberMeTest extends TestCase
         self::assertSame(0, $this->tokenCount($employee), 'employee deactivation');
     }
 
-    public function testPruneDeletesOnlyExpiredTokens(): void
+    public function testDeletingABranchLeavesNoTokensForItsUsers(): void
+    {
+        $superAdmin = Database::instance()->insert('users', [
+            'name' => 'Remember super',
+            'email' => 'rmb-super@test.local',
+            'password_hash' => password_hash(self::PASSWORD, PASSWORD_DEFAULT),
+            'role' => 'super_admin',
+            'branch_id' => null,
+            'status' => 'active',
+        ]);
+        RememberMe::issue($this->userId, 'Laptop');
+        $consumed = RememberMe::issue($this->userId, 'Phone');
+        $this->markConsumed($consumed, 5);
+        $branchName = (string) Database::instance()->value(
+            'SELECT name FROM branches WHERE id = :id',
+            ['id' => $this->branchId]
+        );
+
+        $result = ControllerActionRunner::run(
+            BranchController::class,
+            'destroy',
+            ['_auth_user_id' => $superAdmin],
+            ['confirm_name' => $branchName, 'confirm_password' => self::PASSWORD],
+            [],
+            'POST',
+            ['id' => (string) $this->branchId]
+        );
+
+        self::assertSame(302, $result['status']);
+        self::assertNull(Database::instance()->value('SELECT id FROM users WHERE id = :id', ['id' => $this->userId]));
+        self::assertSame(0, $this->tokenCount($this->userId), 'tokens go with their user (ON DELETE CASCADE)');
+    }
+
+    public function testCreateUserScriptRerunRevokesTokens(): void
+    {
+        RememberMe::issue($this->userId, 'Laptop');
+        RememberMe::issue($this->userId, 'Phone');
+
+        $process = proc_open(
+            [
+                PHP_BINARY,
+                dirname(__DIR__, 2) . '/scripts/create-user.php',
+                'Remember admin',
+                self::EMAIL,
+                'admin',
+                (string) $this->branchId,
+            ],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            dirname(__DIR__, 2),
+            ['LEDGERHIVE_TESTING' => '1'] + getenv()
+        );
+        if ($process === false) {
+            throw new RuntimeException('Could not start create-user.php.');
+        }
+        fwrite($pipes[0], "a-reset-password-789\n");
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]) ?: '';
+        $stderr = stream_get_contents($pipes[2]) ?: '';
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+
+        self::assertSame(0, $exitCode, $stdout . $stderr);
+        self::assertStringContainsString('Updated existing user', $stdout);
+        self::assertSame(0, $this->tokenCount($this->userId));
+    }
+
+    public function testPruneDeletesExpiredTokensConsumedOrNot(): void
     {
         $live = RememberMe::issue($this->userId, 'Live');
         $expired = RememberMe::issue($this->userId, 'Expired');
-        Database::instance()->update(
-            'remember_tokens',
-            ['expires_at' => date('Y-m-d H:i:s', time() - 1)],
-            'selector = :s',
-            ['s' => RememberMe::parse($expired)['selector'] ?? '']
-        );
+        $consumedExpired = RememberMe::issue($this->userId, 'Consumed, expired');
+        $consumedLive = RememberMe::issue($this->userId, 'Consumed, not yet expired');
+        foreach ([$expired, $consumedExpired] as $cookie) {
+            Database::instance()->update(
+                'remember_tokens',
+                ['expires_at' => date('Y-m-d H:i:s', time() - 1)],
+                'selector = :s',
+                ['s' => RememberMe::parse($cookie)['selector'] ?? '']
+            );
+        }
+        $this->markConsumed($consumedExpired, 3600);
+        $this->markConsumed($consumedLive, 3600);
 
-        self::assertGreaterThanOrEqual(1, RememberMe::prune());
+        self::assertGreaterThanOrEqual(2, RememberMe::prune());
         self::assertNotNull($this->tokenRow($live));
         self::assertNull($this->tokenRow($expired));
+        self::assertNull($this->tokenRow($consumedExpired));
+        self::assertNotNull(
+            $this->tokenRow($consumedLive),
+            'a consumed row is kept until it expires, so a late replay is still detected'
+        );
     }
 
     // --- Forced password change ----------------------------------------------

@@ -14,10 +14,24 @@ namespace App\Core;
  * by selector (an indexed equality, so no timing signal about the secret) and
  * the validator is compared with hash_equals().
  *
- * Every successful use rotates the token — the row is deleted and a new
- * selector and validator are issued — so a cookie works exactly once. A
- * selector that is found with the wrong validator means someone holds a
- * forged or partly-copied cookie: every token for that user is revoked.
+ * Every successful use rotates the token: the presented row is marked
+ * consumed (not deleted) and a new selector and validator are issued, so a
+ * cookie signs in exactly once. Marking is a conditional UPDATE whose
+ * affected-row count must be 1, so two requests racing on the same cookie
+ * cannot both win.
+ *
+ * Theft detection. Keeping the consumed row is what makes a stolen cookie
+ * detectable: whichever of the thief and the victim uses it second presents
+ * a selector that is already consumed. Later than REPLAY_GRACE_SECONDS after
+ * the first use, that means the cookie was used on two devices, so every
+ * token for that user is revoked and the event goes to the security log.
+ * Inside the grace window a replay only fails, with nothing revoked: that is
+ * the owner's own browser opening two tabs at once after an idle timeout,
+ * both carrying the same cookie, which must not sign the owner out
+ * everywhere. A selector found with the wrong validator (a forged or
+ * partly-copied cookie) revokes everything too. Consumed rows are kept until
+ * their own expiry so a replay is still recognised days later; prune()
+ * removes them then.
  *
  * The cookie only ever restores a session through Auth::login(), so session
  * id rotation, CSRF token rotation, branch assignment and the audit row are
@@ -33,6 +47,9 @@ final class RememberMe
     private const SELECTOR_BYTES = 12;
     private const VALIDATOR_BYTES = 32;
     private const COOKIE_PATTERN = '/^([a-f0-9]{24}):([a-f0-9]{64})\z/';
+
+    /** How long after a token's use a second use of it is treated as a benign tab race. */
+    public const REPLAY_GRACE_SECONDS = 60;
 
     /**
      * Restore a signed-out request from the remember cookie, if it carries one.
@@ -74,7 +91,13 @@ final class RememberMe
         self::writeCookie(self::issue($userId, self::userAgent()));
     }
 
-    /** Revoke this device's token, if it has one, and clear the cookie. */
+    /**
+     * Revoke this device's token, if it has one, and clear the cookie.
+     *
+     * With a signed-in user the delete is limited to that user's own rows:
+     * a cookie left behind by a different account (or planted) is cleared
+     * from this browser but never deletes another user's token.
+     */
     public static function forgetCurrentDevice(): void
     {
         if (!array_key_exists(self::COOKIE, $_COOKIE)) {
@@ -84,7 +107,20 @@ final class RememberMe
         $cookie = $_COOKIE[self::COOKIE];
         $parts = is_string($cookie) ? self::parse($cookie) : null;
         if ($parts !== null) {
-            Database::instance()->delete('remember_tokens', 'selector = :selector', ['selector' => $parts['selector']]);
+            $userId = Auth::id();
+            if ($userId === null) {
+                Database::instance()->delete(
+                    'remember_tokens',
+                    'selector = :selector',
+                    ['selector' => $parts['selector']]
+                );
+            } else {
+                Database::instance()->delete(
+                    'remember_tokens',
+                    'selector = :selector AND user_id = :user_id',
+                    ['selector' => $parts['selector'], 'user_id' => $userId]
+                );
+            }
         }
         self::clearCookie();
     }
@@ -126,9 +162,10 @@ final class RememberMe
      * Verify a cookie value and, if it is good, rotate it.
      *
      * Returns the user id and the replacement cookie value, or null for any
-     * failure; the caller clears the cookie either way. Rotation happens
-     * before the caller logs the user in, so the presented cookie is spent
-     * even if something later in the request fails.
+     * failure; the caller clears the cookie either way. The presented token
+     * is spent before the caller logs the user in, so it is used up even if
+     * something later in the request fails. See the class docblock for how a
+     * reused token is told apart from a tab race.
      *
      * @return array{user_id:int, cookie:string}|null
      */
@@ -141,7 +178,8 @@ final class RememberMe
 
         $db = Database::instance();
         $row = $db->first(
-            'SELECT id, user_id, validator_hash, expires_at FROM remember_tokens WHERE selector = :selector LIMIT 1',
+            'SELECT id, user_id, validator_hash, expires_at, consumed_at
+             FROM remember_tokens WHERE selector = :selector LIMIT 1',
             ['selector' => $parts['selector']]
         );
         if ($row === null) {
@@ -151,18 +189,33 @@ final class RememberMe
         $userId = (int) $row['user_id'];
 
         if (!hash_equals((string) $row['validator_hash'], hash('sha256', $parts['validator']))) {
-            $revoked = self::revokeAllForUser($userId);
-            Logger::security('Remember-me validator mismatch, possible stolen cookie: all tokens revoked', [
-                'user_id' => $userId,
-                'tokens_revoked' => $revoked,
-                'ip' => Http::clientIp(),
-            ]);
+            self::revokeAfterSuspectedTheft($userId, 'Remember-me validator mismatch, possible forged cookie');
             return null;
         }
 
-        $db->delete('remember_tokens', 'id = :id', ['id' => $row['id']]);
+        if ($row['consumed_at'] !== null) {
+            if (time() - (int) strtotime((string) $row['consumed_at']) > self::REPLAY_GRACE_SECONDS) {
+                self::revokeAfterSuspectedTheft(
+                    $userId,
+                    'Remember-me token reused after rotation, possible stolen cookie'
+                );
+            }
+            return null;
+        }
 
         if (strtotime((string) $row['expires_at']) <= time() || !Auth::mayStillSignIn($userId)) {
+            $db->delete('remember_tokens', 'id = :id', ['id' => $row['id']]);
+            return null;
+        }
+
+        // The atomic step: of any requests racing on this cookie, exactly
+        // one sees an affected-row count of 1. The others fail quietly, and
+        // any later replay finds consumed_at set.
+        $claimed = $db->run(
+            'UPDATE remember_tokens SET consumed_at = :now WHERE id = :id AND consumed_at IS NULL',
+            ['now' => date('Y-m-d H:i:s'), 'id' => $row['id']]
+        )->rowCount();
+        if ($claimed !== 1) {
             return null;
         }
 
@@ -179,7 +232,15 @@ final class RememberMe
         return Database::instance()->delete('remember_tokens', 'user_id = :user_id', ['user_id' => $userId]);
     }
 
-    /** Delete expired rows. Run from scripts/maintenance.php. */
+    /**
+     * Delete expired rows, consumed ones included. Run from
+     * scripts/maintenance.php.
+     *
+     * A consumed row is kept until its own expires_at rather than dropped as
+     * soon as the grace window passes: it is the record that lets a replay
+     * of a stolen cookie be recognised, and the owner's stale copy may come
+     * back days later. Past expires_at that cookie could not sign in anyway.
+     */
     public static function prune(): int
     {
         return Database::instance()->delete(
@@ -187,6 +248,17 @@ final class RememberMe
             'expires_at <= :now',
             ['now' => date('Y-m-d H:i:s')]
         );
+    }
+
+    private static function revokeAfterSuspectedTheft(int $userId, string $message): void
+    {
+        $revoked = self::revokeAllForUser($userId);
+        // Never the cookie or any part of it.
+        Logger::security($message . ': all tokens revoked', [
+            'user_id' => $userId,
+            'revoked_count' => $revoked,
+            'ip' => Http::clientIp(),
+        ]);
     }
 
     /**
@@ -253,7 +325,7 @@ final class RememberMe
             'domain' => '',
             'secure' => self::cookieIsSecure(),
             'httponly' => true,
-            'samesite' => 'Lax',
+            'samesite' => (string) Config::get('session.samesite', 'Lax'),
         ];
     }
 

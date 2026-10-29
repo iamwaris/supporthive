@@ -7,6 +7,15 @@ namespace App\Core;
 /**
  * Hardened session handling: strict mode, HttpOnly + SameSite cookies,
  * periodic ID rotation, idle timeout, and user-agent binding.
+ *
+ * "Remember me" (App\Core\RememberMe) sits on top of both timeouts rather
+ * than loosening them. A session that idles out, or is dropped for a
+ * user-agent mismatch, is simply gone; if the browser holds a remember
+ * cookie the next GET signs it back in through Auth::login(). The remember
+ * token is deliberately NOT bound to the user agent (the stored user_agent is
+ * display-only): browsers change their UA string on every update, which would
+ * silently forget every device. A copied cookie is caught instead by token
+ * rotation and replay detection.
  */
 final class Session
 {

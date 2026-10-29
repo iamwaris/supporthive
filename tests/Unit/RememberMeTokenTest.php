@@ -107,6 +107,18 @@ final class RememberMeTokenTest extends TestCase
         self::assertFalse(RememberMe::cookieIsSecure());
     }
 
+    public function testBootstrapKeepsArgumentsOutOfExceptionTraces(): void
+    {
+        // A trace that carried RememberMe::consume()'s argument would write
+        // the cookie into storage/logs.
+        self::assertSame('1', ini_get('zend.exception_ignore_args'));
+
+        $trace = (static function (string $secret): \RuntimeException {
+            return new \RuntimeException('x');
+        })('do-not-log-me')->getTrace();
+        self::assertStringNotContainsString('do-not-log-me', json_encode($trace) ?: '');
+    }
+
     public function testLifetimeDefaultsToThirtyDays(): void
     {
         $reflection = new ReflectionClass(Config::class);

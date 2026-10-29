@@ -23,6 +23,11 @@ error_reporting(E_ALL);
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 ini_set('error_log', STORAGE_PATH . '/logs/php-error.log');
+// Keep argument values out of exception traces. A trace is logged on every
+// uncaught exception, and an argument can be a secret: a password, an API
+// key, or the remember-me cookie passed to App\Core\RememberMe::consume().
+// Set here rather than relied on from php.ini so production cannot differ.
+ini_set('zend.exception_ignore_args', '1');
 
 // --- Autoloading -----------------------------------------------------------
 // Everything except PDF export (dompdf, decided 2026-09-24 — see
