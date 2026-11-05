@@ -2,9 +2,10 @@
 
 /**
  * The public new-joiner form. Plain HTML: no JavaScript is needed to fill it
- * in or submit it. Asks only for the joiner's own details — designation,
- * salary and Employee ID are set by an admin on approval and are not fields
- * here.
+ * in or submit it. Asks only for the joiner's own details — designation and
+ * salary are set by an admin on approval and are not fields here. The
+ * Employee ID asked for here is a suggestion the admin confirms or changes
+ * on approval.
  *
  * @var string                     $action    /join/{token}
  * @var string                     $honeypot  name of the trap field
@@ -20,6 +21,7 @@ $sections = [
     'About you' => [
         ['name' => 'name', 'label' => 'Full name', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'name', 'inputmode' => null, 'help' => null],
         ['name' => 'email', 'label' => 'Email', 'type' => 'email', 'required' => true, 'max' => 190, 'autocomplete' => 'email', 'inputmode' => 'email', 'help' => 'We will use this to set up your account.'],
+        ['name' => 'employee_code', 'label' => 'Employee ID', 'type' => 'text', 'required' => true, 'max' => 30, 'autocomplete' => 'off', 'inputmode' => null, 'help' => 'As given to you by HR. Letters, digits and - only.'],
         ['name' => 'phone', 'label' => 'Phone', 'type' => 'tel', 'required' => false, 'max' => 30, 'autocomplete' => 'tel', 'inputmode' => 'tel', 'help' => 'Digits, spaces, + - ( ) only.'],
         ['name' => 'joining_date', 'label' => 'Joining date', 'type' => 'date', 'required' => false, 'max' => null, 'autocomplete' => 'off', 'inputmode' => null, 'help' => 'If you know it.'],
     ],

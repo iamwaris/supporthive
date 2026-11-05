@@ -33,7 +33,8 @@ final class JoinerSubmission extends Model
     protected array $fillable = [];
 
     /**
-     * @param array{name:string,email:string,phone:?string,joining_date:?string} $fields validated
+     * @param array{name:string,email:string,employee_code:string,phone:?string,joining_date:?string} $fields
+     *        validated; employee_code is the joiner's suggestion, never checked for uniqueness here
      * @param array<string,?string> $bankColumns BankDetails::from() output
      */
     public static function submit(int $branchId, array $fields, array $bankColumns, string $ip): int
@@ -42,6 +43,7 @@ final class JoinerSubmission extends Model
             'branch_id' => $branchId,
             'name' => $fields['name'],
             'email' => $fields['email'],
+            'employee_code' => $fields['employee_code'],
             'phone' => $fields['phone'],
             'joining_date' => $fields['joining_date'],
             'bank_name' => $bankColumns['bank_name'] ?? null,
@@ -58,8 +60,8 @@ final class JoinerSubmission extends Model
         $perPage = max(1, min($perPage, 100));
 
         return $this->db()->all(
-            'SELECT s.id, s.name, s.email, s.phone, s.joining_date, s.status, s.created_at, s.reviewed_at,
-                    s.bank_account_number, s.bank_iban, r.name AS reviewed_by_name
+            'SELECT s.id, s.name, s.email, s.employee_code, s.phone, s.joining_date, s.status,
+                    s.created_at, s.reviewed_at, s.bank_account_number, s.bank_iban, r.name AS reviewed_by_name
              FROM joiner_submissions s
              LEFT JOIN users r ON r.id = s.reviewed_by
              WHERE s.branch_id = :branch AND s.status = :status

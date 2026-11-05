@@ -132,6 +132,7 @@ $pageUrl = static function (int $target) use ($status): string {
                 <thead>
                     <tr>
                         <th scope="col" class="th">Name</th>
+                        <th scope="col" class="th hidden md:table-cell">Suggested Employee ID</th>
                         <th scope="col" class="th hidden md:table-cell">Phone</th>
                         <th scope="col" class="th hidden sm:table-cell">Submitted</th>
                         <th scope="col" class="th hidden lg:table-cell">Bank account</th>
@@ -141,7 +142,7 @@ $pageUrl = static function (int $target) use ($status): string {
                 <tbody>
                     <?php if ($submissions === []) : ?>
                         <tr>
-                            <td class="td" colspan="5">
+                            <td class="td" colspan="6">
                                 <p class="py-10 text-center text-sm text-slate-600"><?= e($emptyText[$status]) ?></p>
                             </td>
                         </tr>
@@ -155,8 +156,10 @@ $pageUrl = static function (int $target) use ($status): string {
                                     <?= e((string) $row['name']) ?>
                                 </a>
                                 <p class="text-[11.5px] break-all text-slate-500"><?= e((string) $row['email']) ?></p>
+                                <p class="text-[11.5px] text-slate-500 md:hidden">Suggested Employee ID <?= e((string) ($row['employee_code'] ?? '—')) ?></p>
                                 <p class="text-[11.5px] text-slate-500 sm:hidden">Submitted <?= e($when($row['created_at'])) ?></p>
                             </td>
+                            <td class="td hidden whitespace-nowrap text-slate-600 md:table-cell"><?= e((string) ($row['employee_code'] ?? '—')) ?></td>
                             <td class="td money hidden text-slate-600 md:table-cell"><?= e((string) ($row['phone'] ?? '—')) ?></td>
                             <td class="td hidden whitespace-nowrap text-slate-600 sm:table-cell"><?= e($when($row['created_at'])) ?></td>
                             <td class="td money hidden whitespace-nowrap text-slate-600 lg:table-cell"><?= e($status === 'pending' ? ($bankMasks[$id] ?? '—') : 'Moved to employee') ?></td>

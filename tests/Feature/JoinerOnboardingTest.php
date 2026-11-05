@@ -23,12 +23,15 @@ use Tests\Support\RouteDispatch;
  * Public: a valid link shows the form; every link that does not work —
  * unknown, malformed, disabled, replaced, branch locked — shows the same
  * neutral page; a submission with bank details creates only a pending
- * joiner holding them (masked in every list, never in an audit row); designation, salary and Employee ID
- * cannot be smuggled in; honeypot, minimum time, rate limits and
- * array-shaped input are all handled without storing anything.
+ * joiner holding them (masked in every list, never in an audit row); designation, salary, role, branch
+ * and status cannot be smuggled in; honeypot, minimum time, rate limits and
+ * array-shaped input are all handled without storing anything. The joiner's
+ * Employee ID is required and format-checked only (a taken one gets exactly
+ * the response a free one does) and is stored as a suggestion (JOIN-4).
  *
  * Admin: the link is shown once and only its hash stored; approve needs an
- * Employee ID and creates the employee through the shared onboarding path
+ * Employee ID (prefilled with the joiner's suggestion, editable, checked for
+ * uniqueness only here) and creates the employee through the shared onboarding path
  * with the defaults and a first salary row; delete is a hard, POST-only
  * removal of a pending row whose audit entry carries nothing sensitive;
  * nothing crosses branches; deleting a branch removes both.
@@ -120,6 +123,7 @@ final class JoinerOnboardingTest extends TestCase
         return $overrides + [
             'name' => 'Jnr Joiner',
             'email' => $email,
+            'employee_code' => 'JNR-S1',
             'phone' => '+92 300 1112223',
             'joining_date' => '2026-12-01',
             'bank_name' => self::BANK,
@@ -177,6 +181,40 @@ final class JoinerOnboardingTest extends TestCase
             $httpMethod,
             $params
         );
+    }
+
+    /**
+     * The public form as rendered on the redirect back after a failed submit.
+     *
+     * @param array<string,mixed> $session
+     * @return array{status:int,body:string,session:array<string,mixed>}
+     */
+    private function viewWithSession(array $session): array
+    {
+        return ControllerActionRunner::run(
+            JoinController::class,
+            'show',
+            $session,
+            [],
+            [],
+            'GET',
+            ['token' => $this->token]
+        );
+    }
+
+    /** An employee of branch A, jnr-existing@test.local, holding $employeeCode. */
+    private function createExistingEmployee(string $employeeCode): void
+    {
+        $_SESSION = $this->sessionA();
+        (new EmployeeProfile())->createWithLogin([
+            'name' => 'Jnr Existing',
+            'email' => 'jnr-existing@test.local',
+            'phone' => null,
+            'designation' => 'Fronter',
+            'joining_date' => null,
+            'employee_code' => $employeeCode,
+        ], password_hash('unused', PASSWORD_DEFAULT));
+        $_SESSION = [];
     }
 
     private function submissionCount(): int
@@ -264,9 +302,12 @@ final class JoinerOnboardingTest extends TestCase
         );
         self::assertStringNotContainsString('name="website"', $result['body']);
         self::assertStringContainsString('noindex', $result['body']);
-        foreach (['name="designation"', 'name="salary"', 'name="employee_code"', 'JNR-A'] as $absent) {
+        foreach (['name="designation"', 'name="salary"', 'JNR-A'] as $absent) {
             self::assertStringNotContainsString($absent, $result['body']);
         }
+        self::assertStringContainsString('name="employee_code" type="text"', $result['body']);
+        self::assertStringContainsString('As given to you by HR.', $result['body']);
+        self::assertStringNotContainsString('Leave blank', $result['body']);
         self::assertIsInt($result['session']['_join_form_started_at'] ?? null);
     }
 
@@ -378,12 +419,11 @@ final class JoinerOnboardingTest extends TestCase
         ));
     }
 
-    public function testDesignationSalaryEmployeeIdAndRoleCannotBeInjected(): void
+    public function testDesignationSalaryRoleBranchAndStatusCannotBeInjected(): void
     {
         $this->submit($this->joinerPost('jnr-joiner@test.local', [
             'designation' => 'Chief Executive',
             'salary' => '999999',
-            'employee_code' => 'HACK-1',
             'role' => 'admin',
             'branch_id' => (string) $this->branchBId,
             'status' => 'approved',
@@ -392,18 +432,113 @@ final class JoinerOnboardingTest extends TestCase
         $row = $this->onlySubmission();
         self::assertSame('pending', $row['status']);
         self::assertSame($this->branchAId, (int) $row['branch_id']);
+        self::assertSame('JNR-S1', $row['employee_code']);
+        self::assertArrayNotHasKey('designation', $row);
+        self::assertArrayNotHasKey('role', $row);
         $raw = (string) json_encode($row);
-        foreach (['Chief Executive', '999999', 'HACK-1'] as $injected) {
+        foreach (['Chief Executive', '999999'] as $injected) {
             self::assertStringNotContainsString($injected, $raw);
         }
 
-        // Approval uses what the admin decides, never what the joiner posted.
+        // Approval uses what the admin decides, never what the joiner posted:
+        // the suggested Employee ID (JNR-S1) included, which the admin changed.
         $this->admin('approve', $this->approvePost(), ['id' => (string) $row['id']]);
         $employee = Database::instance()->first(
             "SELECT u.role, p.designation, p.employee_code FROM users u JOIN employee_profiles p ON p.user_id = u.id
              WHERE u.email = 'jnr-joiner@test.local'"
         );
         self::assertSame(['role' => 'employee', 'designation' => 'Fronter', 'employee_code' => 'JNR-100'], $employee);
+    }
+
+    // --- The suggested Employee ID ------------------------------------------------
+
+    public function testTheSuggestedEmployeeIdIsStoredTrimmedAndNotInTheAuditRow(): void
+    {
+        $result = $this->submit($this->joinerPost('jnr-joiner@test.local', ['employee_code' => '  JNR-77  ']));
+
+        self::assertSame(302, $result['status']);
+        $row = $this->onlySubmission();
+        self::assertSame('JNR-77', $row['employee_code']);
+        self::assertSame('{}', (string) Database::instance()->value(
+            "SELECT meta FROM audit_log WHERE action = 'joiner.submitted' AND entity_id = :id",
+            ['id' => $row['id']]
+        ));
+    }
+
+    public function testABlankEmployeeIdIsARequiredFieldErrorWithTheOtherValuesKept(): void
+    {
+        $result = $this->submit($this->joinerPost('jnr-joiner@test.local', ['employee_code' => '   ']));
+
+        self::assertSame(302, $result['status']);
+        self::assertSame(['employee_code'], array_keys($result['session']['_flash']['errors'] ?? []));
+        self::assertSame('Jnr Joiner', $result['session']['_old']['name'] ?? null);
+        self::assertSame('jnr-joiner@test.local', $result['session']['_old']['email'] ?? null);
+        self::assertSame(self::BANK, $result['session']['_old']['bank_name'] ?? null);
+        self::assertSame(0, $this->submissionCount());
+
+        $form = $this->viewWithSession($result['session']);
+        self::assertStringContainsString('id="join-employee-code-error"', $form['body']);
+        self::assertStringContainsString('value="Jnr Joiner"', $form['body']);
+    }
+
+    public function testAnInvalidEmployeeIdShowsAFieldErrorWithTheValueKept(): void
+    {
+        $result = [];
+        foreach (['JNR 1', 'JNR_1', 'JNR/1', str_repeat('A', 31)] as $invalid) {
+            $result = $this->submit($this->joinerPost('jnr-joiner@test.local', ['employee_code' => $invalid]));
+
+            self::assertSame(302, $result['status']);
+            self::assertSame(['employee_code'], array_keys($result['session']['_flash']['errors'] ?? []), $invalid);
+            self::assertSame($invalid, $result['session']['_old']['employee_code'] ?? null);
+            self::assertSame(0, $this->submissionCount());
+        }
+
+        $form = $this->viewWithSession($result['session']);
+        self::assertStringContainsString('id="join-employee-code-error"', $form['body']);
+        self::assertStringContainsString('value="' . str_repeat('A', 31) . '"', $form['body']);
+        self::assertStringContainsString(
+            'aria-describedby="join-employee-code-help join-employee-code-error"',
+            $form['body']
+        );
+    }
+
+    public function testATakenEmployeeIdGetsTheSameResponseAsAFreeOneAndIsBlockedOnlyAtApproval(): void
+    {
+        $this->createExistingEmployee('JNR-100');
+
+        $taken = $this->submit($this->joinerPost('jnr-joiner@test.local', ['employee_code' => 'JNR-100']));
+        $takenOtherCase = $this->submit($this->joinerPost('jnr-joiner2@test.local', ['employee_code' => 'jnr-100']));
+        $free = $this->submit($this->joinerPost('jnr-joiner3@test.local', ['employee_code' => 'JNR-999']));
+
+        // No enumeration: status, body and session are identical whichever it was.
+        foreach ([$taken, $takenOtherCase] as $other) {
+            self::assertSame($free['status'], $other['status']);
+            self::assertSame($free['body'], $other['body']);
+            self::assertSame($free['session'], $other['session']);
+        }
+        self::assertSame(302, $taken['status']);
+        self::assertTrue($taken['session']['_join_submitted'] ?? false);
+        self::assertArrayNotHasKey('errors', $taken['session']['_flash'] ?? []);
+        self::assertSame(3, $this->submissionCount());
+
+        $id = (int) Database::instance()->value(
+            "SELECT id FROM joiner_submissions WHERE email = 'jnr-joiner@test.local'"
+        );
+        $page = $this->admin('show', [], ['id' => (string) $id], null, 'GET');
+        self::assertStringContainsString('value="JNR-100"', $page['body']);
+
+        // The admin submits the prefilled value unchanged: approval refuses it.
+        $result = $this->admin('approve', $this->approvePost(['employee_code' => 'JNR-100']), ['id' => (string) $id]);
+        self::assertSame(302, $result['status']);
+        self::assertSame(
+            'Another employee in this branch already has that Employee ID.',
+            $result['session']['_flash']['errors']['employee_code'][0] ?? null
+        );
+        self::assertSame('pending', (string) Database::instance()->value(
+            'SELECT status FROM joiner_submissions WHERE id = :id',
+            ['id' => $id]
+        ));
+        self::assertNull(Database::instance()->value("SELECT id FROM users WHERE email = 'jnr-joiner@test.local'"));
     }
 
     public function testTheHoneypotLooksLikeSuccessButStoresNothing(): void
@@ -543,6 +678,42 @@ final class JoinerOnboardingTest extends TestCase
         }
         self::assertStringContainsString('value="Fronter"', $page['body']);
         self::assertStringContainsString('value="35000"', $page['body']);
+    }
+
+    public function testTheApproveFormIsPrefilledWithTheSuggestedEmployeeIdShownOnTheListAndPage(): void
+    {
+        $id = $this->submitValid();
+
+        $page = $this->admin('show', [], ['id' => (string) $id], null, 'GET');
+        $list = $this->admin('index', [], [], null, 'GET');
+
+        self::assertStringContainsString('Employee ID (suggested)', $page['body']);
+        self::assertMatchesRegularExpression(
+            '/id="approve-employee-code" name="employee_code" type="text"\\s+value="JNR-S1"/',
+            $page['body']
+        );
+        self::assertStringContainsString('JNR-S1', $list['body']);
+    }
+
+    public function testASuggestedEmployeeIdIsEscapedOnTheReviewPages(): void
+    {
+        Database::instance()->insert('joiner_submissions', [
+            'branch_id' => $this->branchAId,
+            'name' => 'Jnr Escaped',
+            'email' => 'jnr-escaped@test.local',
+            'employee_code' => '"><b>x',
+            'status' => 'pending',
+            'submitted_ip' => self::IP,
+        ]);
+        $id = (int) $this->onlySubmission()['id'];
+
+        $page = $this->admin('show', [], ['id' => (string) $id], null, 'GET');
+        $list = $this->admin('index', [], [], null, 'GET');
+
+        foreach ([$page['body'], $list['body']] as $body) {
+            self::assertStringNotContainsString('"><b>x', $body);
+            self::assertStringContainsString('&quot;&gt;&lt;b&gt;x', $body);
+        }
     }
 
     public function testApprovalRequiresAnEmployeeId(): void
@@ -736,16 +907,7 @@ final class JoinerOnboardingTest extends TestCase
     public function testApprovalRefusesAnEmailOrEmployeeIdAlreadyInUse(): void
     {
         $id = $this->submitValid();
-        $_SESSION = $this->sessionA();
-        (new EmployeeProfile())->createWithLogin([
-            'name' => 'Jnr Existing',
-            'email' => 'jnr-existing@test.local',
-            'phone' => null,
-            'designation' => 'Fronter',
-            'joining_date' => null,
-            'employee_code' => 'JNR-100',
-        ], password_hash('unused', PASSWORD_DEFAULT));
-        $_SESSION = [];
+        $this->createExistingEmployee('JNR-100');
 
         $codeTaken = $this->admin('approve', $this->approvePost(), ['id' => (string) $id]);
         $emailTaken = $this->admin(

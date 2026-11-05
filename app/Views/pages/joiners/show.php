@@ -27,6 +27,8 @@ $bankShown = static fn (string $field): string => $bankDetails[$field] ?? 'Not g
 $rows = [
     'Full name' => (string) $submission['name'],
     'Email' => (string) $submission['email'],
+    // Submissions from before the field existed have none.
+    'Employee ID (suggested)' => $submission['employee_code'] !== null ? (string) $submission['employee_code'] : 'Not given',
     'Phone' => $submission['phone'] !== null ? (string) $submission['phone'] : 'Not given',
     'Joining date' => $submission['joining_date'] !== null ? $day($submission['joining_date']) : 'Not given',
 ];
@@ -44,13 +46,14 @@ $approveFailed = array_intersect_key(
 ) !== [];
 
 // The approve form opens prefilled: the owner's defaults for designation and
-// salary, and what the joiner gave for email and joining date. After a failed
-// approve, what the admin typed instead.
+// salary, and what the joiner gave for Employee ID, email and joining date —
+// the Employee ID only as a suggestion the admin can change; approval checks
+// it like any other. After a failed approve, what the admin typed instead.
 $approveValue = static function (string $field, string $prefill) use ($approveFailed): string {
     return $approveFailed ? old($field, $prefill) : $prefill;
 };
 $approveFields = [
-    ['name' => 'employee_code', 'label' => 'Employee ID', 'type' => 'text', 'required' => true, 'max' => 30, 'inputmode' => null, 'prefill' => '', 'help' => 'Letters, digits and - only. Unique in this branch.'],
+    ['name' => 'employee_code', 'label' => 'Employee ID', 'type' => 'text', 'required' => true, 'max' => 30, 'inputmode' => null, 'prefill' => (string) ($submission['employee_code'] ?? ''), 'help' => 'Suggested by the joiner — check it. Letters, digits and - only. Unique in this branch.'],
     ['name' => 'designation', 'label' => 'Designation', 'type' => 'text', 'required' => true, 'max' => 120, 'inputmode' => null, 'prefill' => $defaults['designation'], 'help' => null],
     ['name' => 'salary', 'label' => 'Starting salary (' . Settings::string('currency_symbol', 'Rs') . ')', 'type' => 'text', 'required' => false, 'max' => 13, 'inputmode' => 'decimal', 'prefill' => $defaults['salary'], 'help' => 'Takes effect from the joining date, or today if there is none. Leave empty for no salary record.'],
     ['name' => 'email', 'label' => 'Email (used to sign in)', 'type' => 'email', 'required' => true, 'max' => 190, 'inputmode' => null, 'prefill' => (string) $submission['email'], 'help' => null],

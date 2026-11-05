@@ -23,9 +23,12 @@ use App\Services\BankDetails;
  * used to learn whether a link ever existed.
  *
  * A submission creates a pending joiner_submissions row and nothing else —
- * no login, no user, no employee. Designation, salary and Employee ID are
- * not fields here and are never read from the request: an admin sets them
- * on approval.
+ * no login, no user, no employee. Designation and salary are not fields
+ * here and are never read from the request: an admin sets them on approval.
+ * The Employee ID the joiner types is only a suggestion: it is checked for
+ * format alone — never for uniqueness, so the form cannot be used to learn
+ * which IDs exist — and it prefills the admin's approve form, where the
+ * admin can change it and the uniqueness checks run.
  *
  * Abuse controls, in the order they run on POST: CSRF (Router::dispatch(),
  * before this controller), body size cap, rate limits per IP and per token,
@@ -59,6 +62,8 @@ final class JoinController extends Controller
     private const RULES = [
         'name' => 'required|max:120',
         'email' => 'required|email|max:190',
+        // Same format as the admin's Employee ID (JoinerController::APPROVE_RULES).
+        'employee_code' => 'required|max:30|regex:/^[A-Za-z0-9-]+$/',
         'phone' => 'nullable|max:30|regex:/^[0-9+()\s-]{7,30}$/',
         'joining_date' => 'nullable|ymd',
     ] + BankDetails::RULES;
@@ -128,6 +133,7 @@ final class JoinController extends Controller
         $fields = [
             'name' => trim((string) $clean['name']),
             'email' => strtolower(trim((string) $clean['email'])),
+            'employee_code' => trim((string) $clean['employee_code']),
             'phone' => $clean['phone'] === null ? null : trim((string) $clean['phone']),
             'joining_date' => $clean['joining_date'] === null ? null : (string) $clean['joining_date'],
         ];
@@ -163,16 +169,17 @@ final class JoinController extends Controller
     }
 
     /**
-     * Validator over exactly the fields this form has: the four personal
-     * fields as typed, the bank fields normalised. Nothing else in $_POST —
-     * a smuggled designation, salary or employee_code included — reaches it.
+     * Validator over exactly the fields this form has: the personal fields
+     * and the suggested Employee ID as typed, the bank fields normalised.
+     * Nothing else in $_POST — a smuggled designation, salary, branch or
+     * status included — reaches it.
      *
      * @return array<string,mixed>
      */
     private function validateSubmission(string $back): array
     {
         $input = [];
-        foreach (['name', 'email', 'phone', 'joining_date'] as $field) {
+        foreach (['name', 'email', 'employee_code', 'phone', 'joining_date'] as $field) {
             $input[$field] = $_POST[$field] ?? null;
         }
         $input = BankDetails::normaliseInput($_POST) + $input;
