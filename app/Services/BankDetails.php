@@ -4,35 +4,29 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Core\Logger;
-use App\Core\SecretBox;
 use App\Domain\PakistanIban;
-use Throwable;
 
 /**
  * Bank name, account number and IBAN — for an employee (employee_profiles)
  * or a joiner who has not been approved yet (joiner_submissions). Both
- * tables store them under the same *_enc column names, always encrypted
- * with App\Core\SecretBox, so this is the one place they are validated,
- * encrypted, decrypted and masked.
+ * tables store them under the same column names, so this is the one place
+ * they are normalised, validated, read back and masked.
  *
- * Plain values never reach a log or an audit row: a decryption failure logs
- * which field of which record failed, and audit entries carry masked values
- * only (mask()).
+ * Stored in plain text (decision 2026-11-05, docs/PLAN.md §5), so what keeps
+ * them private is the code around them: admin-only routes, masked values in
+ * every list, and nothing but masked values in an audit row (mask()). Never
+ * pass them to a log.
  */
 final class BankDetails
 {
-    /** Request field => its encrypted column. */
-    public const COLUMNS = [
-        'bank_name' => 'bank_name_enc',
-        'bank_account_number' => 'bank_account_number_enc',
-        'bank_iban' => 'bank_iban_enc',
-    ];
+    /** The request fields, which are also the column names in both tables. */
+    public const FIELDS = ['bank_name', 'bank_account_number', 'bank_iban'];
 
     /**
      * Never put back into the session as flashed input after a failed
-     * submit: a session file is stored in plain text, which would undo the
-     * encryption. The form asks for them again instead.
+     * submit: session files sit on disk outside the database, and a stray
+     * copy of a full account number there is one more place it can leak
+     * from. The form asks for them again instead.
      */
     public const NOT_FLASHED = ['bank_account_number', 'bank_iban'];
 
@@ -55,7 +49,7 @@ final class BankDetails
     public static function normaliseInput(array $source): array
     {
         $normalised = [];
-        foreach (array_keys(self::COLUMNS) as $field) {
+        foreach (self::FIELDS as $field) {
             $value = $source[$field] ?? null;
             if (!is_string($value)) {
                 $normalised[$field] = $value;
@@ -73,64 +67,19 @@ final class BankDetails
     }
 
     /**
-     * @param array<string,mixed> $clean Validator::validated() output covering RULES
-     * @return array<string,?string> encrypted column => ciphertext, or null for an empty field
-     */
-    public static function encrypt(array $clean): array
-    {
-        // Built only for a value that needs it, so a form with no bank
-        // details never depends on the key (or the extension) at all.
-        $box = null;
-        $columns = [];
-        foreach (self::COLUMNS as $field => $column) {
-            $value = $clean[$field] ?? null;
-            if ($value === null || $value === '') {
-                $columns[$column] = null;
-                continue;
-            }
-
-            $box ??= SecretBox::fromConfig();
-            $columns[$column] = $box->encrypt((string) $value);
-        }
-
-        return $columns;
-    }
-
-    /**
-     * Decrypts whichever of the three columns $row holds. A value that cannot
-     * be decrypted (tampered, another key, no key configured) comes back
-     * null and its field is listed in `unavailable`; the failure is logged
-     * without the value, and never becomes an error page.
+     * The three values as they are stored, from validated input or from a
+     * row of either table; a blank or missing field becomes null.
      *
-     * @param array<string,mixed> $row
-     * @return array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>}
+     * @param array<string,mixed> $source Validator::validated() output covering RULES, or a database row
+     * @return array{bank_name:?string,bank_account_number:?string,bank_iban:?string}
      */
-    public static function decrypt(array $row, string $entityType, int $entityId): array
+    public static function from(array $source): array
     {
-        $details = ['bank_name' => null, 'bank_account_number' => null, 'bank_iban' => null, 'unavailable' => []];
-        $box = null;
-
-        foreach (self::COLUMNS as $field => $column) {
-            $stored = $row[$column] ?? null;
-            if (!is_string($stored) || $stored === '') {
-                continue;
-            }
-
-            try {
-                $box ??= SecretBox::fromConfig();
-                $details[$field] = $box->decrypt($stored);
-            } catch (Throwable $e) {
-                $details['unavailable'][] = $field;
-                Logger::error('Bank detail could not be decrypted', [
-                    'field' => $field,
-                    'entity_type' => $entityType,
-                    'entity_id' => $entityId,
-                    'reason' => $e::class,
-                ]);
-            }
-        }
-
-        return $details;
+        return [
+            'bank_name' => self::nullableString($source['bank_name'] ?? null),
+            'bank_account_number' => self::nullableString($source['bank_account_number'] ?? null),
+            'bank_iban' => self::nullableString($source['bank_iban'] ?? null),
+        ];
     }
 
     /** "PK36SCBL0000001123456702" → "****6702". For lists and audit rows; never the whole value. */
@@ -144,22 +93,13 @@ final class BankDetails
     }
 
     /**
-     * One masked line for a list row: the account number, else the IBAN,
-     * else null. "Unavailable" when the stored value cannot be decrypted.
+     * One masked line for a list row: the account number, else the IBAN, else null.
      *
-     * @param array<string,mixed> $row holding bank_account_number_enc and bank_iban_enc
+     * @param array<string,mixed> $row holding bank_account_number and bank_iban
      */
-    public static function maskedSummary(array $row, string $entityType, int $entityId): ?string
+    public static function maskedSummary(array $row): ?string
     {
-        $details = self::decrypt(
-            array_intersect_key($row, array_flip(['bank_account_number_enc', 'bank_iban_enc'])),
-            $entityType,
-            $entityId
-        );
-
-        if ($details['unavailable'] !== []) {
-            return 'Unavailable';
-        }
+        $details = self::from($row);
 
         return self::mask($details['bank_account_number']) ?? self::mask($details['bank_iban']);
     }
@@ -168,19 +108,16 @@ final class BankDetails
      * What an audit row may say about a change: which fields changed, and the
      * masked new account number and IBAN.
      *
-     * A field whose old value could not be decrypted counts as changed: it is overwritten either way.
-     *
-     * @param array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>} $before
+     * @param array{bank_name:?string,bank_account_number:?string,bank_iban:?string} $before
      * @param array<string,mixed> $after validated, normalised input
      * @return array<string,mixed>|null null when nothing changed
      */
     public static function auditChange(array $before, array $after): ?array
     {
+        $new = self::from($after);
         $changed = [];
-        foreach (array_keys(self::COLUMNS) as $field) {
-            $old = $before[$field] ?? null;
-            $new = ($after[$field] ?? null) === '' ? null : ($after[$field] ?? null);
-            if ($old !== $new || in_array($field, $before['unavailable'], true)) {
+        foreach (self::FIELDS as $field) {
+            if ($before[$field] !== $new[$field]) {
                 $changed[] = $field;
             }
         }
@@ -191,8 +128,8 @@ final class BankDetails
 
         return [
             'changed' => $changed,
-            'bank_account_number' => self::mask(self::nullableString($after['bank_account_number'] ?? null)),
-            'bank_iban' => self::mask(self::nullableString($after['bank_iban'] ?? null)),
+            'bank_account_number' => self::mask($new['bank_account_number']),
+            'bank_iban' => self::mask($new['bank_iban']),
         ];
     }
 

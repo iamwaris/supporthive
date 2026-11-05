@@ -11,8 +11,8 @@
  * @var array<string,mixed>|null   $currentSalary   EmployeeSalary::current()
  * @var array<string,mixed>|null   $upcomingSalary  EmployeeSalary::upcoming()
  * @var list<array<string,mixed>>  $salaryHistory   EmployeeSalary::history()
- * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>} $bankDetails
- *      BankDetails::decrypt() — admin-only, full values
+ * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string} $bankDetails
+ *      BankDetails::from() — admin-only, full values
  * @var array<string,list<string>> $errors
  */
 
@@ -53,9 +53,6 @@ $bankValue = static function (string $field) use ($bankFailed, $bankDetails): st
     $current = (string) ($bankDetails[$field] ?? '');
 
     return $bankFailed ? old($field, $field === 'bank_name' ? $current : '') : $current;
-};
-$bankDisplay = static function (string $field) use ($bankDetails): ?string {
-    return in_array($field, $bankDetails['unavailable'], true) ? 'Unavailable' : $bankDetails[$field];
 };
 
 $statusLabels = ['scheduled' => 'Scheduled', 'current' => 'Current', 'past' => 'Past'];
@@ -263,7 +260,7 @@ $statusBadges = ['scheduled' => 'badge-warn', 'current' => 'badge-ok', 'past' =>
         <div class="px-5 pt-4 pb-3 sm:px-6">
             <h2 id="bank-heading" class="font-display text-sm font-semibold text-ink">Bank details</h2>
             <p class="mt-0.5 text-[11.5px] text-slate-500">
-                Visible to admins only — never shown to the employee. Stored encrypted.
+                Visible to admins only — never shown to the employee.
             </p>
         </div>
 
@@ -271,20 +268,15 @@ $statusBadges = ['scheduled' => 'badge-warn', 'current' => 'badge-ok', 'past' =>
             <div>
                 <dl class="grid content-start gap-x-6 gap-y-4 sm:grid-cols-2">
                     <?php foreach ($bankFields as $field) : ?>
-                        <?php $shown = $bankDisplay($field['name']); ?>
+                        <?php $shown = $bankDetails[$field['name']]; ?>
                         <div class="min-w-0">
                             <dt class="text-[11px] font-semibold uppercase tracking-wider text-slate-500"><?= e($field['label']) ?></dt>
-                            <dd class="mt-1 text-sm break-all <?= $shown === null || $shown === 'Unavailable' ? 'text-slate-500' : 'money text-ink' ?>">
+                            <dd class="mt-1 text-sm break-all <?= $shown === null ? 'text-slate-500' : 'money text-ink' ?>">
                                 <?= e($shown ?? 'Not set') ?>
                             </dd>
                         </div>
                     <?php endforeach; ?>
                 </dl>
-                <?php if ($bankDetails['unavailable'] !== []) : ?>
-                    <p class="help mt-4">
-                        “Unavailable” means a stored value could not be decrypted. Enter it again to replace it.
-                    </p>
-                <?php endif; ?>
             </div>
 
             <form method="post" action="<?= e(url('/employees/' . $id . '/bank-details')) ?>"

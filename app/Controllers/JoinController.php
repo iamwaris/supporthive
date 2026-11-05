@@ -131,7 +131,7 @@ final class JoinController extends Controller
             'phone' => $clean['phone'] === null ? null : trim((string) $clean['phone']),
             'joining_date' => $clean['joining_date'] === null ? null : (string) $clean['joining_date'],
         ];
-        $bankColumns = BankDetails::encrypt($clean);
+        $bankColumns = BankDetails::from($clean);
 
         Database::instance()->transaction(static function () use ($branchId, $fields, $bankColumns): void {
             $id = JoinerSubmission::submit($branchId, $fields, $bankColumns, Http::clientIp());

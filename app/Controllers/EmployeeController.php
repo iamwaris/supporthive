@@ -261,9 +261,9 @@ final class EmployeeController extends Controller
     }
 
     /**
-     * Bank name, account number and IBAN: admin-only, encrypted at rest.
-     * Each field is optional; a blank field clears it. The audit row says
-     * which fields changed and shows only masked values.
+     * Bank name, account number and IBAN: admin-only. Each field is
+     * optional; a blank field clears it. The audit row says which fields
+     * changed and shows only masked values.
      *
      * @param array<string,string> $params
      */
@@ -280,7 +280,7 @@ final class EmployeeController extends Controller
         );
 
         $before = $this->bankDetailsOf($id);
-        (new EmployeeProfile())->updateBankDetails($id, BankDetails::encrypt($clean));
+        (new EmployeeProfile())->updateBankDetails($id, BankDetails::from($clean));
 
         $change = BankDetails::auditChange($before, $clean);
         if ($change !== null) {
@@ -292,10 +292,10 @@ final class EmployeeController extends Controller
         Http::redirect('/employees/' . $id . '#bank-details');
     }
 
-    /** @return array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>} */
+    /** @return array{bank_name:?string,bank_account_number:?string,bank_iban:?string} */
     private function bankDetailsOf(int $id): array
     {
-        return BankDetails::decrypt((new EmployeeProfile())->encryptedBankDetails($id) ?? [], 'users', $id);
+        return BankDetails::from((new EmployeeProfile())->bankDetails($id) ?? []);
     }
 
     /**
@@ -306,7 +306,7 @@ final class EmployeeController extends Controller
     {
         $masks = [];
         foreach ($rows as $row) {
-            $mask = BankDetails::maskedSummary($row, 'users', (int) $row['id']);
+            $mask = BankDetails::maskedSummary($row);
             if ($mask !== null) {
                 $masks[(int) $row['id']] = $mask;
             }

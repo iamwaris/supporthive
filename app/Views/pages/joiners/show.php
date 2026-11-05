@@ -7,7 +7,7 @@
  * the employee, so this page points there instead.
  *
  * @var array<string,mixed>        $submission  JoinerSubmission::findWithReviewer()
- * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>}|null $bankDetails
+ * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string}|null $bankDetails
  *      null once approved
  * @var array<string,string>       $defaults    owner's defaults for designation and salary
  * @var array<string,list<string>> $errors
@@ -22,16 +22,7 @@ $id = (int) $submission['id'];
 $status = (string) $submission['status'];
 $isPending = $status === 'pending';
 $day = static fn (mixed $date): string => date('j M Y', (int) strtotime((string) $date));
-$bankShown = static function (string $field) use ($bankDetails): string {
-    if ($bankDetails === null) {
-        return 'Not given';
-    }
-    if (in_array($field, $bankDetails['unavailable'], true)) {
-        return 'Unavailable';
-    }
-
-    return $bankDetails[$field] ?? 'Not given';
-};
+$bankShown = static fn (string $field): string => $bankDetails[$field] ?? 'Not given';
 
 $rows = [
     'Full name' => (string) $submission['name'],
@@ -86,19 +77,14 @@ $approveFields = [
                 <?php foreach ($rows as $label => $text) : ?>
                     <div class="min-w-0">
                         <dt class="text-[11px] font-semibold uppercase tracking-wider text-slate-500"><?= e($label) ?></dt>
-                        <dd class="mt-1 text-sm break-all <?= in_array($text, ['Not given', 'Unavailable'], true) ? 'text-slate-500' : 'text-ink' ?>">
+                        <dd class="mt-1 text-sm break-all <?= $text === 'Not given' ? 'text-slate-500' : 'text-ink' ?>">
                             <?= e($text) ?>
                         </dd>
                     </div>
                 <?php endforeach; ?>
             </dl>
             <?php if ($bankDetails !== null) : ?>
-                <p class="help mt-5">
-                    Bank details are visible to admins only and stored encrypted.
-                    <?php if ($bankDetails['unavailable'] !== []) : ?>
-                        “Unavailable” means a stored value could not be decrypted.
-                    <?php endif; ?>
-                </p>
+                <p class="help mt-5">Bank details are visible to admins only.</p>
             <?php elseif ($submission['employee_user_id'] !== null) : ?>
                 <p class="mt-5 text-sm text-slate-700">
                     Bank details moved to the employee record.

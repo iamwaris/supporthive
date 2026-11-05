@@ -484,7 +484,6 @@ final class EmployeeSalaryTest extends TestCase
                 'bank_name' => null,
                 'bank_account_number' => null,
                 'bank_iban' => null,
-                'unavailable' => [],
             ],
         ]);
 
@@ -512,7 +511,6 @@ final class EmployeeSalaryTest extends TestCase
                 'bank_name' => null,
                 'bank_account_number' => null,
                 'bank_iban' => null,
-                'unavailable' => [],
             ],
             'errors' => ['amount' => ['The amount must be an amount in digits.']],
         ]);

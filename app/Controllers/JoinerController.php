@@ -59,7 +59,7 @@ final class JoinerController extends Controller
         foreach ($rows as $row) {
             // Approved rows hold no bank details any more (moved to the employee).
             $masks[(int) $row['id']] = $status === 'pending'
-                ? BankDetails::maskedSummary($row, 'joiner_submissions', (int) $row['id'])
+                ? BankDetails::maskedSummary($row)
                 : null;
         }
 
@@ -88,7 +88,6 @@ final class JoinerController extends Controller
     public function show(array $params): void
     {
         $submission = $this->findOr404($params);
-        $id = (int) $submission['id'];
 
         $this->view('pages/joiners/show', [
             'title' => (string) $submission['name'],
@@ -98,7 +97,7 @@ final class JoinerController extends Controller
             'submission' => $submission,
             // Only a pending row still holds them; see JoinerSubmission::markApproved().
             'bankDetails' => (string) $submission['status'] === 'pending'
-                ? BankDetails::decrypt($submission, 'joiner_submissions', $id)
+                ? BankDetails::from($submission)
                 : null,
             'defaults' => [
                 'designation' => EmployeeOnboarding::DEFAULT_DESIGNATION,
@@ -110,9 +109,9 @@ final class JoinerController extends Controller
     /**
      * Creates the employee exactly as "Add employee" does — the same
      * EmployeeOnboarding::create(), so a login with a one-time temporary
-     * password shown once to this admin — plus the joiner's encrypted bank
-     * details, copied as they are. The starting salary, if kept, takes
-     * effect from the joining date, or today.
+     * password shown once to this admin — plus the joiner's bank details,
+     * moved as they are. The starting salary, if kept, takes effect from the
+     * joining date, or today.
      *
      * @param array<string,string> $params
      */
@@ -181,7 +180,7 @@ final class JoinerController extends Controller
                     return null;
                 }
 
-                $bankColumns = array_intersect_key($locked, array_flip(BankDetails::COLUMNS));
+                $bankColumns = BankDetails::from($locked);
                 $created = EmployeeOnboarding::create($fields, $startingSalary, $bankColumns);
                 $submissions->markApproved($id, $created['id']);
                 Audit::record(
@@ -202,8 +201,8 @@ final class JoinerController extends Controller
     }
 
     /**
-     * Permanently deletes a pending submission — a hard delete, encrypted
-     * bank details included; nothing is kept to retain. Approved joiners are
+     * Permanently deletes a pending submission — a hard delete, bank
+     * details included; nothing is kept to retain. Approved joiners are
      * employees by then and are never deleted from here. The audit row names
      * who was deleted and when they submitted, never what they sent.
      *

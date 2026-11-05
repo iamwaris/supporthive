@@ -26,7 +26,7 @@ final class EmployeeProfile extends Model
     /** @var list<string> */
     protected array $fillable = [
         'user_id', 'employee_code', 'phone', 'designation', 'joining_date',
-        'bank_name_enc', 'bank_account_number_enc', 'bank_iban_enc',
+        'bank_name', 'bank_account_number', 'bank_iban',
     ];
 
     /**
@@ -36,7 +36,7 @@ final class EmployeeProfile extends Model
      * @param array{
      *     name:string,email:string,phone:?string,designation:string,joining_date:?string,employee_code?:?string
      * } $clean
-     * @param array<string,?string> $bankColumns already-encrypted *_enc columns (App\Services\BankDetails::encrypt())
+     * @param array<string,?string> $bankColumns App\Services\BankDetails::from() output, or none
      */
     public function createWithLogin(array $clean, string $passwordHash, array $bankColumns = []): int
     {
@@ -56,7 +56,7 @@ final class EmployeeProfile extends Model
                 'phone' => $clean['phone'],
                 'designation' => $clean['designation'],
                 'joining_date' => $clean['joining_date'],
-            ] + array_intersect_key($bankColumns, array_flip(BankDetails::COLUMNS)));
+            ] + array_intersect_key($bankColumns, array_flip(BankDetails::FIELDS)));
 
             return $userId;
         });
@@ -121,16 +121,16 @@ final class EmployeeProfile extends Model
     }
 
     /**
-     * The encrypted bank columns of an employee of this branch, for
-     * App\Services\BankDetails::decrypt(). Deliberately not part of
-     * findWithUser(): that row also feeds the employee's own portal.
+     * The bank columns of an employee of this branch, for the admin-only
+     * screen. Deliberately not part of findWithUser(): that row also feeds
+     * the employee's own portal, which must never show them.
      *
      * @return array<string,mixed>|null
      */
-    public function encryptedBankDetails(int $userId): ?array
+    public function bankDetails(int $userId): ?array
     {
         return $this->db()->first(
-            "SELECT p.bank_name_enc, p.bank_account_number_enc, p.bank_iban_enc
+            "SELECT p.bank_name, p.bank_account_number, p.bank_iban
              FROM employee_profiles p
              JOIN users u ON u.id = p.user_id AND u.role = 'employee'
              WHERE p.user_id = :id AND p.branch_id = :branch
@@ -142,11 +142,11 @@ final class EmployeeProfile extends Model
     /**
      * Callers resolve $userId through findWithUser() first.
      *
-     * @param array<string,?string> $bankColumns BankDetails::encrypt() output
+     * @param array<string,?string> $bankColumns BankDetails::from() output
      */
     public function updateBankDetails(int $userId, array $bankColumns): void
     {
-        $this->updateById($userId, array_intersect_key($bankColumns, array_flip(BankDetails::COLUMNS)));
+        $this->updateById($userId, array_intersect_key($bankColumns, array_flip(BankDetails::FIELDS)));
     }
 
     /** @return list<array<string,mixed>> */
@@ -157,7 +157,7 @@ final class EmployeeProfile extends Model
 
         return $this->db()->all(
             "SELECT u.id, u.name, u.email, u.status, u.must_change_password, p.employee_code, p.phone, p.designation,
-                    p.joining_date, p.bank_account_number_enc, p.bank_iban_enc
+                    p.joining_date, p.bank_account_number, p.bank_iban
              FROM users u
              JOIN employee_profiles p ON p.user_id = u.id
              WHERE {$where}

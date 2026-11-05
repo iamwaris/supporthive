@@ -13,11 +13,10 @@ use App\Core\Model;
  * waiting for an admin. Final once submitted: the joiner has no way to read
  * or change it. An admin approves it (which creates the employee through
  * App\Services\EmployeeOnboarding; the row is kept as the record of that)
- * or deletes it — a hard delete of a pending row, encrypted bank details
- * included. There is no rejected state.
+ * or deletes it — a hard delete of a pending row, bank details included.
+ * There is no rejected state.
  *
- * Bank details are stored only as App\Core\SecretBox ciphertext from the
- * moment of submission (App\Services\BankDetails), and only while the row
+ * Bank details (App\Services\BankDetails) are kept here only while the row
  * is pending: approval moves them to the employee and clears them here.
  *
  * Every admin read and write is scoped to the session's branch (Model). The
@@ -35,7 +34,7 @@ final class JoinerSubmission extends Model
 
     /**
      * @param array{name:string,email:string,phone:?string,joining_date:?string} $fields validated
-     * @param array<string,?string> $bankColumns BankDetails::encrypt() output
+     * @param array<string,?string> $bankColumns BankDetails::from() output
      */
     public static function submit(int $branchId, array $fields, array $bankColumns, string $ip): int
     {
@@ -45,9 +44,9 @@ final class JoinerSubmission extends Model
             'email' => $fields['email'],
             'phone' => $fields['phone'],
             'joining_date' => $fields['joining_date'],
-            'bank_name_enc' => $bankColumns['bank_name_enc'] ?? null,
-            'bank_account_number_enc' => $bankColumns['bank_account_number_enc'] ?? null,
-            'bank_iban_enc' => $bankColumns['bank_iban_enc'] ?? null,
+            'bank_name' => $bankColumns['bank_name'] ?? null,
+            'bank_account_number' => $bankColumns['bank_account_number'] ?? null,
+            'bank_iban' => $bankColumns['bank_iban'] ?? null,
             'status' => 'pending',
             'submitted_ip' => $ip,
         ]);
@@ -60,7 +59,7 @@ final class JoinerSubmission extends Model
 
         return $this->db()->all(
             'SELECT s.id, s.name, s.email, s.phone, s.joining_date, s.status, s.created_at, s.reviewed_at,
-                    s.bank_account_number_enc, s.bank_iban_enc, r.name AS reviewed_by_name
+                    s.bank_account_number, s.bank_iban, r.name AS reviewed_by_name
              FROM joiner_submissions s
              LEFT JOIN users r ON r.id = s.reviewed_by
              WHERE s.branch_id = :branch AND s.status = :status
@@ -110,8 +109,8 @@ final class JoinerSubmission extends Model
     }
 
     /**
-     * Also clears the submission's bank ciphertext: by now it has been
-     * copied to the employee, which is the one place it lives from here on.
+     * Also clears the submission's bank details: by now they have been
+     * copied to the employee, which is the one place they live from here on.
      * Keeping a second copy would leave a stale full IBAN here after any
      * later correction on the employee.
      */
@@ -122,9 +121,9 @@ final class JoinerSubmission extends Model
             [
                 'status' => 'approved',
                 'employee_user_id' => $employeeUserId,
-                'bank_name_enc' => null,
-                'bank_account_number_enc' => null,
-                'bank_iban_enc' => null,
+                'bank_name' => null,
+                'bank_account_number' => null,
+                'bank_iban' => null,
                 'reviewed_by' => Auth::id(),
                 'reviewed_at' => date('Y-m-d H:i:s'),
             ],
@@ -134,8 +133,8 @@ final class JoinerSubmission extends Model
     }
 
     /**
-     * Permanently removes a pending submission of this branch, ciphertext
-     * and all. Callers lock it with lockPending() first; the status
+     * Permanently removes a pending submission of this branch, bank
+     * details and all. Callers lock it with lockPending() first; the status
      * condition is a second guard so an approved row can never go this way.
      * Nothing references a submission, so there are no child rows to remove.
      */

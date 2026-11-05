@@ -18,9 +18,8 @@ use PDOException;
  * employee, or approving a new joiner in JoinerController@approve). All
  * must write the login and its profile together and leave the same
  * security-log and audit trail, so none of those controllers does it itself.
- * An optional starting salary and any (already encrypted) bank details are
- * written in the same transaction, so an employee is never left
- * half-created.
+ * An optional starting salary and any bank details are written in the same
+ * transaction, so an employee is never left half-created.
  */
 final class EmployeeOnboarding
 {
@@ -138,7 +137,7 @@ final class EmployeeOnboarding
      * @param array{
      *     name:string,email:string,phone:?string,designation:string,joining_date:?string,employee_code?:?string
      * } $fields
-     * @param array<string,?string> $bankColumns encrypted *_enc columns (BankDetails::encrypt()), or none
+     * @param array<string,?string> $bankColumns BankDetails::from() output, or none
      * @return array{id:int,temporaryPassword:string}
      */
     public static function create(array $fields, ?string $startingSalary = null, array $bankColumns = []): array

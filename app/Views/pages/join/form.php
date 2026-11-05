@@ -46,7 +46,7 @@ $sections = [
             <legend class="mb-1 font-display text-sm font-semibold text-ink"><?= e($legend) ?></legend>
             <?php if ($legend !== 'About you') : ?>
                 <p class="help -mt-2">
-                    Optional. Stored encrypted and seen only by the admins who set up your salary.
+                    Optional. Seen only by the admins who set up your salary.
                     <?php if ($bankFailed) : ?>
                         For your security, the account number and IBAN are not kept after an error — please enter them again.
                     <?php endif; ?>

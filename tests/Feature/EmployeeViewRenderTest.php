@@ -120,7 +120,6 @@ final class EmployeeViewRenderTest extends TestCase
                 'bank_name' => null,
                 'bank_account_number' => null,
                 'bank_iban' => null,
-                'unavailable' => [],
             ],
         ]);
         $create = $this->render('pages/employees/form', ['employee' => null]);

@@ -7,17 +7,15 @@ namespace Tests\Feature;
 use App\Controllers\EmployeeController;
 use App\Controllers\PortalController;
 use App\Controllers\UserController;
-use App\Core\Config;
 use App\Core\Database;
 use App\Models\EmployeeProfile;
 use App\Services\BankDetails;
 use App\Services\EmployeeOnboarding;
 use PDOException;
 use PHPUnit\Framework\TestCase;
-use ReflectionProperty;
-use RuntimeException;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
+use Tests\Support\RouteDispatch;
 
 /**
  * Employee ID (employee_code) and bank details on an employee (JOIN-1).
@@ -25,10 +23,10 @@ use Tests\Support\ControllerActionRunner;
  * The guarantees: the Employee ID is optional, letters/digits/hyphens, at
  * most 30, and unique within a branch (case-insensitively) but reusable in
  * another; every admin creation form opens with the owner's defaults; bank
- * details are encrypted at rest, shown in full only on the admin's employee
- * page, masked in the list, absent from the employee's own portal, never in
- * an audit row or the session in plain text, and an undecryptable value is
- * "Unavailable", not an error page.
+ * details (plain columns since 2026-11-05) are stored normalised, shown in
+ * full only on the admin's employee page, masked in the list, unreachable
+ * for non-admins, absent from the employee's own portal, and never in an
+ * audit row or the session in full.
  */
 final class EmployeeCodeAndBankDetailsTest extends TestCase
 {
@@ -44,10 +42,6 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
 
     protected function setUp(): void
     {
-        if (!extension_loaded('sodium')) {
-            self::markTestSkipped('The sodium extension is not loaded; enable extension=sodium in php.ini.');
-        }
-
         $_SESSION = [];
         $this->cleanUp();
 
@@ -345,21 +339,41 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
 
     // --- Bank details ---------------------------------------------------------
 
-    public function testBankDetailsAreEncryptedAtRestAndDecryptToTheNormalisedValues(): void
+    public function testBankDetailsPersistAsTheNormalisedValues(): void
     {
         $this->saveBankDetails();
 
         $row = $this->rawProfile($this->employeeAId);
-        $rawColumns = implode('|', [$row['bank_name_enc'], $row['bank_account_number_enc'], $row['bank_iban_enc']]);
-        foreach ([self::IBAN, self::ACCOUNT, self::BANK, '6702', '1012'] as $plain) {
-            self::assertStringNotContainsString($plain, $rawColumns);
-        }
+        self::assertSame(self::BANK, $row['bank_name']);
+        self::assertSame(self::ACCOUNT, $row['bank_account_number']);
+        self::assertSame(self::IBAN, $row['bank_iban']);
+        self::assertSame(
+            ['bank_name' => self::BANK, 'bank_account_number' => self::ACCOUNT, 'bank_iban' => self::IBAN],
+            BankDetails::from($row)
+        );
+    }
 
-        $details = BankDetails::decrypt($row, 'users', $this->employeeAId);
-        self::assertSame(self::BANK, $details['bank_name']);
-        self::assertSame(self::ACCOUNT, $details['bank_account_number']);
-        self::assertSame(self::IBAN, $details['bank_iban']);
-        self::assertSame([], $details['unavailable']);
+    public function testNonAdminsCannotReachTheEmployeePageWithBankDetails(): void
+    {
+        $this->saveBankDetails();
+        $partnerId = $this->insertUser('ecbd-partner@test.local', 'partner', $this->branchAId);
+
+        $sessions = [
+            'partner' => ['_auth_user_id' => $partnerId, '_active_branch_id' => $this->branchAId],
+            'the employee themself' => ['_auth_user_id' => $this->employeeAId, '_active_branch_id' => $this->branchAId],
+        ];
+        foreach ($sessions as $who => $session) {
+            foreach (['/employees/' . $this->employeeAId, '/employees'] as $uri) {
+                $result = ControllerActionRunner::run(RouteDispatch::class, 'dispatch', $session, [], [], 'GET', [
+                    'uri' => $uri,
+                ]);
+
+                self::assertNotSame(200, $result['status'], "{$who} must not get {$uri}");
+                foreach ([self::IBAN, self::ACCOUNT, self::BANK, '****1012'] as $hidden) {
+                    self::assertStringNotContainsString($hidden, $result['body'], "{$who} on {$uri}");
+                }
+            }
+        }
     }
 
     public function testFullValuesOnlyOnTheAdminPageMaskedInTheListAndAbsentFromThePortal(): void
@@ -428,9 +442,9 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
         self::assertArrayNotHasKey('bank_account_number', $result['session']['_old'] ?? []);
 
         $row = $this->rawProfile($this->employeeAId);
-        self::assertNull($row['bank_name_enc']);
-        self::assertNull($row['bank_account_number_enc']);
-        self::assertNull($row['bank_iban_enc']);
+        self::assertNull($row['bank_name']);
+        self::assertNull($row['bank_account_number']);
+        self::assertNull($row['bank_iban']);
     }
 
     public function testEmptyFieldsClearStoredBankDetails(): void
@@ -444,9 +458,9 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
         ], null, ['id' => (string) $this->employeeAId]);
 
         $row = $this->rawProfile($this->employeeAId);
-        self::assertNotNull($row['bank_name_enc']);
-        self::assertNull($row['bank_account_number_enc']);
-        self::assertNull($row['bank_iban_enc']);
+        self::assertSame(self::BANK, $row['bank_name']);
+        self::assertNull($row['bank_account_number']);
+        self::assertNull($row['bank_iban']);
     }
 
     public function testAnotherBranchsAdminCannotReadOrChangeBankDetails(): void
@@ -467,25 +481,8 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
         self::assertStringNotContainsString(self::IBAN, $show['body']);
         self::assertSame(404, $change['status']);
         $after = $this->rawProfile($this->employeeAId);
-        self::assertSame($before['bank_account_number_enc'], $after['bank_account_number_enc']);
-    }
-
-    public function testAnUndecryptableValueShowsUnavailableInsteadOfAnError(): void
-    {
-        Database::instance()->update(
-            'employee_profiles',
-            ['bank_iban_enc' => base64_encode(random_bytes(60))],
-            'user_id = :id',
-            ['id' => $this->employeeAId]
-        );
-
-        $show = $this->act(EmployeeController::class, 'show', [], null, ['id' => (string) $this->employeeAId], 'GET');
-        $index = $this->act(EmployeeController::class, 'index', [], null, [], 'GET');
-
-        self::assertSame(200, $show['status']);
-        self::assertStringContainsString('Unavailable', $show['body']);
-        self::assertSame(200, $index['status']);
-        self::assertStringContainsString('Unavailable', $index['body']);
+        self::assertSame(self::ACCOUNT, $after['bank_account_number']);
+        self::assertSame($before, $after);
     }
 
     // --- Duplicate-key race ---------------------------------------------------
@@ -568,30 +565,6 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
             $this->expectException(PDOException::class);
             $fields = ['email' => 'ecbd-free@test.local', 'employee_code' => null];
             EmployeeOnboarding::conflictsFromDuplicate($e, $fields);
-        }
-    }
-
-    // --- Missing key ----------------------------------------------------------
-
-    public function testAFormWithNoBankDetailsNeverNeedsTheKey(): void
-    {
-        $items = new ReflectionProperty(Config::class, 'items');
-        $original = $items->getValue();
-        self::assertIsArray($original);
-        $withoutKey = $original;
-        $withoutKey['app']['encryption_key'] = '';
-        $items->setValue(null, $withoutKey);
-
-        try {
-            self::assertSame(
-                ['bank_name_enc' => null, 'bank_account_number_enc' => null, 'bank_iban_enc' => null],
-                BankDetails::encrypt(['bank_name' => null, 'bank_account_number' => '', 'bank_iban' => null])
-            );
-
-            $this->expectException(RuntimeException::class);
-            BankDetails::encrypt(['bank_name' => self::BANK, 'bank_account_number' => null, 'bank_iban' => null]);
-        } finally {
-            $items->setValue(null, $original);
         }
     }
 }

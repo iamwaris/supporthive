@@ -22,8 +22,8 @@ use Tests\Support\RouteDispatch;
  *
  * Public: a valid link shows the form; every link that does not work —
  * unknown, malformed, disabled, replaced, branch locked — shows the same
- * neutral page; a submission creates only a pending joiner, with bank
- * details encrypted from the start; designation, salary and Employee ID
+ * neutral page; a submission with bank details creates only a pending
+ * joiner holding them (masked in every list, never in an audit row); designation, salary and Employee ID
  * cannot be smuggled in; honeypot, minimum time, rate limits and
  * array-shaped input are all handled without storing anything.
  *
@@ -49,10 +49,6 @@ final class JoinerOnboardingTest extends TestCase
 
     protected function setUp(): void
     {
-        if (!extension_loaded('sodium')) {
-            self::markTestSkipped('The sodium extension is not loaded; enable extension=sodium in php.ini.');
-        }
-
         $_SESSION = [];
         $this->cleanUp();
 
@@ -315,7 +311,36 @@ final class JoinerOnboardingTest extends TestCase
 
     // --- Submitting -------------------------------------------------------------
 
-    public function testAValidSubmissionCreatesOnlyAPendingJoinerWithEncryptedBankDetails(): void
+    /**
+     * Regression for the production 500 (2026-11-05): a submission with bank
+     * details, sent through the real route table with CSRF and middleware,
+     * reaches the thank-you redirect and stores them. Nothing on this path
+     * may depend on the sodium extension or an encryption key any more.
+     */
+    public function testASubmissionWithBankDetailsSucceedsEndToEndThroughTheRouter(): void
+    {
+        $csrf = bin2hex(random_bytes(32));
+
+        $result = ControllerActionRunner::run(
+            RouteDispatch::class,
+            'dispatch',
+            ['_csrf_token' => $csrf, '_csrf_issued_at' => time(), '_join_form_started_at' => time() - 30],
+            $this->joinerPost() + ['_csrf' => $csrf],
+            [],
+            'POST',
+            ['uri' => '/join/' . $this->token]
+        );
+
+        self::assertSame(302, $result['status'], $result['body']);
+        self::assertTrue($result['session']['_join_submitted'] ?? false);
+        $row = $this->onlySubmission();
+        self::assertSame('pending', $row['status']);
+        self::assertSame(self::IBAN, $row['bank_iban']);
+        self::assertSame(self::ACCOUNT, $row['bank_account_number']);
+        self::assertSame(self::BANK, $row['bank_name']);
+    }
+
+    public function testAValidSubmissionWithBankDetailsCreatesOnlyAPendingJoinerHoldingThem(): void
     {
         $result = $this->submit($this->joinerPost());
 
@@ -328,14 +353,18 @@ final class JoinerOnboardingTest extends TestCase
         self::assertSame('jnr-joiner@test.local', $row['email']);
         self::assertSame('2026-12-01', $row['joining_date']);
 
-        $raw = (string) json_encode($row);
-        foreach ([self::IBAN, self::ACCOUNT, self::BANK, '6702', '1012'] as $plain) {
-            self::assertStringNotContainsString($plain, $raw);
+        self::assertSame(self::IBAN, $row['bank_iban']);
+        self::assertSame(self::ACCOUNT, $row['bank_account_number']);
+        self::assertSame(self::BANK, $row['bank_name']);
+
+        // The anonymous audit row says only that a submission arrived.
+        $meta = (string) Database::instance()->value(
+            "SELECT COALESCE(meta, '') FROM audit_log WHERE action = 'joiner.submitted' AND entity_id = :id",
+            ['id' => $row['id']]
+        );
+        foreach ([self::IBAN, self::ACCOUNT, self::BANK] as $plain) {
+            self::assertStringNotContainsString($plain, $meta);
         }
-        $details = BankDetails::decrypt($row, 'joiner_submissions', (int) $row['id']);
-        self::assertSame(self::IBAN, $details['bank_iban']);
-        self::assertSame(self::ACCOUNT, $details['bank_account_number']);
-        self::assertSame(self::BANK, $details['bank_name']);
 
         // No login, no user, no employee.
         self::assertNull(Database::instance()->value(
@@ -536,17 +565,19 @@ final class JoinerOnboardingTest extends TestCase
         $this->admin('approve', $this->approvePost(), ['id' => (string) $id]);
 
         $after = $this->onlySubmission();
-        self::assertNull($after['bank_name_enc']);
-        self::assertNull($after['bank_account_number_enc']);
-        self::assertNull($after['bank_iban_enc']);
+        self::assertSame(self::IBAN, $before['bank_iban']);
+        self::assertNull($after['bank_name']);
+        self::assertNull($after['bank_account_number']);
+        self::assertNull($after['bank_iban']);
         $employeeId = (int) $after['employee_user_id'];
         $profile = (array) Database::instance()->first(
-            'SELECT bank_name_enc, bank_account_number_enc, bank_iban_enc FROM employee_profiles WHERE user_id = :id',
+            'SELECT bank_name, bank_account_number, bank_iban FROM employee_profiles WHERE user_id = :id',
             ['id' => $employeeId]
         );
-        self::assertSame($before['bank_iban_enc'], $profile['bank_iban_enc']);
-        self::assertSame($before['bank_account_number_enc'], $profile['bank_account_number_enc']);
-        self::assertSame($before['bank_name_enc'], $profile['bank_name_enc']);
+        self::assertSame(
+            ['bank_name' => self::BANK, 'bank_account_number' => self::ACCOUNT, 'bank_iban' => self::IBAN],
+            $profile
+        );
 
         $page = $this->admin('show', [], ['id' => (string) $id], null, 'GET');
         self::assertSame(200, $page['status']);
@@ -655,11 +686,10 @@ final class JoinerOnboardingTest extends TestCase
         self::assertSame('Fronter', $profile['designation']);
         self::assertSame('JNR-100', $profile['employee_code']);
         self::assertSame('+92 300 1112223', $profile['phone']);
-        self::assertSame($submission['bank_iban_enc'], $profile['bank_iban_enc']);
-        self::assertSame(
-            self::IBAN,
-            BankDetails::decrypt($profile, 'users', (int) $user['id'])['bank_iban']
-        );
+        self::assertSame(self::IBAN, $submission['bank_iban']);
+        self::assertSame(self::IBAN, $profile['bank_iban']);
+        self::assertSame(self::ACCOUNT, $profile['bank_account_number']);
+        self::assertSame(self::BANK, $profile['bank_name']);
 
         $salaries = $db->all(
             'SELECT amount, effective_from FROM employee_salaries WHERE user_id = :id',
@@ -748,7 +778,7 @@ final class JoinerOnboardingTest extends TestCase
             ['id' => $id, 'u' => $this->adminAId]
         );
         self::assertNotSame('', $meta);
-        $sensitive = [self::IBAN, self::ACCOUNT, self::BANK, '6702', '1012', '_enc', 'jnr-joiner@', '1112223'];
+        $sensitive = [self::IBAN, self::ACCOUNT, self::BANK, '6702', '1012', 'bank_', 'jnr-joiner@', '1112223'];
         foreach ($sensitive as $secret) {
             self::assertStringNotContainsString($secret, $meta);
         }
