@@ -36,7 +36,11 @@ final class PayrollController extends Controller
 {
     private const PER_PAGE = 24;
 
-    private const MONTH_RULE = 'required|regex:/^20\d{2}-(0[1-9]|1[0-2])$/';
+    /**
+     * YYYY-MM, months 01..12. Kept free of `|`: the rule string is split on
+     * it, and an alternation here once cut the pattern in half (a 500).
+     */
+    public const MONTH_RULE = 'required|regex:/^20\d{2}-(?!00)(?!1[3-9])[01]\d$/';
     private const NOTE_RULE = 'nullable|max:5000';
 
     private const FIGURE_RULES = [
@@ -95,7 +99,14 @@ final class PayrollController extends Controller
 
         $rows = $this->readUploadedSheet();
         $runs = new PayrollRun();
-        $result = PayrollImport::validate($rows, $runs->branchEmployees());
+        try {
+            $result = PayrollImport::validate($rows, $runs->branchEmployees());
+            $existing = $runs->findForMonth($periodMonth);
+            $alreadyEmailed = $existing !== null && $runs->hasEmailedLines((int) $existing['id']);
+        } catch (PDOException $e) {
+            Logger::error('Payroll import lookup failed', ['error' => $e->getMessage()]);
+            $this->failImport('Nothing was saved: the sheet could not be checked just now. Please try again.');
+        }
 
         if (!$result->passes()) {
             Logger::info('Payroll import rejected', ['errors' => count($result->errors)]);
@@ -103,9 +114,8 @@ final class PayrollController extends Controller
             return;
         }
 
-        $existing = $runs->findForMonth($periodMonth);
         if ($existing !== null) {
-            if ($runs->hasEmailedLines((int) $existing['id'])) {
+            if ($alreadyEmailed) {
                 $this->failImport(
                     'Notices for ' . $monthLabel . ' have already been emailed, so its lines cannot be replaced. '
                     . 'Correct individual lines on the run page instead.'

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit;
 
+use App\Controllers\PayrollController;
 use App\Core\Validator;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 
 final class ValidatorTest extends TestCase
@@ -113,5 +115,44 @@ final class ValidatorTest extends TestCase
         self::assertSame([], $validator->validated());
         self::assertTrue(Validator::make(['v' => 'open'], ['v' => 'in:open'])->passes(), 'scalars still pass');
         self::assertTrue(Validator::make(['v' => 7], ['v' => 'max:10'])->passes(), 'a number still compares');
+    }
+
+    /**
+     * Regression (PAY-1 hotfix): the month rule had a `|` inside its regex,
+     * the rule string split it in half, and every import was a 500.
+     */
+    public function testPayrollMonthRuleAcceptsRealMonthsOnly(): void
+    {
+        $rule = ['period_month' => PayrollController::MONTH_RULE];
+
+        foreach (['2026-01', '2026-09', '2026-10', '2026-12', '2099-06'] as $month) {
+            $v = Validator::make(['period_month' => $month], $rule);
+            self::assertTrue($v->passes(), "{$month} should pass");
+            self::assertSame($month, $v->validated()['period_month']);
+        }
+
+        $invalid = ['2026-00', '2026-13', '2026-19', '2026-20', '2026-1', '1999-05', '2026-10x', 'garbage', ''];
+        foreach ($invalid as $month) {
+            self::assertTrue(Validator::make(['period_month' => $month], $rule)->fails(), "{$month} should fail");
+        }
+    }
+
+    /** The list form lets a pattern contain `|`, which a rule string cannot. */
+    public function testRulesAsAListKeepAPipeInsideARegex(): void
+    {
+        $rule = ['size' => ['required', 'regex:/^(small|large)$/']];
+
+        self::assertTrue(Validator::make(['size' => 'large'], $rule)->passes());
+        self::assertTrue(Validator::make(['size' => 'medium'], $rule)->fails());
+        self::assertTrue(Validator::make(['size' => ''], $rule)->fails());
+    }
+
+    /** A broken pattern is a developer error and must say so, not surface as a PHP warning. */
+    public function testAnInvalidRegexRuleThrowsALogicException(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('Invalid regex validation rule');
+
+        Validator::make(['size' => 'small'], ['size' => 'required|regex:/^(small|large)$/']);
     }
 }

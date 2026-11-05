@@ -494,6 +494,26 @@ final class PayrollNoticeTest extends TestCase
         self::assertArrayNotHasKey('_old', $result['session']);
     }
 
+    /**
+     * Regression (PAY-1 hotfix): every import was a 500 because the month
+     * rule's regex was split on its `|`. A valid month with no file must now
+     * reach the file check and come back with that field's own error.
+     */
+    public function testImportWithAValidMonthAndNoFileAsksForTheFile(): void
+    {
+        $result = ControllerActionRunner::run(
+            PayrollController::class,
+            'import',
+            $this->sessionA(),
+            ['period_month' => '2026-10', 'note' => '']
+        );
+
+        self::assertSame(302, $result['status']);
+        $errors = $result['session']['_flash']['errors'] ?? [];
+        self::assertArrayNotHasKey('period_month', $errors);
+        self::assertSame(["Choose the month's .xlsx or .csv file."], $errors['sheet'] ?? null);
+    }
+
     public function testRunCannotBeReplacedOnceANoticeWasEmailed(): void
     {
         $this->send([$this->annId]);

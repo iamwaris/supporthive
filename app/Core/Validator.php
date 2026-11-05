@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Core;
 
 use App\Domain\PakistanIban;
+use LogicException;
 
 /**
  * Allow-list input validation.
@@ -21,12 +22,16 @@ use App\Domain\PakistanIban;
  *   ]);
  *   if (!$v->passes()) { ... $v->errors() ... }
  *   $clean = $v->validated();
+ *
+ * A rule string is split on `|`, so a `regex:` pattern written in one must
+ * not contain `|`. A pattern that needs one goes in the list form, one rule
+ * per element: ['required', 'regex:/^(a|b)$/'].
  */
 final class Validator
 {
     /** @var array<string,mixed> */
     private array $data;
-    /** @var array<string,string> */
+    /** @var array<string,string|list<string>> */
     private array $rules;
     /** @var array<string,list<string>> */
     private array $errors = [];
@@ -35,7 +40,7 @@ final class Validator
 
     /**
      * @param array<string,mixed>  $data
-     * @param array<string,string> $rules
+     * @param array<string,string|list<string>> $rules
      */
     private function __construct(array $data, array $rules)
     {
@@ -46,7 +51,7 @@ final class Validator
 
     /**
      * @param array<string,mixed>  $data
-     * @param array<string,string> $rules
+     * @param array<string,string|list<string>> $rules
      */
     public static function make(array $data, array $rules): self
     {
@@ -82,10 +87,10 @@ final class Validator
 
     private function run(): void
     {
-        foreach ($this->rules as $field => $ruleString) {
+        foreach ($this->rules as $field => $ruleSpec) {
             $raw = $this->data[$field] ?? null;
             $value = is_string($raw) ? trim($raw) : $raw;
-            $rules = explode('|', $ruleString);
+            $rules = is_array($ruleSpec) ? $ruleSpec : explode('|', $ruleSpec);
             $nullable = in_array('nullable', $rules, true);
 
             if (($value === null || $value === '') && $nullable) {
@@ -120,7 +125,7 @@ final class Validator
                     'max'      => $this->compareLength($value, (int) $arg, '<='),
                     'between'  => $this->between($value, (string) $arg),
                     'in'       => is_scalar($value) && in_array((string) $value, explode(',', (string) $arg), true),
-                    'regex'    => is_string($value) && preg_match((string) $arg, $value) === 1,
+                    'regex'    => is_string($value) && self::matches((string) $arg, $value),
                     'same'     => $value === ($this->data[(string) $arg] ?? null),
                     // Expects PakistanIban::normalise()d input; see App\Services\BankDetails.
                     'iban_pk'  => is_string($value) && PakistanIban::isValid($value),
@@ -150,6 +155,31 @@ final class Validator
         $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $value);
 
         return $date !== false && $date->format('Y-m-d') === $value;
+    }
+
+    /**
+     * A broken pattern is a bug in the rule, not bad input, so it throws a
+     * LogicException naming the pattern. Left to preg_match()'s warning it
+     * surfaced only as an anonymous 500 — e.g. a `|` inside a pattern in a
+     * rule string, which splits the pattern in two.
+     */
+    private static function matches(string $pattern, string $value): bool
+    {
+        set_error_handler(static fn (): bool => true);
+        try {
+            $result = preg_match($pattern, $value);
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($result === false) {
+            throw new LogicException(
+                'Invalid regex validation rule ' . var_export($pattern, true) . ': ' . preg_last_error_msg()
+                . '. A pattern containing "|" must use the list form of the rules.'
+            );
+        }
+
+        return $result === 1;
     }
 
     private function compareLength(mixed $value, int $limit, string $operator): bool
