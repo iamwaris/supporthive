@@ -79,6 +79,25 @@ final class Audit
     }
 
     /**
+     * An action taken by someone who is not signed in — the public joiner
+     * form — attributed to the branch it was for and to nobody. Who might
+     * happen to be signed in on that browser is deliberately ignored.
+     */
+    public static function recordAnonymous(int $branchId, string $action, string $entityType, int $entityId): void
+    {
+        Database::instance()->insert('audit_log', [
+            'user_id' => null,
+            'branch_id' => $branchId,
+            'action' => $action,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'ip' => Http::clientIp(),
+            'user_agent' => mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? 'cli'), 0, 255),
+            'meta' => '{}',
+        ]);
+    }
+
+    /**
      * Only the fields that actually changed, so a diff is readable rather than
      * a wall of unchanged values.
      *

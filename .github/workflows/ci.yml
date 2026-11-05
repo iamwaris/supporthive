@@ -36,7 +36,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: pdo_mysql, mbstring, fileinfo, openssl
+          extensions: pdo_mysql, mbstring, fileinfo, openssl, sodium
           coverage: none
           tools: composer:v2
 
@@ -68,6 +68,7 @@ jobs:
           cp .env.example .env
           sed -i "s|^APP_ENV=.*|APP_ENV=local|"            .env
           sed -i "s|^APP_KEY=.*|APP_KEY=$(php scripts/genkey.php)|" .env
+          sed -i "s|^APP_ENCRYPTION_KEY=.*|APP_ENCRYPTION_KEY=$(php scripts/genkey.php --encryption)|" .env
           sed -i "s|^DB_NAME=.*|DB_NAME=supporthive|" .env
           # Named explicitly so the _test suffix is never applied twice.
           echo "DB_NAME_TEST=supporthive_test" >> .env
@@ -128,7 +129,7 @@ jobs:
             echo "::error::A private key is committed. Revoke it immediately, then remove it from history."
             exit 1
           fi
-          if git grep -nIE "(DB_PASS|MAIL_PASS|SSH_PRIVATE_KEY|APP_KEY)[[:space:]]*=[[:space:]]*['\"]?[A-Za-z0-9+/=_-]{8,}" -- ':!.env.example' ':!.github' ':!docs'; then
+          if git grep -nIE "(DB_PASS|MAIL_PASS|SSH_PRIVATE_KEY|APP_KEY|APP_ENCRYPTION_KEY)[[:space:]]*=[[:space:]]*['\"]?[A-Za-z0-9+/=_-]{8,}" -- ':!.env.example' ':!.github' ':!docs'; then
             echo "::error::Hard-coded credential found."
             exit 1
           fi

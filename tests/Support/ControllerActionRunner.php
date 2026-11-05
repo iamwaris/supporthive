@@ -181,6 +181,14 @@ final class ControllerActionRunner
             // App\\Core\\Router::invoke() always calls ->{method}(\$params);
             // PHP does not error on an unused extra positional argument.
             \$controller->{$method}({$routeParamsLiteral});
+
+            // Reached only when the action returned normally — a page that
+            // rendered without exiting, which over HTTP is a 200. The CLI
+            // has no status of its own, and a crash never gets here, so a
+            // missing status still means something went wrong.
+            if (http_response_code() === false) {
+                http_response_code(200);
+            }
             PHP;
     }
 }

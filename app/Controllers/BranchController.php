@@ -281,6 +281,10 @@ final class BranchController extends Controller
             $db->delete('employee_salaries', 'branch_id = :id', ['id' => $branchId]);
             // Register entries reference users (created_by) without cascading too.
             $db->delete('receivables_payables', 'branch_id = :id', ['id' => $branchId]);
+            // So do joiner submissions (reviewed_by) and the joining link
+            // (generated_by); both go with everything else in the branch.
+            $db->delete('joiner_submissions', 'branch_id = :id', ['id' => $branchId]);
+            $db->delete('employee_join_links', 'branch_id = :id', ['id' => $branchId]);
             $documentPaths = array_map(
                 static fn (array $row): string => EmployeeDocument::filePath($row),
                 $db->all('SELECT stored_filename FROM employee_documents WHERE branch_id = :id', ['id' => $branchId])

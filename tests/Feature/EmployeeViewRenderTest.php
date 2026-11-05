@@ -108,6 +108,7 @@ final class EmployeeViewRenderTest extends TestCase
         $index = $this->render('pages/employees/index', $list + [
             'employees' => (new EmployeeProfile())->search(null, null, 1, 20),
             'salaries' => [],
+            'bankMasks' => [],
             'filters' => ['q' => null, 'status' => null],
         ]);
         $show = $this->render('pages/employees/show', [
@@ -115,6 +116,12 @@ final class EmployeeViewRenderTest extends TestCase
             'currentSalary' => null,
             'upcomingSalary' => null,
             'salaryHistory' => [],
+            'bankDetails' => [
+                'bank_name' => null,
+                'bank_account_number' => null,
+                'bank_iban' => null,
+                'unavailable' => [],
+            ],
         ]);
         $create = $this->render('pages/employees/form', ['employee' => null]);
         $edit = $this->render('pages/employees/form', ['employee' => $employee]);

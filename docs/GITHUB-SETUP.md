@@ -66,6 +66,7 @@ ssh -i ~/.ssh/supporthive_deploy -p <SSH_PORT> <SSH_USER>@<SSH_HOST> "pwd && ls 
 | `SSH_KNOWN_HOSTS` | the `ssh-keyscan` output from step 2 |
 | `APP_URL` | `https://yoursite.com` — no trailing slash |
 | `APP_KEY` | run `php scripts/genkey.php`; use a **fresh** value, not your local one |
+| `APP_ENCRYPTION_KEY` | run `php scripts/genkey.php --encryption`; a **fresh** value, backed up outside the database backups and never changed (it decrypts stored bank details) |
 | `DB_HOST` | `localhost` |
 | `DB_PORT` | `3306` |
 | `DB_NAME` | Hostinger prefixes it, e.g. `u400948127_supporthive` |

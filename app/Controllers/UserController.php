@@ -79,6 +79,14 @@ final class UserController extends Controller
 
         if ($wantsEmployee) {
             $fields = EmployeeOnboarding::normalise($clean);
+            // Email was checked above for every role; this adds the Employee ID.
+            $conflicts = EmployeeOnboarding::conflicts($fields);
+            if ($conflicts !== []) {
+                Session::set('_old', $_POST);
+                Session::flash('errors', array_map(static fn (string $message): array => [$message], $conflicts));
+                Session::flash('error', 'Please correct the highlighted fields.');
+                Http::redirect('/users');
+            }
             $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
             Session::flash(
                 'success',

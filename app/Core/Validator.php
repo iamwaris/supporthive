@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use App\Domain\PakistanIban;
+
 /**
  * Allow-list input validation.
  *
@@ -120,6 +122,8 @@ final class Validator
                     'in'       => is_scalar($value) && in_array((string) $value, explode(',', (string) $arg), true),
                     'regex'    => is_string($value) && preg_match((string) $arg, $value) === 1,
                     'same'     => $value === ($this->data[(string) $arg] ?? null),
+                    // Expects PakistanIban::normalise()d input; see App\Services\BankDetails.
+                    'iban_pk'  => is_string($value) && PakistanIban::isValid($value),
                     default    => true,
                 };
 
@@ -191,6 +195,7 @@ final class Validator
             'ymd'      => "The {$label} must be a valid date (YYYY-MM-DD).",
             'money'    => "The {$label} must be an amount in digits with at most 2 decimal places, e.g. 45000.50.",
             'same'     => "The {$label} does not match.",
+            'iban_pk'  => 'Enter a valid Pakistani IBAN: PK, 2 check digits, a 4-letter bank code and 16 digits.',
             default    => "The {$label} is not valid.",
         };
     }

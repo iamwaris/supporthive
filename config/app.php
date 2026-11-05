@@ -11,5 +11,7 @@ return [
     'debug'    => Env::bool('APP_DEBUG', false),
     'url'      => rtrim((string) Env::get('APP_URL', ''), '/'),
     'key'      => Env::get('APP_KEY', ''),
+    // Encrypts bank details at rest (App\Core\SecretBox). Separate from APP_KEY on purpose.
+    'encryption_key' => Env::get('APP_ENCRYPTION_KEY', ''),
     'timezone' => Env::get('APP_TIMEZONE', 'UTC'),
 ];

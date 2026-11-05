@@ -58,6 +58,9 @@ cd SupportHive
 # 2. Environment
 cp .env.example .env
 C:/xampp/php/php.exe scripts/genkey.php     # paste the output into APP_KEY
+C:/xampp/php/php.exe scripts/genkey.php --encryption   # paste into APP_ENCRYPTION_KEY
+# Bank details are encrypted with libsodium: in C:/xampp/php/php.ini change
+# ";extension=sodium" to "extension=sodium" and restart Apache.
 
 # 3. Database
 C:/xampp/mysql/bin/mysql.exe -u root -e "CREATE DATABASE supporthive CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
@@ -138,6 +141,7 @@ restart Apache, and set `APP_URL=http://supporthive.test`.
 | `SSH_KNOWN_HOSTS` | | output of `ssh-keyscan -p <port> <host>` |
 | `APP_URL` | `https://yourdomain.com` | no trailing slash |
 | `APP_KEY` | `base64:…` | generate a **fresh** one — not your local key |
+| `APP_ENCRYPTION_KEY` | base64, 44 chars | `php scripts/genkey.php --encryption`; a **fresh** one, set **before** the first deploy that needs it, then never changed — see §6 *JOIN-1* |
 | `DB_HOST` | `localhost` | `localhost` on Hostinger |
 | `DB_PORT` | `3306` | |
 | `DB_NAME` | `u123456789_supporthive` | Hostinger prefixes the name |
@@ -249,6 +253,29 @@ the error and rolled back on its own; the others still posted — fix the cause
 and re-run); **2** a branch was skipped as above. The script is idempotent: a
 second run posts nothing. Until it has run, those legacy open entries cannot
 be settled (the screen says so); everything else works.
+
+**JOIN-1 (migrations `2026_11_05_000021` and `000022`, 2026-11-05): bank-detail
+encryption key.** Do these **before** pushing the commit that adds them — the
+deploy job refuses to run while the secret is missing:
+
+1. Generate the key once, on a trusted machine:
+   `php scripts/genkey.php --encryption` (base64 of 32 random bytes).
+2. Store it as the GitHub Actions secret **`APP_ENCRYPTION_KEY`** (Settings →
+   Secrets and variables → Actions). The deploy writes it into the host's
+   `.env` on every run.
+3. **Back the key up** somewhere other than the database backups — a password
+   manager or the owner's offline secrets store. Without it every stored
+   bank number is unrecoverable; with it and a database dump, they are readable,
+   so never keep the two together. Never reuse `APP_KEY`, and never rotate this
+   key casually: there is no re-encryption tool yet, so a new key makes existing
+   values show as "Unavailable".
+4. Confirm the host's PHP has the **sodium** extension (`php -m | grep sodium`
+   over SSH; most PHP 8 builds include it, but check). If it is missing, enable
+   it in hPanel → *Advanced* → **PHP Configuration** → *PHP extensions*.
+5. Deploy, run the migrations (automatic with `RUN_MIGRATIONS=true`, otherwise
+   `php database/migrate.php` over SSH), then run
+   `php scripts/preflight.php` over SSH — it must pass both
+   *sodium loaded* and *APP_ENCRYPTION_KEY is base64 of exactly 32 bytes*.
 
 ## 7. Post-deploy verification
 

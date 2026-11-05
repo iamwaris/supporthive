@@ -4,6 +4,7 @@
  * Add / edit an employee — one form for both. $employee is null when adding.
  *
  * @var array<string,mixed>|null   $employee
+ * @var array<string,string>       $defaults  prefilled values when adding (owner's defaults)
  * @var array<string,list<string>> $errors
  */
 
@@ -12,14 +13,15 @@ declare(strict_types=1);
 use App\Services\Settings;
 
 $errors = $errors ?? [];
+$defaults = $defaults ?? [];
 $editing = $employee !== null;
 $action = $editing ? '/employees/' . (int) $employee['id'] : '/employees';
 $cancel = $editing ? '/employees/' . (int) $employee['id'] : '/employees';
 
 // Flashed input only right after a failed submit: on a fresh edit page a
 // leftover value from some earlier form must not overwrite the record.
-$value = static function (string $field) use ($employee, $errors): string {
-    $current = $employee !== null ? (string) ($employee[$field] ?? '') : '';
+$value = static function (string $field) use ($employee, $errors, $defaults): string {
+    $current = $employee !== null ? (string) ($employee[$field] ?? '') : ($defaults[$field] ?? '');
 
     return $errors !== [] ? old($field, $current) : $current;
 };
@@ -27,6 +29,7 @@ $value = static function (string $field) use ($employee, $errors): string {
 $fields = [
     ['name' => 'name', 'label' => 'Full name', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'name', 'inputmode' => null, 'help' => null],
     ['name' => 'email', 'label' => 'Email (used to sign in)', 'type' => 'email', 'required' => true, 'max' => 190, 'autocomplete' => 'email', 'inputmode' => null, 'help' => null],
+    ['name' => 'employee_code', 'label' => 'Employee ID', 'type' => 'text', 'required' => false, 'max' => 30, 'autocomplete' => 'off', 'inputmode' => null, 'help' => 'Letters, digits and - only. Unique in this branch.'],
     ['name' => 'phone', 'label' => 'Phone', 'type' => 'tel', 'required' => false, 'max' => 30, 'autocomplete' => 'tel', 'inputmode' => 'tel', 'help' => 'Digits, spaces, + - ( ) only.'],
     ['name' => 'designation', 'label' => 'Designation', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'organization-title', 'inputmode' => null, 'help' => null],
     ['name' => 'joining_date', 'label' => 'Joining date', 'type' => 'date', 'required' => false, 'max' => null, 'autocomplete' => 'off', 'inputmode' => null, 'help' => null],

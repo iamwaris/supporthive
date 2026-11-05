@@ -11,6 +11,8 @@
  * @var array<string,mixed>|null   $currentSalary   EmployeeSalary::current()
  * @var array<string,mixed>|null   $upcomingSalary  EmployeeSalary::upcoming()
  * @var list<array<string,mixed>>  $salaryHistory   EmployeeSalary::history()
+ * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>} $bankDetails
+ *      BankDetails::decrypt() — admin-only, full values
  * @var array<string,list<string>> $errors
  */
 
@@ -37,6 +39,24 @@ $salaryFields = [
     ['name' => 'effective_from', 'label' => 'Effective from', 'type' => 'date', 'required' => true, 'max' => null, 'inputmode' => null, 'default' => date('Y-m-d'), 'help' => 'A future date schedules the change.'],
     ['name' => 'note', 'label' => 'Note', 'type' => 'text', 'required' => false, 'max' => 255, 'inputmode' => null, 'default' => '', 'help' => 'For example: annual raise.'],
 ];
+
+// Bank details: full values on this admin page only. After a failed save the
+// account number and IBAN come back empty (they are never flashed into the
+// session), so they are typed again.
+$bankFields = [
+    ['name' => 'bank_name', 'label' => 'Bank name', 'max' => 100, 'inputmode' => null, 'help' => null],
+    ['name' => 'bank_account_number', 'label' => 'Account number', 'max' => 40, 'inputmode' => 'numeric', 'help' => '6 to 24 digits. Spaces and dashes are removed.'],
+    ['name' => 'bank_iban', 'label' => 'IBAN', 'max' => 40, 'inputmode' => null, 'help' => 'Pakistani IBAN, 24 characters, e.g. PK36 SCBL 0000 0011 2345 6702.'],
+];
+$bankFailed = array_intersect_key($errors, array_flip(array_column($bankFields, 'name'))) !== [];
+$bankValue = static function (string $field) use ($bankFailed, $bankDetails): string {
+    $current = (string) ($bankDetails[$field] ?? '');
+
+    return $bankFailed ? old($field, $field === 'bank_name' ? $current : '') : $current;
+};
+$bankDisplay = static function (string $field) use ($bankDetails): ?string {
+    return in_array($field, $bankDetails['unavailable'], true) ? 'Unavailable' : $bankDetails[$field];
+};
 
 $statusLabels = ['scheduled' => 'Scheduled', 'current' => 'Current', 'past' => 'Past'];
 $statusBadges = ['scheduled' => 'badge-warn', 'current' => 'badge-ok', 'past' => 'badge-mute'];
@@ -236,6 +256,79 @@ $statusBadges = ['scheduled' => 'badge-warn', 'current' => 'badge-ok', 'past' =>
                     </tbody>
                 </table>
             </div>
+        </div>
+    </section>
+
+    <section id="bank-details" class="card overflow-hidden" aria-labelledby="bank-heading">
+        <div class="px-5 pt-4 pb-3 sm:px-6">
+            <h2 id="bank-heading" class="font-display text-sm font-semibold text-ink">Bank details</h2>
+            <p class="mt-0.5 text-[11.5px] text-slate-500">
+                Visible to admins only — never shown to the employee. Stored encrypted.
+            </p>
+        </div>
+
+        <div class="grid gap-5 border-t border-slate-200 p-5 sm:p-6 lg:grid-cols-[1fr_320px]">
+            <div>
+                <dl class="grid content-start gap-x-6 gap-y-4 sm:grid-cols-2">
+                    <?php foreach ($bankFields as $field) : ?>
+                        <?php $shown = $bankDisplay($field['name']); ?>
+                        <div class="min-w-0">
+                            <dt class="text-[11px] font-semibold uppercase tracking-wider text-slate-500"><?= e($field['label']) ?></dt>
+                            <dd class="mt-1 text-sm break-all <?= $shown === null || $shown === 'Unavailable' ? 'text-slate-500' : 'money text-ink' ?>">
+                                <?= e($shown ?? 'Not set') ?>
+                            </dd>
+                        </div>
+                    <?php endforeach; ?>
+                </dl>
+                <?php if ($bankDetails['unavailable'] !== []) : ?>
+                    <p class="help mt-4">
+                        “Unavailable” means a stored value could not be decrypted. Enter it again to replace it.
+                    </p>
+                <?php endif; ?>
+            </div>
+
+            <form method="post" action="<?= e(url('/employees/' . $id . '/bank-details')) ?>"
+                  class="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4" novalidate
+                  aria-labelledby="bank-edit-heading">
+                <h3 id="bank-edit-heading" class="font-display text-[13px] font-semibold text-ink">Edit bank details</h3>
+                <?= csrf_field() ?>
+                <?php foreach ($bankFields as $field) : ?>
+                    <?php
+                    $name = $field['name'];
+                    $inputId = 'bank-' . str_replace('_', '-', $name);
+                    $hasError = isset($errors[$name][0]);
+                    $describedBy = trim(($field['help'] !== null ? $inputId . '-help ' : '') . ($hasError ? $inputId . '-error' : ''));
+                    ?>
+                    <div>
+                        <label for="<?= e($inputId) ?>" class="label">
+                            <?= e($field['label']) ?> <span class="font-normal text-slate-400">(optional)</span>
+                        </label>
+                        <input id="<?= e($inputId) ?>" name="<?= e($name) ?>" type="text"
+                               value="<?= e($bankValue($name)) ?>"
+                               maxlength="<?= e((string) $field['max']) ?>"
+                               <?= $field['inputmode'] !== null ? 'inputmode="' . e($field['inputmode']) . '"' : '' ?>
+                               autocomplete="off" spellcheck="false"
+                               <?= $describedBy !== '' ? 'aria-describedby="' . e($describedBy) . '"' : '' ?>
+                               <?= $hasError ? 'aria-invalid="true"' : '' ?>
+                               class="<?= $hasError ? 'input-error' : 'input' ?>">
+                        <?php if ($field['help'] !== null) : ?>
+                            <p id="<?= e($inputId . '-help') ?>" class="help"><?= e($field['help']) ?></p>
+                        <?php endif; ?>
+                        <?php if ($hasError) : ?>
+                            <p id="<?= e($inputId . '-error') ?>" class="error"><?= e($errors[$name][0]) ?></p>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+                <p class="help">
+                    Leave a field empty to remove it.
+                    <?php if ($bankFailed) : ?>
+                        For security, the account number and IBAN are not kept after a failed save — enter them again.
+                    <?php endif; ?>
+                </p>
+                <div>
+                    <button type="submit" class="btn-dark">Save bank details</button>
+                </div>
+            </form>
         </div>
     </section>
 </div>

@@ -22,7 +22,7 @@ use ReflectionProperty;
 final class RouteAccessTest extends TestCase
 {
     /** Reachable signed out by design. */
-    private const PUBLIC_PATHS = ['/', '/login', '/dev-login'];
+    private const PUBLIC_PATHS = ['/', '/login', '/dev-login', '/join/submitted', '/join/{token}'];
 
     private const EMPLOYEE_REACHABLE = [
         'GET /account/password',
@@ -148,6 +148,65 @@ final class RouteAccessTest extends TestCase
         self::assertNotContains('POST /employees/{id}/salary', $this->reachableBy(Access::EMPLOYEE));
         self::assertNotContains('POST /employees/{id}/salary', $this->reachableBy(Access::PARTNER));
         self::assertContains('POST /employees/{id}/salary', $this->reachableBy(Access::ADMIN));
+    }
+
+    public function testBankDetailsAreAdminOnlyLikeSalary(): void
+    {
+        $routes = $this->routes();
+
+        self::assertSame(['can:administer'], $routes['POST /employees/{id}/bank-details'] ?? null);
+        self::assertNotContains('POST /employees/{id}/bank-details', $this->reachableBy(Access::EMPLOYEE));
+        self::assertNotContains('POST /employees/{id}/bank-details', $this->reachableBy(Access::PARTNER));
+    }
+
+    public function testJoinerReviewAndLinkManagementAreAdminOnly(): void
+    {
+        $expected = [
+            'GET /joiners',
+            'GET /joiners/{id}',
+            'POST /joiners/{id}/approve',
+            'POST /joiners/{id}/delete',
+            'POST /joiners/link/disable',
+            'POST /joiners/link/enable',
+            'POST /joiners/link/regenerate',
+        ];
+        $found = [];
+        foreach ($this->routes() as $key => $middleware) {
+            if (preg_match('#^(GET|POST) /joiners#', $key) === 1) {
+                $found[] = $key;
+                self::assertSame(['can:administer'], $middleware, "{$key} must be admin only");
+            }
+        }
+
+        self::assertSame($this->sorted($expected), $this->sorted($found));
+        // Deleting a joiner is POST only: no GET can reach it.
+        self::assertArrayNotHasKey('GET /joiners/{id}/delete', $this->routes());
+        foreach ($expected as $key) {
+            self::assertContains($key, $this->reachableBy(Access::ADMIN));
+            self::assertNotContains($key, $this->reachableBy(Access::EMPLOYEE));
+            self::assertNotContains($key, $this->reachableBy(Access::PARTNER));
+        }
+    }
+
+    /**
+     * The joiner form is reachable by anyone holding the link, signed in or
+     * not: no auth, guest or role gate. Its protection is the token, CSRF on
+     * the POST (Router::dispatch()) and JoinController's rate limits.
+     */
+    public function testPublicJoinFormRoutesAreUngatedAndExactlyThese(): void
+    {
+        $public = [];
+        foreach ($this->routes() as $key => $middleware) {
+            if (preg_match('#^(GET|POST) /join(/|$)#', $key) === 1) {
+                $public[] = $key;
+                self::assertSame([], $middleware, "{$key} must be reachable without signing in");
+            }
+        }
+
+        self::assertSame(
+            $this->sorted(['GET /join/submitted', 'GET /join/{token}', 'POST /join/{token}']),
+            $this->sorted($public)
+        );
     }
 
     public function testRegisterIsReadableWithViewAndChangeableOnlyWithWrite(): void

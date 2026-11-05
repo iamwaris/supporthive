@@ -5,6 +5,7 @@
  *
  * @var list<array<string,mixed>>          $employees
  * @var array<int,string>                  $salaries  user id => salary in effect today (admin-only data)
+ * @var array<int,string>                  $bankMasks user id => masked account number or IBAN (admin-only data)
  * @var array{q:?string,status:?string}    $filters
  * @var int                                $total
  * @var int                                $page
@@ -37,7 +38,7 @@ $filtered = $filters['q'] !== null || $filters['status'] !== null;
         <form method="get" action="<?= e(url('/employees')) ?>" class="card flex flex-1 flex-col gap-3 p-4 sm:flex-row sm:items-end" role="search">
             <div class="flex-1">
                 <label for="emp-q" class="label">Search</label>
-                <input id="emp-q" name="q" type="search" maxlength="100" placeholder="Name, email, designation or phone"
+                <input id="emp-q" name="q" type="search" maxlength="100" placeholder="Name, email, Employee ID, designation or phone"
                        value="<?= e((string) $filters['q']) ?>" class="input">
             </div>
             <div class="sm:w-44">
@@ -67,9 +68,11 @@ $filtered = $filters['q'] !== null || $filters['status'] !== null;
                 <thead>
                     <tr>
                         <th scope="col" class="th">Name</th>
+                        <th scope="col" class="th hidden sm:table-cell">Employee ID</th>
                         <th scope="col" class="th hidden md:table-cell">Designation</th>
                         <th scope="col" class="th hidden lg:table-cell">Phone</th>
                         <th scope="col" class="th hidden text-right sm:table-cell">Salary</th>
+                        <th scope="col" class="th hidden xl:table-cell">Bank account</th>
                         <th scope="col" class="th">Status</th>
                         <th scope="col" class="th"><span class="sr-only">Actions</span></th>
                     </tr>
@@ -77,7 +80,7 @@ $filtered = $filters['q'] !== null || $filters['status'] !== null;
                 <tbody>
                     <?php if ($employees === []) : ?>
                         <tr>
-                            <td class="td" colspan="6">
+                            <td class="td" colspan="8">
                                 <p class="py-10 text-center text-sm text-slate-600">
                                     <?php if ($filtered) : ?>
                                         No employees match these filters.
@@ -103,12 +106,17 @@ $filtered = $filters['q'] !== null || $filters['status'] !== null;
                                 </a>
                                 <p class="text-[11.5px] break-all text-slate-500"><?= e((string) $employee['email']) ?></p>
                                 <p class="text-[11.5px] text-slate-500 md:hidden"><?= e((string) $employee['designation']) ?></p>
+                                <?php if ($employee['employee_code'] !== null) : ?>
+                                    <p class="text-[11.5px] text-slate-500 sm:hidden">ID <?= e((string) $employee['employee_code']) ?></p>
+                                <?php endif; ?>
                             </td>
+                            <td class="td money hidden text-slate-600 sm:table-cell"><?= e((string) ($employee['employee_code'] ?? '—')) ?></td>
                             <td class="td hidden text-slate-600 md:table-cell"><?= e((string) $employee['designation']) ?></td>
                             <td class="td money hidden text-slate-600 lg:table-cell"><?= e((string) ($employee['phone'] ?? '—')) ?></td>
                             <td class="td money hidden text-right whitespace-nowrap text-slate-600 sm:table-cell">
                                 <?= e(isset($salaries[$id]) ? $symbol . ' ' . number_format((float) $salaries[$id], 2) : '—') ?>
                             </td>
+                            <td class="td money hidden whitespace-nowrap text-slate-600 xl:table-cell"><?= e($bankMasks[$id] ?? '—') ?></td>
                             <td class="td">
                                 <span class="<?= $isActive ? 'badge-ok' : 'badge-bad' ?>">
                                     <?= e($isActive ? 'Active' : 'Deactivated') ?>

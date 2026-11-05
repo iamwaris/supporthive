@@ -16,6 +16,7 @@ $joined = $profile['joining_date'] !== null
 
 $rows = [
     'Name' => (string) $profile['name'],
+    'Employee ID' => ($profile['employee_code'] ?? null) !== null ? (string) $profile['employee_code'] : null,
     'Email' => (string) $profile['email'],
     'Phone' => $profile['phone'] !== null && $profile['phone'] !== '' ? (string) $profile['phone'] : null,
     'Designation' => (string) $profile['designation'],

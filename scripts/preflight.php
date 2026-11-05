@@ -19,6 +19,7 @@ require dirname(__DIR__) . '/app/bootstrap.php';
 use App\Core\Config;
 use App\Controllers\DevAuthController;
 use App\Core\Database;
+use App\Core\SecretBox;
 
 $pass = 0;
 $fail = 0;
@@ -76,6 +77,16 @@ check('pdo_mysql loaded', extension_loaded('pdo_mysql'));
 check('mbstring loaded', extension_loaded('mbstring'));
 check('fileinfo loaded', extension_loaded('fileinfo'), 'needed for upload MIME detection');
 check('openssl loaded', extension_loaded('openssl'));
+check(
+    'sodium loaded',
+    extension_loaded('sodium'),
+    'enable extension=sodium in php.ini (bank details are encrypted with it)'
+);
+check(
+    'APP_ENCRYPTION_KEY is base64 of exactly 32 bytes',
+    SecretBox::decodeKey((string) Config::get('app.encryption_key', '')) !== null,
+    'php scripts/genkey.php --encryption, set it in .env, and back it up apart from the database'
+);
 
 echo "\nSecurity\n";
 check('display_errors off', ini_get('display_errors') === '0' || ini_get('display_errors') === '');

@@ -16,6 +16,7 @@ use App\Models\EmployeeProfile;
 use App\Models\EmployeeSalary;
 use App\Models\User;
 use App\Services\Audit;
+use App\Services\BankDetails;
 use App\Services\EmployeeOnboarding;
 
 /**
@@ -66,6 +67,8 @@ final class EmployeeController extends Controller
             'salaries' => (new EmployeeSalary())->currentForUsers(
                 array_map(static fn (array $row): int => (int) $row['id'], $rows)
             ),
+            // Masked (****1234) — a list never shows a whole account number.
+            'bankMasks' => self::bankMasks($rows),
             'filters' => ['q' => $term, 'status' => $status],
             'total' => $total,
             'page' => $page,
@@ -82,6 +85,10 @@ final class EmployeeController extends Controller
             'pageTitle' => 'Add employee',
             'pageMeta' => 'A one-time temporary password is shown once after saving.',
             'employee' => null,
+            'defaults' => [
+                'designation' => EmployeeOnboarding::DEFAULT_DESIGNATION,
+                'salary' => EmployeeOnboarding::DEFAULT_STARTING_SALARY,
+            ],
         ]);
     }
 
@@ -90,8 +97,9 @@ final class EmployeeController extends Controller
         $clean = $this->validate(self::RULES + EmployeeOnboarding::STARTING_SALARY_RULES, '/employees/new');
         $fields = EmployeeOnboarding::normalise($clean);
 
-        if ((new User())->emailExists($fields['email'])) {
-            $this->failWithFieldError('email', 'That email is already in use by another account.', '/employees/new');
+        $conflicts = EmployeeOnboarding::conflicts($fields);
+        if ($conflicts !== []) {
+            $this->failWithFieldErrors($conflicts, '/employees/new');
         }
 
         $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
@@ -118,6 +126,7 @@ final class EmployeeController extends Controller
             'currentSalary' => $salaries->current($id),
             'upcomingSalary' => $salaries->upcoming($id),
             'salaryHistory' => $salaries->history($id),
+            'bankDetails' => $this->bankDetailsOf($id),
         ]);
     }
 
@@ -170,8 +179,9 @@ final class EmployeeController extends Controller
 
         $fields = EmployeeOnboarding::normalise($this->validate(self::RULES, $back));
 
-        if ((new User())->emailExists($fields['email'], $id)) {
-            $this->failWithFieldError('email', 'That email is already in use by another account.', $back);
+        $conflicts = EmployeeOnboarding::conflicts($fields, $id);
+        if ($conflicts !== []) {
+            $this->failWithFieldErrors($conflicts, $back);
         }
 
         (new EmployeeProfile())->updateWithLogin($id, $fields);
@@ -242,6 +252,61 @@ final class EmployeeController extends Controller
     }
 
     /**
+     * Bank name, account number and IBAN: admin-only, encrypted at rest.
+     * Each field is optional; a blank field clears it. The audit row says
+     * which fields changed and shows only masked values.
+     *
+     * @param array<string,string> $params
+     */
+    public function updateBankDetails(array $params): void
+    {
+        $employee = $this->findOr404($params);
+        $id = (int) $employee['id'];
+
+        $clean = $this->validate(
+            BankDetails::RULES,
+            '/employees/' . $id . '#bank-details',
+            BankDetails::normaliseInput($_POST),
+            BankDetails::NOT_FLASHED
+        );
+
+        $before = $this->bankDetailsOf($id);
+        (new EmployeeProfile())->updateBankDetails($id, BankDetails::encrypt($clean));
+
+        $change = BankDetails::auditChange($before, $clean);
+        if ($change !== null) {
+            Audit::record('employee.bank_details_changed', 'users', $id, null, $change);
+        }
+        Logger::security('Employee bank details changed', ['user_id' => $id, 'by' => Auth::id()]);
+
+        Session::flash('success', 'Bank details saved.');
+        Http::redirect('/employees/' . $id . '#bank-details');
+    }
+
+    /** @return array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>} */
+    private function bankDetailsOf(int $id): array
+    {
+        return BankDetails::decrypt((new EmployeeProfile())->encryptedBankDetails($id) ?? [], 'users', $id);
+    }
+
+    /**
+     * @param list<array<string,mixed>> $rows EmployeeProfile::search() rows
+     * @return array<int,string> user id => masked account number or IBAN
+     */
+    private static function bankMasks(array $rows): array
+    {
+        $masks = [];
+        foreach ($rows as $row) {
+            $mask = BankDetails::maskedSummary($row, 'users', (int) $row['id']);
+            if ($mask !== null) {
+                $masks[(int) $row['id']] = $mask;
+            }
+        }
+
+        return $masks;
+    }
+
+    /**
      * @param array<string,string> $params
      * @return array<string,mixed>
      */
@@ -255,12 +320,13 @@ final class EmployeeController extends Controller
         return $employee;
     }
 
-    private function failWithFieldError(string $field, string $message, string $back): never
+    /** @param array<string,string> $messages field => message */
+    private function failWithFieldErrors(array $messages, string $back): never
     {
         $old = $_POST;
         unset($old[Csrf::FIELD]);
         Session::set('_old', $old);
-        Session::flash('errors', [$field => [$message]]);
+        Session::flash('errors', array_map(static fn (string $message): array => [$message], $messages));
         Session::flash('error', 'Please correct the highlighted fields.');
         Http::redirect($back);
     }

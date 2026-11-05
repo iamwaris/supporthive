@@ -480,6 +480,12 @@ final class EmployeeSalaryTest extends TestCase
             'currentSalary' => $salaries->current($this->employeeAId),
             'upcomingSalary' => $salaries->upcoming($this->employeeAId),
             'salaryHistory' => $salaries->history($this->employeeAId),
+            'bankDetails' => [
+                'bank_name' => null,
+                'bank_account_number' => null,
+                'bank_iban' => null,
+                'unavailable' => [],
+            ],
         ]);
 
         self::assertStringContainsString('87,654.32', $admin);
@@ -502,6 +508,12 @@ final class EmployeeSalaryTest extends TestCase
             'currentSalary' => null,
             'upcomingSalary' => null,
             'salaryHistory' => [],
+            'bankDetails' => [
+                'bank_name' => null,
+                'bank_account_number' => null,
+                'bank_iban' => null,
+                'unavailable' => [],
+            ],
             'errors' => ['amount' => ['The amount must be an amount in digits.']],
         ]);
 

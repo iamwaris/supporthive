@@ -12,6 +12,7 @@
 
 declare(strict_types=1);
 
+use App\Services\EmployeeOnboarding;
 use App\Services\Settings;
 
 $errors = $errors ?? [];
@@ -19,7 +20,13 @@ $myId = (int) ($authUser['id'] ?? 0);
 $roleLabel = static fn (string $role): string => ucfirst(str_replace('_', ' ', $role));
 $newRole = in_array(old('role'), $creatableRoles, true) ? old('role') : $creatableRoles[0];
 
+// Designation and starting salary arrive prefilled with the owner's defaults, editable.
+$employeeDefaults = [
+    'designation' => EmployeeOnboarding::DEFAULT_DESIGNATION,
+    'salary' => EmployeeOnboarding::DEFAULT_STARTING_SALARY,
+];
 $employeeFields = [
+    ['name' => 'employee_code', 'label' => 'Employee ID', 'type' => 'text', 'required' => false, 'max' => 30, 'autocomplete' => 'off', 'inputmode' => null, 'help' => 'Letters, digits and - only. Unique in this branch.'],
     ['name' => 'designation', 'label' => 'Designation', 'type' => 'text', 'required' => true, 'max' => 120, 'autocomplete' => 'organization-title', 'inputmode' => null, 'help' => null],
     ['name' => 'phone', 'label' => 'Phone', 'type' => 'tel', 'required' => false, 'max' => 30, 'autocomplete' => 'tel', 'inputmode' => 'tel', 'help' => 'Digits, spaces, + - ( ) only.'],
     ['name' => 'joining_date', 'label' => 'Joining date', 'type' => 'date', 'required' => false, 'max' => null, 'autocomplete' => 'off', 'inputmode' => null, 'help' => null],
@@ -205,7 +212,7 @@ $employeeFields = [
                             <span class="font-normal text-slate-400"><?= $field['required'] ? '(required for employees)' : '(optional)' ?></span>
                         </label>
                         <input id="<?= e($inputId) ?>" name="<?= e($name) ?>" type="<?= e($field['type']) ?>"
-                               value="<?= e(old($name)) ?>"
+                               value="<?= e(old($name, $employeeDefaults[$name] ?? '')) ?>"
                                <?= $field['max'] !== null ? 'maxlength="' . e((string) $field['max']) . '"' : '' ?>
                                <?= $field['required'] ? 'x-bind:required="role === \'employee\'"' : '' ?>
                                autocomplete="<?= e($field['autocomplete']) ?>"

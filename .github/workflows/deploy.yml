@@ -47,6 +47,7 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           APP_URL: ${{ secrets.APP_URL }}
           APP_KEY: ${{ secrets.APP_KEY }}
+          APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_USER: ${{ secrets.DB_USER }}
@@ -54,7 +55,7 @@ jobs:
         run: |
           missing=""
           for name in SSH_HOST SSH_PORT SSH_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS \
-                      APP_URL APP_KEY DB_HOST DB_NAME DB_USER DB_PASS \
+                      APP_URL APP_KEY APP_ENCRYPTION_KEY DB_HOST DB_NAME DB_USER DB_PASS \
                       APP_DIR WEB_ROOT; do
             if [ -z "${!name}" ]; then
               missing="$missing $name"
@@ -89,7 +90,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: pdo_mysql, mbstring, fileinfo
+          extensions: pdo_mysql, mbstring, fileinfo, sodium
           coverage: none
           tools: composer:v2
 
@@ -182,6 +183,9 @@ jobs:
           {
             echo "APP_URL=${{ secrets.APP_URL }}"
             echo "APP_KEY=${{ secrets.APP_KEY }}"
+            # Encrypts bank details at rest. Must stay the same across deploys:
+            # a different value makes every stored bank detail unreadable.
+            echo "APP_ENCRYPTION_KEY=${{ secrets.APP_ENCRYPTION_KEY }}"
             echo "DB_HOST=${{ secrets.DB_HOST }}"
             echo "DB_PORT=${{ secrets.DB_PORT || '3306' }}"
             echo "DB_NAME=${{ secrets.DB_NAME }}"

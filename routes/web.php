@@ -13,7 +13,7 @@
  *   role:<a,b>        exact role list (super admin's branch screens only)
  *
  * tests/Unit/RouteAccessTest.php loads this file and asserts every route but
- * /, /login and /dev-login carries a gate, and snapshots exactly which routes
+ * /, /login, /dev-login and the public /join form carries a gate, and snapshots exactly which routes
  * an employee (and a partner) can reach. A new route changes that snapshot on
  * purpose, never by accident.
  */
@@ -32,6 +32,16 @@ use App\Services\Access;
 
 // --- Public ---------------------------------------------------------------
 $router->get('/', static fn (): never => Http::redirect(Access::landingPath((string) (Auth::user()['role'] ?? ''))));
+
+// The public new-joiner form (JOIN-1). Deliberately ungated: whoever holds a
+// branch's link may use it, signed in or not, and the token alone picks the
+// branch. JoinController rate-limits per IP and per token, and the form's
+// POST is CSRF-checked in Router::dispatch() like every other. A submission
+// only ever creates a pending joiner for an admin to review. /join/submitted
+// is literal, so it resolves before /join/{token}.
+$router->get('/join/submitted', 'JoinController@submitted');
+$router->get('/join/{token}', 'JoinController@show');
+$router->post('/join/{token}', 'JoinController@submit');
 
 // --- Authentication -------------------------------------------------------
 $router->get('/login', 'AuthController@showLogin', ['guest']);
@@ -92,6 +102,20 @@ $router->post('/employees/{id}/toggle', 'EmployeeController@toggleStatus', ['can
 $router->post('/employees/{id}/reset-password', 'EmployeeController@resetPassword', ['can:administer']);
 // Salary is admin-only data; a change is always a new effective-dated row.
 $router->post('/employees/{id}/salary', 'EmployeeController@changeSalary', ['can:administer']);
+// Bank details: admin-only like salary, encrypted at rest (App\Services\BankDetails).
+$router->post('/employees/{id}/bank-details', 'EmployeeController@updateBankDetails', ['can:administer']);
+
+// New joiners (JOIN-1): the branch's shared joining link and the submissions
+// waiting for review. Admin work, like everything else about employees. The
+// /joiners/link/* paths are literal, so they resolve before /joiners/{id}.
+$router->get('/joiners', 'JoinerController@index', ['can:administer']);
+$router->post('/joiners/link/regenerate', 'JoinerController@regenerateLink', ['can:administer']);
+$router->post('/joiners/link/disable', 'JoinerController@disableLink', ['can:administer']);
+$router->post('/joiners/link/enable', 'JoinerController@enableLink', ['can:administer']);
+$router->get('/joiners/{id}', 'JoinerController@show', ['can:administer']);
+$router->post('/joiners/{id}/approve', 'JoinerController@approve', ['can:administer']);
+// Hard delete of a pending submission; POST only, so no GET can ever remove one.
+$router->post('/joiners/{id}/delete', 'JoinerController@destroy', ['can:administer']);
 
 $router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
 $router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);
