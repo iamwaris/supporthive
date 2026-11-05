@@ -16,6 +16,7 @@ use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
+use Tests\Support\JsonColumnAssertions;
 
 /**
  * Employee salary (App\Models\EmployeeSalary, EmployeeController@changeSalary,
@@ -29,6 +30,8 @@ use Tests\Support\ControllerActionRunner;
  */
 final class EmployeeSalaryTest extends TestCase
 {
+    use JsonColumnAssertions;
+
     private const SUPER_ADMIN_PASSWORD = 'ems-super-admin-password';
 
     private int $branchAId;
@@ -210,7 +213,7 @@ final class EmployeeSalaryTest extends TestCase
         $first = json_decode((string) $rows[0]['meta'], true);
         $second = json_decode((string) $rows[1]['meta'], true);
         self::assertArrayNotHasKey('before', $first, 'the first salary has nothing before it');
-        self::assertSame(['amount' => '40000.00', 'effective_from' => self::day(-30)], $second['before']);
+        self::assertJsonColumnEquals(['amount' => '40000.00', 'effective_from' => self::day(-30)], $second['before']);
         self::assertSame('42000.00', $second['after']['amount']);
         self::assertSame('Raise', $second['after']['note']);
     }

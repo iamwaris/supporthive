@@ -25,6 +25,7 @@ use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
+use Tests\Support\JsonColumnAssertions;
 use Tests\Support\RecordingMailTransport;
 use Tests\Support\RouteDispatch;
 
@@ -41,6 +42,8 @@ use Tests\Support\RouteDispatch;
  */
 final class PayrollNoticeTest extends TestCase
 {
+    use JsonColumnAssertions;
+
     private const IP = '0.0.0.0';
     private const MONTH = '2026-10-01';
     private const SALARY = '45678.90';
@@ -865,12 +868,12 @@ final class PayrollNoticeTest extends TestCase
         self::assertSame($bobBefore, $this->line($this->bobId), 'an unchanged line is not written');
         self::assertSame($calBefore, $this->line($this->calId), 'a line missing from the file is untouched');
 
-        self::assertSame(
+        self::assertJsonColumnEquals(
             ['before' => ['salary' => '45678.90'], 'after' => ['salary' => '46000.00']],
             $this->auditMeta('payroll_line.figures_updated', $this->lineIdFor($this->annId))
         );
         self::assertSame(0, $this->auditCount('payroll_line.figures_updated', $this->lineIdFor($this->bobId)));
-        self::assertSame([
+        self::assertJsonColumnEquals([
             'added' => 1,
             'updated' => 1,
             'links_cancelled' => 0,
@@ -924,7 +927,7 @@ final class PayrollNoticeTest extends TestCase
         self::assertSame(1, $this->auditCount('payroll_line.link_cancelled', $annLineId));
         $cancelled = $this->auditMeta('payroll_line.link_cancelled', $annLineId);
         self::assertSame('sent', $cancelled['before']['status'] ?? null);
-        self::assertSame(['status' => 'draft'], $cancelled['after'] ?? null);
+        self::assertJsonColumnEquals(['status' => 'draft'], $cancelled['after'] ?? null);
         self::assertSame(
             1,
             $this->auditMeta('payroll_run.sheet_updated', $this->runId)['after']['links_cancelled'] ?? null

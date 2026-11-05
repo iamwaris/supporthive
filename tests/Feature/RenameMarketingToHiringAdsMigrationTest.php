@@ -9,6 +9,7 @@ use App\Domain\TransactionType;
 use App\Services\TransactionService;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\BranchFixture;
+use Tests\Support\JsonColumnAssertions;
 
 /**
  * Migration 000019 renames the expense category "Marketing" to "Hiring Ads"
@@ -23,6 +24,8 @@ use Tests\Support\BranchFixture;
  */
 final class RenameMarketingToHiringAdsMigrationTest extends TestCase
 {
+    use JsonColumnAssertions;
+
     private const MIGRATION = '2026_10_23_000019_rename_marketing_to_hiring_ads.sql';
     private const USER_EMAIL = 'mha-tester@test.local';
 
@@ -223,7 +226,7 @@ final class RenameMarketingToHiringAdsMigrationTest extends TestCase
         self::assertNull($rows[0]['user_id']);
 
         $meta = json_decode((string) $rows[0]['meta'], true);
-        self::assertSame(
+        self::assertJsonColumnEquals(
             ['before' => ['name' => ' marketing '], 'after' => ['name' => 'Hiring Ads']],
             ['before' => $meta['before'], 'after' => $meta['after']]
         );

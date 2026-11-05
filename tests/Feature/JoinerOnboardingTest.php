@@ -15,6 +15,7 @@ use App\Services\BankDetails;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
+use Tests\Support\JsonColumnAssertions;
 use Tests\Support\RouteDispatch;
 
 /**
@@ -38,6 +39,8 @@ use Tests\Support\RouteDispatch;
  */
 final class JoinerOnboardingTest extends TestCase
 {
+    use JsonColumnAssertions;
+
     private const IBAN = 'PK36SCBL0000001123456702';
     private const ACCOUNT = '987654321012';
     private const BANK = 'Jnr Test Bank';
@@ -1107,7 +1110,10 @@ final class JoinerOnboardingTest extends TestCase
         }
         $decoded = json_decode($meta, true);
         self::assertIsArray($decoded);
-        self::assertSame(['name' => 'Jnr Joiner', 'submitted_at' => $submittedAt], $decoded['before'] ?? null);
+        self::assertJsonColumnEquals(
+            ['name' => 'Jnr Joiner', 'submitted_at' => $submittedAt],
+            $decoded['before'] ?? null
+        );
     }
 
     public function testOnlyAPendingJoinerCanBeDeleted(): void
