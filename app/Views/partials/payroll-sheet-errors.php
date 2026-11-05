@@ -2,10 +2,10 @@
 
 /**
  * The row-by-row problems of a rejected salary sheet, shared by the import
- * form and the run page's "Add employees" upload.
+ * form and the run page's "add or update" upload.
  *
  * @var list<array{row:int,employee_code:string,message:string}> $sheetErrors
- * @var string                                                   $sheetErrorsAction "imported" or "added"
+ * @var string                                                   $sheetErrorsAction "imported" or "changed"
  */
 
 declare(strict_types=1);

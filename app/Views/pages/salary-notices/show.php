@@ -12,7 +12,7 @@
  * @var bool                                              $noteEditable no notice out with an employee
  * @var string|null                                       $withdrawnBy  who last withdrew the month, null if never
  * @var list<array{name:string,employee_code:?string}>    $missing      active employees with no line in this run
- * @var list<array{row:int,employee_code:string,message:string}> $sheetErrors problems in a rejected "add employees" file
+ * @var list<array{row:int,employee_code:string,message:string}> $sheetErrors problems in a rejected "add or update" file
  * @var string                                            $symbol       currency symbol
  * @var float                                             $maxUploadMb
  * @var int                                               $editLineId   the line whose figure form just failed, else 0
@@ -74,7 +74,7 @@ $badge = [
             </h2>
             <p class="mt-1 text-xs text-slate-600">
                 They get no notice this month. If that is a mistake, upload a file with just their rows under
-                <a href="#add-employees" class="font-medium text-brand-900 underline">Add employees to this month</a>.
+                <a href="#add-employees" class="font-medium text-brand-900 underline">Upload sheet: add or update employees</a>.
             </p>
             <ul class="mt-2 list-disc pl-5 text-sm text-slate-700">
                 <?php foreach ($missing as $person) : ?>
@@ -344,22 +344,22 @@ $badge = [
 
     <?php if ($sheetErrors !== []) : ?>
         <?php
-        $sheetErrorsAction = 'added';
+        $sheetErrorsAction = 'changed';
         require APP_PATH . '/Views/partials/payroll-sheet-errors.php';
         ?>
     <?php endif; ?>
 
     <section id="add-employees" class="card p-5 sm:p-6" aria-labelledby="add-employees-heading">
-        <h2 id="add-employees-heading" class="font-display text-sm font-semibold text-ink">Add employees to this month</h2>
+        <h2 id="add-employees-heading" class="font-display text-sm font-semibold text-ink">Upload sheet: add or update employees</h2>
         <p class="mt-1 text-xs text-slate-600">
-            For anyone missing from the first file. Their rows are added as "Not sent"; nobody is emailed and no
-            existing row changes, even if other notices were already sent. Everyone in the file must be new to
-            this month — to correct someone already listed, edit their row instead.
+            New employees are added as "Not sent"; changed figures are updated (a sent link is cancelled, after you
+            confirm); unchanged rows, and employees not in the file, are left as they are; a changed confirmed
+            employee rejects the whole file. Nobody is emailed.
         </p>
         <form method="post" action="<?= e(url($base . '/lines')) ?>" enctype="multipart/form-data" class="mt-4 flex flex-col gap-3" novalidate>
             <?= csrf_field() ?>
             <div>
-                <label for="add-sheet" class="label">Sheet with the employees to add (.xlsx or .csv)</label>
+                <label for="add-sheet" class="label">Sheet with the employees to add or update (.xlsx or .csv)</label>
                 <input id="add-sheet" name="sheet" type="file" required
                        accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                        class="<?= isset($errors['sheet'][0]) ? 'input-error' : 'input' ?>"
@@ -367,13 +367,13 @@ $badge = [
                        <?= isset($errors['sheet'][0]) ? 'aria-invalid="true"' : '' ?>>
                 <p id="add-sheet-help" class="help">
                     Same format as the import: first row <span class="money">EmpID, Salary, Absent, WorkingDays</span>,
-                    then one row per employee. Nothing is added unless every row is valid.
+                    then one row per employee. Nothing changes unless every row is valid.
                 </p>
                 <?php if (isset($errors['sheet'][0])) : ?>
                     <p id="add-sheet-error" class="error"><?= e($errors['sheet'][0]) ?></p>
                 <?php endif; ?>
             </div>
-            <div><button type="submit" class="btn-primary">Upload and add</button></div>
+            <div><button type="submit" class="btn-primary">Upload and check</button></div>
         </form>
     </section>
 

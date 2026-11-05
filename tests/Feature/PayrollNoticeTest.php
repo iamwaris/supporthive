@@ -9,12 +9,16 @@ use App\Controllers\SalaryNoticeController;
 use App\Core\Config;
 use App\Core\Database;
 use App\Core\RateLimiter;
+use App\Core\View;
 use App\Models\PayrollRun;
 use App\Models\PayrollRunLine;
 use App\Services\Payroll\PayrollImport;
 use App\Services\Mail\MailTransport;
 use App\Services\Mail\NullMailer;
 use App\Services\Payroll\PayrollNoticeSender;
+use App\Services\Payroll\PayrollSheetUpdate;
+use App\Services\Payroll\PayrollSheetUpdatePlan;
+use App\Services\Payroll\PendingSheetUpdate;
 use PDO;
 use PDOException;
 use PHPUnit\Framework\TestCase;
@@ -652,7 +656,7 @@ final class PayrollNoticeTest extends TestCase
             $session,
             [],
             [],
-            $action === 'addLines' ? 'POST' : 'GET',
+            in_array($action, ['uploadSheet', 'applySheet'], true) ? 'POST' : 'GET',
             ['id' => (string) $runId] + ($lineId === null ? [] : ['line' => (string) $lineId])
         );
     }
@@ -750,7 +754,8 @@ final class PayrollNoticeTest extends TestCase
                 $action . ' with a line under the wrong run'
             );
         }
-        self::assertSame(404, $this->runAs('addLines', $this->sessionB(), $this->runId)['status']);
+        self::assertSame(404, $this->runAs('uploadSheet', $this->sessionB(), $this->runId)['status']);
+        self::assertSame(404, $this->runAs('applySheet', $this->sessionB(), $this->runId)['status']);
         self::assertSame($before, $this->stateSnapshot());
     }
 
@@ -762,6 +767,7 @@ final class PayrollNoticeTest extends TestCase
             ['GET', $lineBase . '/preview-email'],
             ['GET', $lineBase . '/preview'],
             ['POST', '/salary-notices/' . $this->runId . '/lines'],
+            ['POST', '/salary-notices/' . $this->runId . '/sheet-update'],
         ];
 
         foreach ([$this->annId, $partnerId] as $userId) {
@@ -787,107 +793,392 @@ final class PayrollNoticeTest extends TestCase
     }
 
     /**
-     * PAY-2: employees missing from the first file can be added after other
-     * notices went out, without touching any existing line.
+     * PAY-4: build a sheet from these rows, plan it in branch A against the
+     * run as it is, and apply it if it passes.
+     *
+     * @param list<list<string>> $rows
+     * @return array{0:PayrollSheetUpdatePlan,1:PayrollSheetUpdatePlan|null} the plan, and what was applied
      */
-    public function testAddingEmployeesAfterOthersWereSentLeavesExistingLinesAlone(): void
+    private function uploadSheet(array $rows): array
+    {
+        $_SESSION = $this->sessionA();
+        $sheet = $this->sheet($rows);
+        $plan = PayrollSheetUpdate::plan(
+            $sheet,
+            (new PayrollRun())->branchEmployees(),
+            (new PayrollRunLine())->forRun($this->runId)
+        );
+        $applied = $plan->passes() ? (new PayrollRun())->updateFromSheet($this->runId, $sheet, $plan->state) : null;
+        $_SESSION = [];
+
+        return [$plan, $applied];
+    }
+
+    /**
+     * @param list<list<string>> $rows
+     * @return array<int,list<string>>
+     */
+    private function sheet(array $rows): array
+    {
+        return [1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'], ...$rows];
+    }
+
+    /** @return array<string,mixed> the latest such audit row's meta, decoded: MySQL 8 reformats JSON text */
+    private function auditMeta(string $action, int $entityId): array
+    {
+        return (array) json_decode((string) Database::instance()->value(
+            'SELECT meta FROM audit_log WHERE action = :action AND entity_id = :id ORDER BY id DESC LIMIT 1',
+            ['action' => $action, 'id' => $entityId]
+        ), true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    public function testOneFileAddsUpdatesAndLeavesUnchangedAndMissingLinesAlone(): void
     {
         $deeId = $this->insertEmployee('pay-dee@test.local', 'Pay Dee', 'PAY-4');
-        $token = $this->send([$this->annId])[$this->annId];
+        $bobBefore = $this->line($this->bobId);
+        $calBefore = $this->line($this->calId);
+        $annScreenshot = $this->line($this->annId)['screenshot_filename'];
 
-        $page = $this->runAs('show', $this->sessionA(), $this->runId);
-        self::assertStringContainsString('Pay Dee', $page['body'], 'listed as missing from this month');
-        self::assertStringContainsString('href="#add-employees"', $page['body']);
+        [$plan, $applied] = $this->uploadSheet([
+            ['pay-4', '25000', '2', '26'],
+            ['PAY-1', '46000', '1', '26'],
+            // Bob as stored (30000.00 / 0.0 / 26.0), written differently: numerically unchanged.
+            ['PAY-2', '30,000', '', '26.0'],
+        ]);
 
-        $_SESSION = $this->sessionA();
-        $before = Database::instance()->all(
-            'SELECT * FROM payroll_run_lines WHERE run_id = :run ORDER BY id',
-            ['run' => $this->runId]
+        self::assertTrue($plan->passes());
+        self::assertNotNull($applied);
+        self::assertSame(
+            'Added 1, updated 1, unchanged 1. 1 employee in this month was not in the file and was left as they are.',
+            $applied->summary()
         );
-        $inRun = array_map(static fn (array $row): int => (int) $row['user_id'], $before);
-        $result = PayrollImport::validate([
-            1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'],
-            2 => ['pay-4', '25000', '2', '26'],
-        ], (new PayrollRun())->branchEmployees(), $inRun);
-        self::assertTrue($result->passes());
-
-        (new PayrollRun())->appendLines($this->runId, $result->lines);
 
         $dee = $this->line($deeId);
         self::assertSame('draft', $dee['status']);
         self::assertSame('25000.00', (string) $dee['salary']);
-        self::assertNull($dee['token_hash']);
-        self::assertSame($before, Database::instance()->all(
-            'SELECT * FROM payroll_run_lines WHERE run_id = :run AND user_id <> :dee ORDER BY id',
-            ['run' => $this->runId, 'dee' => $deeId]
-        ), 'existing lines are untouched');
-        self::assertNotNull(PayrollRunLine::findByToken($token), 'the link already sent still works');
-        $meta = (string) Database::instance()->value(
-            "SELECT meta FROM audit_log WHERE action = 'payroll_run.lines_added' AND entity_id = :id",
-            ['id' => $this->runId]
-        );
-        self::assertStringContainsString('PAY-4', $meta);
 
-        $after = $this->runAs('show', $this->sessionA(), $this->runId);
-        self::assertStringNotContainsString('not in this month', $after['body']);
+        $ann = $this->line($this->annId);
+        self::assertSame('46000.00', (string) $ann['salary']);
+        self::assertSame('draft', $ann['status']);
+        self::assertSame($annScreenshot, $ann['screenshot_filename'], 'the screenshot is kept');
+
+        self::assertSame($bobBefore, $this->line($this->bobId), 'an unchanged line is not written');
+        self::assertSame($calBefore, $this->line($this->calId), 'a line missing from the file is untouched');
+
+        self::assertSame(
+            ['before' => ['salary' => '45678.90'], 'after' => ['salary' => '46000.00']],
+            $this->auditMeta('payroll_line.figures_updated', $this->lineIdFor($this->annId))
+        );
+        self::assertSame(0, $this->auditCount('payroll_line.figures_updated', $this->lineIdFor($this->bobId)));
+        self::assertSame([
+            'added' => 1,
+            'updated' => 1,
+            'links_cancelled' => 0,
+            'unchanged' => 1,
+            'left_out' => 1,
+            'added_codes' => ['PAY-4'],
+            'updated_codes' => ['PAY-1'],
+        ], $this->auditMeta('payroll_run.sheet_updated', $this->runId)['after'] ?? null);
     }
 
-    public function testAddingAnEmployeeAlreadyInTheRunIsRejectedAndNothingIsSaved(): void
+    public function testAnUnchangedSentLineKeepsItsLinkAndStatus(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        $annBefore = $this->line($this->annId);
+
+        [$plan, $applied] = $this->uploadSheet([
+            ['PAY-1', '45,678.9', '1.0', '26'],
+            ['PAY-2', '31000', '0', '26'],
+        ]);
+
+        self::assertSame(0, $plan->linksCancelled());
+        self::assertNotNull($applied);
+        self::assertSame(1, $applied->unchanged);
+        self::assertSame($annBefore, $this->line($this->annId));
+        self::assertSame('sent', PayrollRunLine::findByToken($token)['status'] ?? null);
+        self::assertSame(0, $this->auditCount('payroll_line.link_cancelled', $this->lineIdFor($this->annId)));
+        self::assertSame('31000.00', (string) $this->line($this->bobId)['salary']);
+    }
+
+    public function testAnUpdatedSentLineLosesItsLinkAndIsADraftAgain(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        $annLineId = $this->lineIdFor($this->annId);
+
+        [$plan, $applied] = $this->uploadSheet([['PAY-1', '40000', '1', '26']]);
+
+        self::assertSame(1, $plan->linksCancelled());
+        self::assertNotNull($applied);
+        self::assertStringStartsWith(
+            'Added 0, updated 1 (1 link cancelled — resend that), unchanged 0.',
+            $applied->summary()
+        );
+
+        $ann = $this->line($this->annId);
+        self::assertSame('40000.00', (string) $ann['salary']);
+        self::assertSame('draft', $ann['status']);
+        self::assertNull($ann['token_hash']);
+        self::assertNull(PayrollRunLine::findByToken($token));
+        // The manual edit's own audit trail: the figures, then the cancelled link.
+        self::assertSame(1, $this->auditCount('payroll_line.figures_updated', $annLineId));
+        self::assertSame(1, $this->auditCount('payroll_line.link_cancelled', $annLineId));
+        $cancelled = $this->auditMeta('payroll_line.link_cancelled', $annLineId);
+        self::assertSame('sent', $cancelled['before']['status'] ?? null);
+        self::assertSame(['status' => 'draft'], $cancelled['after'] ?? null);
+        self::assertSame(
+            1,
+            $this->auditMeta('payroll_run.sheet_updated', $this->runId)['after']['links_cancelled'] ?? null
+        );
+    }
+
+    public function testAnUpdatedQueriedLineStaysAQuery(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        self::assertTrue(PayrollRunLine::respond($token, 'query', null, 'Absent is wrong.', '1.1.1.1', 'x'));
+
+        [$plan, $applied] = $this->uploadSheet([['PAY-1', '45678.90', '0', '26']]);
+
+        self::assertSame(0, $plan->linksCancelled());
+        self::assertNotNull($applied);
+        $ann = $this->line($this->annId);
+        self::assertSame('query', $ann['status']);
+        self::assertSame('0.0', (string) $ann['absent_days']);
+        self::assertSame('Absent is wrong.', $ann['query_text']);
+    }
+
+    public function testAConfirmedLineWithChangedFiguresRejectsTheWholeFile(): void
     {
         $deeId = $this->insertEmployee('pay-dee@test.local', 'Pay Dee', 'PAY-4');
+        $token = $this->send([$this->annId])[$this->annId];
+        self::assertTrue(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
+        $before = $this->stateSnapshot();
+
+        [$plan, $applied] = $this->uploadSheet([
+            ['PAY-4', '25000', '0', '26'],
+            ['PAY-1', '1', '0', '26'],
+            ['PAY-2', '31000', '0', '26'],
+        ]);
+
+        self::assertFalse($plan->passes());
+        self::assertNull($applied);
+        self::assertSame([[
+            'row' => 3,
+            'employee_code' => 'PAY-1',
+            'message' => 'Employee PAY-1 has already confirmed — withdraw the month to change their figures.',
+        ]], $plan->errors);
+        self::assertSame([], $plan->added, 'all or nothing');
+        self::assertSame([], $plan->updated);
+
+        // Applied anyway, as a stale confirm step would try, it still writes nothing.
         $_SESSION = $this->sessionA();
-        $runs = new PayrollRun();
-        $inRun = array_map(
-            static fn (array $row): int => (int) $row['user_id'],
+        self::assertNull((new PayrollRun())->updateFromSheet($this->runId, $this->sheet([
+            ['PAY-4', '25000', '0', '26'],
+            ['PAY-1', '1', '0', '26'],
+        ]), $plan->state));
+        $_SESSION = [];
+
+        self::assertSame($before, $this->stateSnapshot());
+        self::assertSame([], $this->line($deeId));
+        self::assertNotNull(PayrollRunLine::findByToken($token));
+    }
+
+    public function testAConfirmedLineWithUnchangedFiguresIsAccepted(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        self::assertTrue(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
+        $annBefore = $this->line($this->annId);
+
+        [$plan, $applied] = $this->uploadSheet([
+            ['PAY-1', self::SALARY, '1', '26'],
+            ['PAY-2', '31000', '0', '26'],
+        ]);
+
+        self::assertTrue($plan->passes());
+        self::assertNotNull($applied);
+        self::assertSame(1, $applied->unchanged);
+        self::assertSame($annBefore, $this->line($this->annId));
+        self::assertSame('confirmed', PayrollRunLine::findByToken($token)['status'] ?? null);
+        self::assertSame('31000.00', (string) $this->line($this->bobId)['salary']);
+    }
+
+    /**
+     * Hold a sheet for the confirm step as the controller does, in a branch A
+     * admin session, and return that session and the key.
+     *
+     * @param list<list<string>> $rows
+     * @return array{0:array<string,mixed>,1:string}
+     */
+    private function stashSheet(array $rows): array
+    {
+        $_SESSION = $this->sessionA();
+        $plan = PayrollSheetUpdate::plan(
+            $this->sheet($rows),
+            (new PayrollRun())->branchEmployees(),
+            (new PayrollRunLine())->forRun($this->runId)
+        );
+        self::assertTrue($plan->passes());
+        $key = PendingSheetUpdate::stash($this->runId, $this->adminAId, $plan->sheetRows(), $plan->state);
+        $session = $_SESSION;
+        $_SESSION = [];
+
+        return [$session, $key];
+    }
+
+    /**
+     * @param array<string,mixed> $session
+     * @return array{status:int,body:string,session:array<string,mixed>}
+     */
+    private function postApply(array $session, string $key, ?int $runId = null): array
+    {
+        return ControllerActionRunner::run(
+            PayrollController::class,
+            'applySheet',
+            $session,
+            ['pending_key' => $key],
+            [],
+            'POST',
+            ['id' => (string) ($runId ?? $this->runId)]
+        );
+    }
+
+    public function testTheSummaryPageListsEachChangeOldToNewWithAnApplyButton(): void
+    {
+        $this->insertEmployee('pay-dee@test.local', 'Pay Dee', 'PAY-4');
+        $this->send([$this->annId]);
+        $_SESSION = $this->sessionA();
+        $plan = PayrollSheetUpdate::plan(
+            $this->sheet([['PAY-1', '40000', '1', '26'], ['PAY-4', '25000', '0', '26']]),
+            (new PayrollRun())->branchEmployees(),
             (new PayrollRunLine())->forRun($this->runId)
         );
 
-        $result = PayrollImport::validate([
-            1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'],
-            2 => ['PAY-4', '25000', '0', '26'],
-            3 => ['PAY-1', '1', '0', '26'],
-        ], $runs->branchEmployees(), $inRun);
+        $page = View::capture('pages/salary-notices/sheet-update', [
+            'run' => (new PayrollRun())->find($this->runId),
+            'plan' => $plan,
+            'pendingKey' => str_repeat('a', 32),
+            'symbol' => 'Rs',
+            'expiresInMinutes' => 15,
+        ], null);
+        $_SESSION = [];
 
-        self::assertFalse($result->passes());
-        self::assertSame([], $result->lines, 'all or nothing');
-        self::assertSame(
-            [[
-                'row' => 3,
-                'employee_code' => 'PAY-1',
-                'message' => 'Employee PAY-1 is already in this month — edit their row instead.',
-            ]],
-            $result->errors
-        );
-
-        // The same employee slipping past the check (a concurrent upload) is
-        // refused under the run lock, and the rest of that append rolls back.
-        $countBefore = count($runs->activeEmployeesWithoutLine($this->runId));
-        try {
-            $runs->appendLines($this->runId, [
-                ['user_id' => $deeId, 'name' => 'Pay Dee', 'employee_code' => 'PAY-4',
-                    'salary' => '1.00', 'absent_days' => '0.0', 'working_days' => '26.0'],
-                ['user_id' => $this->annId, 'name' => 'Pay Ann', 'employee_code' => 'PAY-1',
-                    'salary' => '1.00', 'absent_days' => '0.0', 'working_days' => '26.0'],
-            ]);
-            self::fail('appending an employee already in the run must throw');
-        } catch (RuntimeException) {
-        }
-        self::assertSame([], $this->line($deeId));
-        self::assertSame(self::SALARY, (string) $this->line($this->annId)['salary']);
-        self::assertSame($countBefore, count($runs->activeEmployeesWithoutLine($this->runId)));
-        self::assertSame(0, (int) Database::instance()->value(
-            "SELECT COUNT(*) FROM audit_log WHERE action = 'payroll_run.lines_added' AND entity_id = :id",
-            ['id' => $this->runId]
-        ));
+        self::assertStringContainsString('cancels 1 link already emailed', $page);
+        self::assertStringContainsString('Update — link cancelled', $page);
+        self::assertStringContainsString('45,678.90', $page);
+        self::assertStringContainsString('40,000.00', $page);
+        self::assertStringContainsString('Pay Dee', $page);
+        self::assertStringContainsString('name="pending_key" value="' . str_repeat('a', 32) . '"', $page);
+        self::assertStringContainsString('/salary-notices/' . $this->runId . '/sheet-update', $page);
+        self::assertStringContainsString('2 employees in this month are not in the file', $page);
     }
 
-    public function testAddingWithNoFileReturnsTheFieldErrorNotA500(): void
+    public function testApplyingTheHeldSheetUpdatesOnceAndTheKeyCannotBeReused(): void
     {
-        $result = $this->runAs('addLines', $this->sessionA(), $this->runId);
+        $token = $this->send([$this->annId])[$this->annId];
+        [$session, $key] = $this->stashSheet([['PAY-1', '40000', '1', '26']]);
+
+        $first = $this->postApply($session, $key);
+
+        self::assertSame(302, $first['status']);
+        self::assertSame(
+            'Added 0, updated 1 (1 link cancelled — resend that), unchanged 0. '
+            . '2 employees in this month were not in the file and were left as they are.',
+            $first['session']['_flash']['success'] ?? null
+        );
+        self::assertArrayNotHasKey('payroll_pending_sheet', $first['session']);
+        self::assertSame('40000.00', (string) $this->line($this->annId)['salary']);
+        self::assertNull(PayrollRunLine::findByToken($token));
+
+        // The same session posted again (a double submit, a back button) is refused.
+        $before = $this->stateSnapshot();
+        $again = $this->postApply($first['session'], $key);
+        self::assertSame(302, $again['status']);
+        self::assertStringContainsString('expired or was already applied', $again['session']['_flash']['error'] ?? '');
+        self::assertSame($before, $this->stateSnapshot());
+
+        $_SESSION = $session;
+        self::assertNotNull(PendingSheetUpdate::take($key, $this->runId, $this->adminAId));
+        self::assertNull(PendingSheetUpdate::take($key, $this->runId, $this->adminAId), 'single use');
+        $_SESSION = [];
+    }
+
+    public function testApplyRevalidatesAndRefusesWhenTheMonthChangedMeanwhile(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        [$session, $key] = $this->stashSheet([['PAY-1', '40000', '1', '26']]);
+        // Ann confirms while the admin reads the summary: her line may no longer change.
+        self::assertTrue(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
+        $before = $this->stateSnapshot();
+
+        $result = $this->postApply($session, $key);
+
+        self::assertSame(302, $result['status']);
+        self::assertStringContainsString('this month changed', $result['session']['_flash']['error'] ?? '');
+        self::assertSame($before, $this->stateSnapshot());
+        self::assertSame('confirmed', $this->line($this->annId)['status']);
+
+        // Any change to the month counts, even to a line the sheet does not touch.
+        [$session, $key] = $this->stashSheet([['PAY-2', '31000', '0', '26']]);
+        $_SESSION = $this->sessionA();
+        self::assertTrue((new PayrollRunLine())->updateFigures($this->runId, $this->lineIdFor($this->calId), [
+            'salary' => '21000.00',
+            'absent_days' => '0.0',
+            'working_days' => '26.0',
+        ]));
+        $_SESSION = [];
+        $result = $this->postApply($session, $key);
+        self::assertStringContainsString('this month changed', $result['session']['_flash']['error'] ?? '');
+        self::assertSame('30000.00', (string) $this->line($this->bobId)['salary']);
+    }
+
+    public function testAnExpiredOtherUsersOrOtherRunsHeldSheetIsRefused(): void
+    {
+        $refused = 'expired or was already applied';
+        $_SESSION = $this->sessionA();
+        $otherRunId = (new PayrollRun())->import('2026-09-01', null, [[
+            'user_id' => $this->bobId, 'name' => 'Pay Bob', 'employee_code' => 'PAY-2',
+            'salary' => '1.00', 'absent_days' => '0.0', 'working_days' => '26.0',
+        ]]);
+        $_SESSION = [];
+        $otherAdminId = $this->insertUser('pay-admin-a2@test.local', 'admin', $this->branchAId);
+        $before = $this->stateSnapshot();
+
+        [$session, $key] = $this->stashSheet([['PAY-2', '31000', '0', '26']]);
+        $session['payroll_pending_sheet']['expires_at'] = time() - 1;
+        self::assertStringContainsString($refused, $this->postApply($session, $key)['session']['_flash']['error']);
+
+        [$session, $key] = $this->stashSheet([['PAY-2', '31000', '0', '26']]);
+        $session['_auth_user_id'] = $otherAdminId;
+        self::assertStringContainsString($refused, $this->postApply($session, $key)['session']['_flash']['error']);
+
+        [$session, $key] = $this->stashSheet([['PAY-2', '31000', '0', '26']]);
+        self::assertStringContainsString(
+            $refused,
+            $this->postApply($session, $key, $otherRunId)['session']['_flash']['error'] ?? ''
+        );
+        self::assertSame('1.00', (string) Database::instance()->value(
+            'SELECT salary FROM payroll_run_lines WHERE run_id = :run',
+            ['run' => $otherRunId]
+        ));
+
+        [$session] = $this->stashSheet([['PAY-2', '31000', '0', '26']]);
+        foreach ([str_repeat('0', 32), 'not-a-key', ''] as $wrongKey) {
+            self::assertStringContainsString(
+                $refused,
+                $this->postApply($session, $wrongKey)['session']['_flash']['error'] ?? '',
+                'key ' . $wrongKey
+            );
+        }
+
+        self::assertSame($before, $this->stateSnapshot());
+    }
+
+    public function testUploadingWithNoFileReturnsTheFieldErrorNotA500(): void
+    {
+        $result = $this->runAs('uploadSheet', $this->sessionA(), $this->runId);
 
         self::assertSame(302, $result['status']);
         self::assertSame(
-            ['Choose the .xlsx or .csv file with the employees to add.'],
+            ['Choose the .xlsx or .csv file with the employees to add or update.'],
             $result['session']['_flash']['errors']['sheet'] ?? null
         );
         self::assertSame(3, (int) Database::instance()->value(

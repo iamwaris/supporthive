@@ -13,11 +13,13 @@ final class PayrollImportResult
      * }> $lines empty whenever there are errors
      * @param list<array{row:int,employee_code:string,message:string}> $errors
      * @param list<array{name:string,employee_code:?string}> $missing active employees not in the file
+     * @param array<int,int> $rowOf user id => the sheet row of their line, for errors raised later
      */
     public function __construct(
         public readonly array $lines,
         public readonly array $errors,
         public readonly array $missing,
+        public readonly array $rowOf,
     ) {
     }
 

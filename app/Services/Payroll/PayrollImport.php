@@ -42,13 +42,9 @@ final class PayrollImport
      * @param array<int,list<string>> $rows sheet row number => cell values
      * @param list<array{user_id:int,name:string,employee_code:?string,active:bool}> $employees every employee
      *        of the branch, active or disabled
-     * @param list<int> $alreadyInRun user ids that already have a line in the run being added to;
-     *        empty for a whole-month import
      */
-    public static function validate(array $rows, array $employees, array $alreadyInRun = []): PayrollImportResult
+    public static function validate(array $rows, array $employees): PayrollImportResult
     {
-        $inRun = array_fill_keys($alreadyInRun, true);
-
         $byCode = [];
         foreach ($employees as $employee) {
             if ($employee['employee_code'] !== null && $employee['employee_code'] !== '') {
@@ -64,15 +60,16 @@ final class PayrollImport
             }
         }
         if ($headerRow === null) {
-            return new PayrollImportResult([], [self::error(1, '', 'The file is empty.')], []);
+            return new PayrollImportResult([], [self::error(1, '', 'The file is empty.')], [], []);
         }
 
         [$columns, $headerErrors] = self::mapHeader($rows[$headerRow], $headerRow);
         if ($headerErrors !== []) {
-            return new PayrollImportResult([], $headerErrors, []);
+            return new PayrollImportResult([], $headerErrors, [], []);
         }
 
         $lines = [];
+        $rowOf = [];
         $errors = [];
         $firstSeen = [];
 
@@ -98,9 +95,6 @@ final class PayrollImport
                 } elseif (!$employee['active']) {
                     $rowErrors[] = 'Employee ' . $code . ' is disabled.';
                     $employee = null;
-                } elseif (isset($inRun[$employee['user_id']])) {
-                    $rowErrors[] = 'Employee ' . $code . ' is already in this month — edit their row instead.';
-                    $employee = null;
                 }
             }
 
@@ -125,6 +119,7 @@ final class PayrollImport
                     'absent_days' => $absent,
                     'working_days' => $working,
                 ];
+                $rowOf[$employee['user_id']] = $number;
             }
         }
 
@@ -140,7 +135,9 @@ final class PayrollImport
             }
         }
 
-        return new PayrollImportResult($errors === [] ? $lines : [], $errors, $missing);
+        return $errors === []
+            ? new PayrollImportResult($lines, [], $missing, $rowOf)
+            : new PayrollImportResult([], $errors, $missing, []);
     }
 
     /**

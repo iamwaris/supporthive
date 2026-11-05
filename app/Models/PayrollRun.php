@@ -9,6 +9,8 @@ use App\Core\Database;
 use App\Core\Logger;
 use App\Core\Model;
 use App\Services\Audit;
+use App\Services\Payroll\PayrollSheetUpdate;
+use App\Services\Payroll\PayrollSheetUpdatePlan;
 use RuntimeException;
 
 /**
@@ -280,50 +282,78 @@ final class PayrollRun extends Model
     }
 
     /**
-     * Add employees who were missing from the month's first file, as draft
-     * lines, whether or not the run's other lines were already emailed.
-     * Existing lines are never touched. The run row is locked so two uploads
-     * for the same run are serialised; an employee already in the run (a
-     * concurrent upload got there first) aborts the whole append, as does
-     * the UNIQUE(run_id, user_id) key as a last line of defence.
+     * Apply an "add or update" sheet (PAY-4) in one transaction with the run
+     * row and its lines locked. The plan is made again here, from the lines
+     * as locked and the branch's employees as they are now, and applied only
+     * if it is error-free and was made against the same state the admin saw
+     * ($expectedState); otherwise nothing is written and null is returned.
      *
-     * @param list<array{
-     *     user_id:int,name:string,employee_code:string,salary:string,absent_days:string,working_days:string
-     * }> $lines
-     * @throws RuntimeException when the run is not this branch's or an employee already has a line in it
+     * New employees become draft lines. Each update goes through
+     * PayrollRunLine::updateFigures(), the manual edit's own path: the same
+     * figures audit, and a sent line's link cancelled the same way. Unchanged
+     * and left-out lines are not written at all. One audit row for the upload
+     * carries the counts.
+     *
+     * @param array<int,list<string>> $rows the sheet, as for PayrollImport::validate()
      */
-    public function appendLines(int $runId, array $lines): void
+    public function updateFromSheet(int $runId, array $rows, string $expectedState): ?PayrollSheetUpdatePlan
     {
         $branchId = $this->requireBranchId();
 
-        Database::instance()->transaction(static function (Database $db) use ($branchId, $runId, $lines): void {
+        /** @var PayrollSheetUpdatePlan|null */
+        return Database::instance()->transaction(function (Database $db) use (
+            $branchId,
+            $runId,
+            $rows,
+            $expectedState
+        ): ?PayrollSheetUpdatePlan {
             $run = $db->first(
                 'SELECT id FROM payroll_runs WHERE id = :id AND branch_id = :branch FOR UPDATE',
                 ['id' => $runId, 'branch' => $branchId]
             );
             if ($run === null) {
-                throw new RuntimeException('Payroll run not found in this branch.');
+                return null;
             }
 
-            $present = array_map(
-                static fn (array $row): int => (int) $row['user_id'],
-                $db->all(
-                    'SELECT user_id FROM payroll_run_lines WHERE run_id = :run AND branch_id = :branch',
-                    ['run' => $runId, 'branch' => $branchId]
-                )
+            $lines = $db->all(
+                'SELECT id, user_id, status, salary, absent_days, working_days, token_expires_at
+                 FROM payroll_run_lines WHERE run_id = :run AND branch_id = :branch
+                 ORDER BY id FOR UPDATE',
+                ['run' => $runId, 'branch' => $branchId]
             );
-            foreach ($lines as $line) {
-                if (in_array($line['user_id'], $present, true)) {
-                    throw new RuntimeException('An employee being added already has a line in this run.');
+            $plan = PayrollSheetUpdate::plan($rows, $this->branchEmployees(), $lines);
+            if (!$plan->passes() || !hash_equals($expectedState, $plan->state)) {
+                return null;
+            }
+
+            self::insertDraftLines($db, $branchId, $runId, $plan->added);
+
+            $runLines = new PayrollRunLine();
+            foreach ($plan->updated as $change) {
+                $figures = [
+                    'salary' => $change['after']['salary'],
+                    'absent_days' => $change['after']['absent_days'],
+                    'working_days' => $change['after']['working_days'],
+                ];
+                if (!$runLines->updateFigures($runId, $change['line_id'], $figures)) {
+                    throw new RuntimeException('A line being updated is no longer editable.');
                 }
             }
 
-            self::insertDraftLines($db, $branchId, $runId, $lines);
-
-            Audit::record('payroll_run.lines_added', 'payroll_runs', $runId, null, [
-                'lines' => count($lines),
-                'employee_codes' => array_map(static fn (array $line): string => $line['employee_code'], $lines),
+            Audit::record('payroll_run.sheet_updated', 'payroll_runs', $runId, null, [
+                'added' => count($plan->added),
+                'updated' => count($plan->updated),
+                'links_cancelled' => $plan->linksCancelled(),
+                'unchanged' => $plan->unchanged,
+                'left_out' => $plan->leftOut,
+                'added_codes' => array_map(static fn (array $line): string => $line['employee_code'], $plan->added),
+                'updated_codes' => array_map(
+                    static fn (array $change): string => $change['employee_code'],
+                    $plan->updated
+                ),
             ]);
+
+            return $plan;
         });
     }
 

@@ -155,9 +155,12 @@ $router->post('/salary-notices/{id}/lines/{line}/send', 'PayrollController@sendL
 $router->post('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@uploadScreenshot', ['can:administer']);
 // Streamed from storage/documents, never a public path.
 $router->get('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@screenshot', ['can:administer']);
-// PAY-2: add employees missing from the first file (new draft lines only),
-// and read-only previews of the email and the notice page — no token, no send.
-$router->post('/salary-notices/{id}/lines', 'PayrollController@addLines', ['can:administer']);
+// PAY-2/PAY-4: a sheet that adds missing employees and updates figures of those
+// already in the month; when it would cancel a sent link, a summary page first
+// and the change only on Apply. PAY-2 also: read-only previews of the email and
+// the notice page — no token, no send.
+$router->post('/salary-notices/{id}/lines', 'PayrollController@uploadSheet', ['can:administer']);
+$router->post('/salary-notices/{id}/sheet-update', 'PayrollController@applySheet', ['can:administer']);
 $router->get('/salary-notices/{id}/lines/{line}/preview-email', 'PayrollController@previewEmail', ['can:administer']);
 $router->get('/salary-notices/{id}/lines/{line}/preview', 'PayrollController@previewNotice', ['can:administer']);
 // PAY-3: withdraw every notice of the month (all links die, lines back to draft) to correct and resend.

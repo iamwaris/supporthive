@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Auth;
 use App\Core\Config;
 use App\Core\Controller;
 use App\Core\Csrf;
@@ -18,15 +19,17 @@ use App\Models\PayrollRun;
 use App\Models\PayrollRunLine;
 use App\Services\Payroll\PayrollImport;
 use App\Services\Payroll\PayrollNoticeSender;
+use App\Services\Payroll\PayrollSheetUpdate;
+use App\Services\Payroll\PendingSheetUpdate;
 use App\Services\Settings;
 use InvalidArgumentException;
 use PDOException;
 use RuntimeException;
 
 /**
- * Salary notices (PAY-1, PAY-2, PAY-3), admin only (`can:administer`), scoped to
- * the admin's branch: import a month's sheet, add employees missing from it
- * with a further file, attach each employee's attendance screenshot, preview
+ * Salary notices (PAY-1 to PAY-4), admin only (`can:administer`), scoped to
+ * the admin's branch: import a month's sheet, add missing employees and
+ * update figures with a further file, attach each employee's attendance screenshot, preview
  * the email and the notice page, email each employee their private link, and
  * see who confirmed or queried, and withdraw the whole month to correct
  * and resend it.
@@ -161,58 +164,87 @@ final class PayrollController extends Controller
     }
 
     /**
-     * Add employees missing from the month's first file: a further sheet in
-     * the same format, validated like an import and saved all-or-nothing as
-     * new draft lines. Allowed whether or not other notices were emailed,
-     * because it never touches an existing line.
+     * "Upload sheet: add or update employees" (PAY-4): a further sheet in
+     * the import format that adds employees missing from the month and
+     * corrects the figures of those already in it, checked all-or-nothing
+     * (PayrollSheetUpdate). If applying it would cancel a link already
+     * emailed, nothing changes yet: the admin gets a summary of every change
+     * and an Apply button (applySheet()). Otherwise it is applied at once.
      *
      * @param array<string,string> $params
      */
-    public function addLines(array $params): void
+    public function uploadSheet(array $params): void
     {
         $run = $this->findRunOr404($params);
         $runId = (int) $run['id'];
         $back = '/salary-notices/' . $runId . '#add-employees';
 
-        $rows = $this->readUploadedSheet($back, 'Choose the .xlsx or .csv file with the employees to add.');
-        $runs = new PayrollRun();
+        $rows = $this->readUploadedSheet($back, 'Choose the .xlsx or .csv file with the employees to add or update.');
         try {
-            $inRun = array_map(
-                static fn (array $line): int => (int) $line['user_id'],
+            $plan = PayrollSheetUpdate::plan(
+                $rows,
+                (new PayrollRun())->branchEmployees(),
                 (new PayrollRunLine())->forRun($runId)
             );
-            $result = PayrollImport::validate($rows, $runs->branchEmployees(), $inRun);
         } catch (PDOException $e) {
-            Logger::error('Payroll add-lines lookup failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
+            Logger::error('Payroll sheet update lookup failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
             $this->failWithFieldErrors(
-                ['sheet' => 'Nothing was added: the file could not be checked just now. Please try again.'],
+                ['sheet' => 'Nothing was changed: the file could not be checked just now. Please try again.'],
                 $back
             );
         }
 
-        if (!$result->passes()) {
-            Logger::info('Payroll add-lines rejected', ['run_id' => $runId, 'errors' => count($result->errors)]);
-            $this->renderRun($run, $result->errors, 422);
+        if (!$plan->passes()) {
+            Logger::info('Payroll sheet update rejected', ['run_id' => $runId, 'errors' => count($plan->errors)]);
+            $this->renderRun($run, $plan->errors, 422);
             return;
         }
 
-        try {
-            $runs->appendLines($runId, $result->lines);
-        } catch (RuntimeException | PDOException $e) {
-            // Most likely another upload added one of these employees between the check and the write.
-            Logger::error('Payroll add-lines failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
-            $this->failWithFieldErrors(
-                ['sheet' => 'Nothing was added: this month changed while you were uploading. '
-                    . 'Reload the page, check who is already listed, and try again.'],
-                $back
-            );
+        if ($plan->linksCancelled() === 0) {
+            $this->applyAndReport($runId, $plan->sheetRows(), $plan->state);
         }
 
-        Session::flash(
-            'success',
-            'Added ' . self::employees(count($result->lines)) . '. Attach each screenshot, then send.'
-        );
-        Http::redirect('/salary-notices/' . $runId);
+        $monthLabel = PayrollNoticeSender::monthLabel((string) $run['period_month']);
+        $this->view('pages/salary-notices/sheet-update', [
+            'title' => 'Check the changes — ' . $monthLabel,
+            'nav' => 'salary-notices',
+            'pageTitle' => 'Check the changes before applying',
+            'pageMeta' => 'Salary notices — ' . $monthLabel,
+            'run' => $run,
+            'plan' => $plan,
+            'pendingKey' => PendingSheetUpdate::stash($runId, (int) Auth::id(), $plan->sheetRows(), $plan->state),
+            'symbol' => Settings::string('currency_symbol', 'Rs'),
+            'expiresInMinutes' => intdiv(PendingSheetUpdate::TTL_SECONDS, 60),
+        ]);
+    }
+
+    /**
+     * Apply the sheet held since its summary page. The key must be this
+     * admin's, for this run, unused and unexpired; the rows are validated
+     * again against the month as it is now, and if anything changed since
+     * the summary, nothing is applied.
+     *
+     * @param array<string,string> $params
+     */
+    public function applySheet(array $params): void
+    {
+        $run = $this->findRunOr404($params);
+        $runId = (int) $run['id'];
+        $back = '/salary-notices/' . $runId;
+
+        $clean = Validator::make($_POST, ['pending_key' => ['required', 'regex:/^[a-f0-9]{32}$/']]);
+        $pending = $clean->fails()
+            ? null
+            : PendingSheetUpdate::take((string) $clean->validated()['pending_key'], $runId, (int) Auth::id());
+        if ($pending === null) {
+            Session::flash(
+                'error',
+                'Nothing was changed: that upload has expired or was already applied. Upload the sheet again.'
+            );
+            Http::redirect($back . '#add-employees');
+        }
+
+        $this->applyAndReport($runId, $pending['rows'], $pending['state']);
     }
 
     /**
@@ -507,8 +539,43 @@ final class PayrollController extends Controller
     }
 
     /**
+     * Apply the sheet if the month is still as it was when the sheet was
+     * checked, and say what changed.
+     *
+     * @param array<int,list<string>> $rows
+     */
+    private function applyAndReport(int $runId, array $rows, string $state): never
+    {
+        $back = '/salary-notices/' . $runId;
+        try {
+            $applied = (new PayrollRun())->updateFromSheet($runId, $rows, $state);
+        } catch (RuntimeException | PDOException $e) {
+            Logger::error('Payroll sheet update failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
+            $applied = null;
+        }
+
+        if ($applied === null) {
+            Session::flash(
+                'error',
+                'Nothing was changed: this month changed while you were checking the file. '
+                . 'Upload the sheet again to see the changes as they are now.'
+            );
+            Http::redirect($back . '#add-employees');
+        }
+
+        Logger::info('Payroll sheet applied', [
+            'run_id' => $runId,
+            'added' => count($applied->added),
+            'updated' => count($applied->updated),
+            'links_cancelled' => $applied->linksCancelled(),
+        ]);
+        Session::flash('success', $applied->summary());
+        Http::redirect($back);
+    }
+
+    /**
      * Render the run page. $sheetErrors are the row-by-row problems of a
-     * rejected "add employees" file, listed on the page itself (status 422)
+     * rejected "add or update" file, listed on the page itself (status 422)
      * like the import form's, so a long list never sits in the session.
      *
      * @param array<string,mixed> $run
