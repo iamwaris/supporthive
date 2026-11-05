@@ -51,6 +51,11 @@ final class SalaryNoticeController extends Controller
             'monthLabel' => PayrollNoticeSender::monthLabel((string) $line['period_month']),
             'base' => '/salary-notice/' . $token,
         ], 'layouts/public');
+
+        // Controller::validate() keeps a failed answer in _old for this one
+        // render. Dropping it now means a typed name or query can never
+        // prefill a different notice opened later in the same browser.
+        Session::forget('_old');
     }
 
     /** @param array<string,string> $params */

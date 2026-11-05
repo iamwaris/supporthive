@@ -12,6 +12,7 @@ use App\Services\Audit;
 use App\Services\Mail\MailMessage;
 use App\Services\Mail\MailTransport;
 use App\Services\Mail\Mailer;
+use App\Services\Mail\NullMailer;
 use App\Services\Settings;
 use Throwable;
 
@@ -52,6 +53,17 @@ final class PayrollNoticeSender
     }
 
     /**
+     * False when MAIL_HOST is blank: the transport is then NullMailer, which
+     * "accepts" every message by logging it. Treating that as delivered
+     * would mark lines sent with links nobody received — and, on a resend,
+     * cancel a link the employee does have.
+     */
+    public function mailIsConfigured(): bool
+    {
+        return !$this->transport instanceof NullMailer;
+    }
+
+    /**
      * @param list<array<string,mixed>> $rows lines as PayrollRunLine::forRun() returns them
      */
     public function send(array $rows, string $periodMonth): PayrollSendReport
@@ -60,6 +72,20 @@ final class PayrollNoticeSender
         $skipped = [];
         $failed = [];
         $month = self::monthLabel($periodMonth);
+
+        if (!$this->mailIsConfigured()) {
+            Logger::info('Salary notices not sent: MAIL_HOST is not configured', ['lines' => count($rows)]);
+            $reason = 'Email is not configured (MAIL_HOST)';
+
+            return new PayrollSendReport(
+                [],
+                array_map(
+                    static fn (array $row): array => ['name' => (string) $row['name'], 'reason' => $reason],
+                    $rows
+                ),
+                []
+            );
+        }
 
         foreach ($rows as $row) {
             $name = (string) $row['name'];

@@ -8,6 +8,7 @@ use App\Core\Database;
 use App\Core\Logger;
 use App\Core\Model;
 use App\Core\Upload;
+use App\Domain\PayrollLineStatus;
 use App\Services\Audit;
 use RuntimeException;
 
@@ -64,26 +65,33 @@ final class PayrollRunLine extends Model
     }
 
     /**
-     * New figures, only while the line is a draft or queried.
+     * New figures, while the line is anything but confirmed. Correcting a
+     * line that was sent and is awaiting a response cancels its link (see
+     * cancelLinkIfSent()); the admin then sends it again.
      *
      * @param array{salary:string,absent_days:string,working_days:string} $figures
-     * @return bool false when the line is no longer editable
+     * @return bool false when the line is not found or already confirmed
      */
     public function updateFigures(int $runId, int $lineId, array $figures): bool
     {
-        $before = $this->findInRun($runId, $lineId);
-        $changed = $this->db()->update(
-            'payroll_run_lines',
-            $figures,
-            "id = :id AND run_id = :run AND branch_id = :branch AND status IN ('draft','query')",
-            ['id' => $lineId, 'run' => $runId, 'branch' => $this->requireBranchId()]
-        );
-        if ($changed === 0 && !$this->editable($runId, $lineId)) {
-            return false;
-        }
+        $branchId = $this->requireBranchId();
 
-        if ($before !== null) {
-            $diff = Audit::diff(array_intersect_key($before, $figures), $figures);
+        return (bool) Database::instance()->transaction(static function (Database $db) use (
+            $runId,
+            $lineId,
+            $branchId,
+            $figures
+        ): bool {
+            $line = self::lockEditable($db, $runId, $lineId, $branchId);
+            if ($line === null) {
+                return false;
+            }
+
+            $db->update('payroll_run_lines', $figures, 'id = :id AND branch_id = :branch', [
+                'id' => $lineId,
+                'branch' => $branchId,
+            ]);
+            $diff = Audit::diff(array_intersect_key($line, $figures), $figures);
             Audit::record(
                 'payroll_line.figures_updated',
                 'payroll_run_lines',
@@ -91,9 +99,10 @@ final class PayrollRunLine extends Model
                 $diff['before'],
                 $diff['after']
             );
-        }
+            self::cancelLinkIfSent($db, $line, $lineId, $branchId);
 
-        return true;
+            return true;
+        });
     }
 
     /**
@@ -131,12 +140,7 @@ final class PayrollRunLine extends Model
             $branchId,
             $filename
         ): ?string {
-            $line = $db->first(
-                "SELECT screenshot_filename FROM payroll_run_lines
-                 WHERE id = :id AND run_id = :run AND branch_id = :branch AND status IN ('draft','query')
-                 FOR UPDATE",
-                ['id' => $lineId, 'run' => $runId, 'branch' => $branchId]
-            );
+            $line = self::lockEditable($db, $runId, $lineId, $branchId);
             if ($line === null) {
                 return null;
             }
@@ -148,6 +152,7 @@ final class PayrollRunLine extends Model
                 ['id' => $lineId, 'branch' => $branchId]
             );
             Audit::record('payroll_line.screenshot_attached', 'payroll_run_lines', $lineId, null, null);
+            self::cancelLinkIfSent($db, $line, $lineId, $branchId);
 
             $previous = $line['screenshot_filename'] === null ? '' : (string) $line['screenshot_filename'];
             $db->afterCommit(static function () use ($previous, $runId): void {
@@ -198,7 +203,53 @@ final class PayrollRunLine extends Model
     {
         $line = $this->findInRun($runId, $lineId);
 
-        return $line !== null && in_array((string) $line['status'], ['draft', 'query'], true);
+        return $line !== null && PayrollLineStatus::from((string) $line['status'])->canEdit();
+    }
+
+    /**
+     * The line, locked for this transaction, if it may still change — any
+     * status but confirmed.
+     *
+     * @return array<string,mixed>|null
+     */
+    private static function lockEditable(Database $db, int $runId, int $lineId, int $branchId): ?array
+    {
+        return $db->first(
+            "SELECT * FROM payroll_run_lines
+             WHERE id = :id AND run_id = :run AND branch_id = :branch AND status IN ('draft','sent','query')
+             FOR UPDATE",
+            ['id' => $lineId, 'run' => $runId, 'branch' => $branchId]
+        );
+    }
+
+    /**
+     * A notice awaiting a response was just corrected: the link already
+     * emailed must not show the old figures or accept an answer to them.
+     * The token is dropped (that link now gets the neutral page) and the
+     * line goes back to draft for the admin to send again. emailed_at is
+     * kept — an email did go out, which is what locks the month's note.
+     *
+     * @param array<string,mixed> $line the row as locked, before this change
+     */
+    private static function cancelLinkIfSent(Database $db, array $line, int $lineId, int $branchId): void
+    {
+        if ((string) $line['status'] !== PayrollLineStatus::Sent->value) {
+            return;
+        }
+
+        $db->update(
+            'payroll_run_lines',
+            ['status' => PayrollLineStatus::Draft->value, 'token_hash' => null, 'token_expires_at' => null],
+            'id = :id AND branch_id = :branch',
+            ['id' => $lineId, 'branch' => $branchId]
+        );
+        Audit::record(
+            'payroll_line.link_cancelled',
+            'payroll_run_lines',
+            $lineId,
+            ['status' => PayrollLineStatus::Sent->value, 'link_expires_at' => $line['token_expires_at']],
+            ['status' => PayrollLineStatus::Draft->value]
+        );
     }
 
     public static function newToken(): string

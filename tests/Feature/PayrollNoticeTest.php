@@ -11,6 +11,8 @@ use App\Core\RateLimiter;
 use App\Models\PayrollRun;
 use App\Models\PayrollRunLine;
 use App\Services\Payroll\PayrollImport;
+use App\Services\Mail\MailTransport;
+use App\Services\Mail\NullMailer;
 use App\Services\Payroll\PayrollNoticeSender;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -178,7 +180,7 @@ final class PayrollNoticeTest extends TestCase
         self::assertTrue((new PayrollRunLine())->useStoredScreenshot($this->runId, $lineId, $filename));
     }
 
-    private function sender(RecordingMailTransport $mail): PayrollNoticeSender
+    private function sender(MailTransport $mail): PayrollNoticeSender
     {
         return new PayrollNoticeSender(
             new PayrollRunLine(),
@@ -358,24 +360,138 @@ final class PayrollNoticeTest extends TestCase
         self::assertFalse(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
     }
 
-    public function testFiguresAndScreenshotLockOnceSent(): void
+    private function auditCount(string $action, int $lineId): int
     {
-        $this->send([$this->annId]);
+        return (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM audit_log WHERE action = :action AND entity_id = :id',
+            ['action' => $action, 'id' => $lineId]
+        );
+    }
+
+    /**
+     * Regression (review of PAY-1): with MAIL_HOST blank the transport is
+     * NullMailer, which "accepts" by logging. That must not mark a line
+     * sent with a link nobody received, nor cancel a link that was.
+     */
+    public function testWithMailNotConfiguredNothingIsSentAndNothingChanges(): void
+    {
+        $annLineId = $this->lineIdFor($this->annId);
+        $first = $this->send([$this->annId])[$this->annId];
+        self::assertTrue(PayrollRunLine::respond($first, 'query', null, 'Please check.', '10.0.0.1', 'UA'));
+        $auditBefore = (int) Database::instance()->value('SELECT COUNT(*) FROM audit_log');
+        $annBefore = $this->line($this->annId);
+
+        $_SESSION = $this->sessionA();
+        $sender = $this->sender(new NullMailer());
+        self::assertFalse($sender->mailIsConfigured());
+        $report = $sender->send((new PayrollRunLine())->forRun($this->runId), self::MONTH);
+
+        self::assertSame([], $report->sent);
+        self::assertSame([], $report->failed);
+        self::assertCount(3, $report->skipped);
+        foreach ($report->skipped as $skip) {
+            self::assertSame('Email is not configured (MAIL_HOST)', $skip['reason']);
+        }
+        self::assertSame($annBefore, $this->line($this->annId), 'the queried line is untouched');
+        self::assertNotNull(PayrollRunLine::findByToken($first), 'the link already sent still works');
+        self::assertSame('draft', $this->line($this->calId)['status']);
+        self::assertNull($this->line($this->calId)['token_hash']);
+        self::assertNull($this->line($this->calId)['emailed_at']);
+        self::assertSame($auditBefore, (int) Database::instance()->value('SELECT COUNT(*) FROM audit_log'));
+        self::assertSame(0, $this->auditCount('payroll_line.resent', $annLineId));
+    }
+
+    public function testCorrectingFiguresOfASentLineCancelsItsLinkForAResend(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        $_SESSION = $this->sessionA();
+
+        self::assertTrue((new PayrollRunLine())->updateFigures($this->runId, $this->lineIdFor($this->annId), [
+            'salary' => '40000.00',
+            'absent_days' => '0.0',
+            'working_days' => '26.0',
+        ]));
+
+        $line = $this->line($this->annId);
+        self::assertSame('40000.00', (string) $line['salary']);
+        self::assertSame('draft', $line['status']);
+        self::assertNull($line['token_hash']);
+        self::assertNull(PayrollRunLine::findByToken($token));
+        self::assertSame(404, $this->viewNotice($token)['status'], 'the old link shows the neutral page');
+        self::assertFalse(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
+        self::assertSame(1, $this->auditCount('payroll_line.link_cancelled', $this->lineIdFor($this->annId)));
+
+        $resent = $this->send([$this->annId])[$this->annId];
+        self::assertSame('sent', PayrollRunLine::findByToken($resent)['status'] ?? null);
+    }
+
+    public function testReplacingTheScreenshotOfASentLineCancelsItsLink(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        $_SESSION = $this->sessionA();
+
+        $this->attachFakeScreenshot($this->lineIdFor($this->annId));
+
+        self::assertSame('draft', $this->line($this->annId)['status']);
+        self::assertNull(PayrollRunLine::findByToken($token));
+        self::assertSame(1, $this->auditCount('payroll_line.link_cancelled', $this->lineIdFor($this->annId)));
+    }
+
+    public function testEditingADraftOrQueriedLineKeepsItsStatus(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        self::assertTrue(PayrollRunLine::respond($token, 'query', null, 'Absent is wrong.', '1.1.1.1', 'x'));
         $_SESSION = $this->sessionA();
         $lines = new PayrollRunLine();
+        $figures = ['salary' => '31000.00', 'absent_days' => '0.0', 'working_days' => '26.0'];
 
-        self::assertFalse($lines->updateFigures($this->runId, $this->lineIdFor($this->annId), [
+        self::assertTrue($lines->updateFigures($this->runId, $this->lineIdFor($this->annId), $figures));
+        self::assertTrue($lines->updateFigures($this->runId, $this->lineIdFor($this->bobId), $figures));
+
+        self::assertSame('query', $this->line($this->annId)['status']);
+        self::assertSame('draft', $this->line($this->bobId)['status']);
+        self::assertSame(0, $this->auditCount('payroll_line.link_cancelled', $this->lineIdFor($this->annId)));
+    }
+
+    public function testAConfirmedLineStaysLocked(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        self::assertTrue(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
+        $_SESSION = $this->sessionA();
+        $lines = new PayrollRunLine();
+        $lineId = $this->lineIdFor($this->annId);
+
+        self::assertFalse($lines->updateFigures($this->runId, $lineId, [
             'salary' => '1.00',
-            'absent_days' => '0',
-            'working_days' => '1',
+            'absent_days' => '0.0',
+            'working_days' => '1.0',
         ]));
-        self::assertTrue($lines->updateFigures($this->runId, $this->lineIdFor($this->bobId), [
-            'salary' => '31000.00',
-            'absent_days' => '0',
-            'working_days' => '26',
-        ]));
-        self::assertSame(self::SALARY, (string) $this->line($this->annId)['salary']);
-        self::assertSame('31000.00', (string) $this->line($this->bobId)['salary']);
+        $filename = bin2hex(random_bytes(16)) . '.png';
+        self::assertFalse($lines->useStoredScreenshot($this->runId, $lineId, $filename));
+
+        $line = $this->line($this->annId);
+        self::assertSame('confirmed', $line['status']);
+        self::assertSame(self::SALARY, (string) $line['salary']);
+        self::assertNotNull(PayrollRunLine::findByToken($token));
+    }
+
+    public function testAFailedAnswerIsNotKeptToPrefillAnotherNotice(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+
+        $result = ControllerActionRunner::run(
+            SalaryNoticeController::class,
+            'show',
+            ['_old' => ['signed_name' => 'Typed On Another Notice']],
+            [],
+            [],
+            'GET',
+            ['token' => $token]
+        );
+
+        self::assertSame(200, $result['status']);
+        self::assertStringContainsString('Typed On Another Notice', $result['body'], 'shown once, on this render');
+        self::assertArrayNotHasKey('_old', $result['session']);
     }
 
     public function testRunCannotBeReplacedOnceANoticeWasEmailed(): void

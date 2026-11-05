@@ -35,6 +35,7 @@ foreach ($lines as $line) {
         $withoutScreenshot++;
     }
 }
+$cancelWarning = "This cancels the link already sent; you'll need to resend.";
 $badge = [
     'draft' => 'badge-mute',
     'sent' => 'badge-warn',
@@ -141,6 +142,7 @@ $badge = [
                     $screenshotUrl = url($lineBase . '/screenshot');
                     $hasScreenshot = $line['screenshot_filename'] !== null;
                     $disabled = (string) $line['user_status'] !== 'active';
+                    $cancelsLink = $status->editCancelsLink();
                     $editErrors = $lineId === $editLineId
                         ? array_intersect_key($errors, ['salary' => 1, 'absent_days' => 1, 'working_days' => 1])
                         : [];
@@ -194,6 +196,12 @@ $badge = [
                                         <a href="<?= e($screenshotUrl) ?>" target="_blank" rel="noopener" class="btn-secondary lg:hidden">View screenshot</a>
                                     <?php endif; ?>
 
+                                    <?php if ($cancelsLink) : ?>
+                                        <details>
+                                            <summary class="btn-secondary cursor-pointer list-none [&::-webkit-details-marker]:hidden">Replace screenshot</summary>
+                                            <div class="mt-2 max-w-md rounded-lg border border-slate-200 bg-white p-3">
+                                                <p class="mb-2 text-xs font-medium text-bad-text"><?= e($cancelWarning) ?></p>
+                                    <?php endif; ?>
                                     <?php if ($status->canEdit()) : ?>
                                         <form method="post" action="<?= e(url($lineBase . '/screenshot')) ?>" enctype="multipart/form-data"
                                               class="flex flex-wrap items-center gap-2">
@@ -207,6 +215,10 @@ $badge = [
                                             <button type="submit" class="btn-secondary">Upload</button>
                                             <span id="shot-help-<?= e((string) $lineId) ?>" class="text-[11.5px] text-slate-500">PNG, JPEG or WebP, up to <?= e((string) $maxUploadMb) ?> MB</span>
                                         </form>
+                                    <?php endif; ?>
+                                    <?php if ($cancelsLink) : ?>
+                                            </div>
+                                        </details>
                                     <?php endif; ?>
 
                                     <?php if ($status->canSend() && !$disabled) : ?>
@@ -242,6 +254,9 @@ $badge = [
                                             <summary class="btn-secondary cursor-pointer list-none [&::-webkit-details-marker]:hidden">Edit figures</summary>
                                             <form method="post" action="<?= e(url($lineBase)) ?>" class="mt-2 grid max-w-xl grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-3">
                                                 <?= csrf_field() ?>
+                                                <?php if ($cancelsLink) : ?>
+                                                    <p class="text-xs font-medium text-bad-text sm:col-span-3"><?= e($cancelWarning) ?></p>
+                                                <?php endif; ?>
                                                 <?php
                                                 $figureFields = [
                                                     'salary' => ['Salary (final)', $line['salary']],
@@ -263,7 +278,7 @@ $badge = [
                                                     </div>
                                                 <?php endforeach; ?>
                                                 <div class="sm:col-span-3">
-                                                    <button type="submit" class="btn-dark">Save figures</button>
+                                                    <button type="submit" class="btn-dark"><?= e($cancelsLink ? 'Save and cancel the link' : 'Save figures') ?></button>
                                                     <?php if ($status === PayrollLineStatus::Query) : ?>
                                                         <span class="ml-2 text-[11.5px] text-slate-500">Then resend so they see the corrected notice.</span>
                                                     <?php endif; ?>
@@ -272,9 +287,7 @@ $badge = [
                                         </details>
                                     <?php endif; ?>
 
-                                    <?php if ($status === PayrollLineStatus::Sent) : ?>
-                                        <p class="text-[11.5px] text-slate-500">Figures and screenshot are locked while a response is awaited.</p>
-                                    <?php elseif ($status === PayrollLineStatus::Confirmed) : ?>
+                                    <?php if ($status === PayrollLineStatus::Confirmed) : ?>
                                         <p class="text-[11.5px] text-slate-500">Closed: the employee confirmed this notice.</p>
                                     <?php endif; ?>
                                 </div>

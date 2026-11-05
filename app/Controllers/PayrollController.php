@@ -203,14 +203,14 @@ final class PayrollController extends Controller
         if (!$saved) {
             Session::flash(
                 'error',
-                'This line can no longer be changed: it has been sent and is awaiting a response, or was confirmed.'
+                'This line can no longer be changed: the employee has confirmed it.'
             );
             Http::redirect($anchor);
         }
 
         Session::flash(
             'success',
-            'Figures saved for ' . (string) $line['name'] . '. Send the notice again so they see them.'
+            'Figures saved for ' . (string) $line['name'] . '. ' . self::resendReminder($line)
         );
         Http::redirect($anchor);
     }
@@ -235,10 +235,16 @@ final class PayrollController extends Controller
         }
 
         if (!$attached) {
-            $this->failLine('The screenshot can no longer change: this notice has been sent or confirmed.', $anchor);
+            $this->failLine('The screenshot can no longer change: the employee has confirmed this notice.', $anchor);
         }
 
-        Session::flash('success', 'Screenshot attached for ' . (string) $line['name'] . '.');
+        Session::flash(
+            'success',
+            'Screenshot attached for ' . (string) $line['name'] . '.'
+            . (PayrollLineStatus::from((string) $line['status']) === PayrollLineStatus::Draft
+                ? ''
+                : ' ' . self::resendReminder($line))
+        );
         Http::redirect($anchor);
     }
 
@@ -312,7 +318,17 @@ final class PayrollController extends Controller
      */
     private function sendAndReport(array $run, array $lines, string $back): never
     {
-        $report = PayrollNoticeSender::fromConfig()->send($lines, (string) $run['period_month']);
+        $sender = PayrollNoticeSender::fromConfig();
+        if (!$sender->mailIsConfigured()) {
+            Session::flash(
+                'error',
+                'Nothing was sent: email is not configured (MAIL_HOST is blank in .env). '
+                . 'No notice or link has changed.'
+            );
+            Http::redirect($back);
+        }
+
+        $report = $sender->send($lines, (string) $run['period_month']);
         Logger::info('Salary notices sent', [
             'run_id' => (int) $run['id'],
             'sent' => count($report->sent),
@@ -402,6 +418,18 @@ final class PayrollController extends Controller
         Session::flash('errors', array_map(static fn (string $message): array => [$message], $messages));
         Session::flash('error', reset($messages) ?: 'Please correct the highlighted fields.');
         Http::redirect($back);
+    }
+
+    /**
+     * What the admin must do next after correcting a line.
+     *
+     * @param array<string,mixed> $line the line as it was before the change
+     */
+    private static function resendReminder(array $line): string
+    {
+        return PayrollLineStatus::from((string) $line['status'])->editCancelsLink()
+            ? 'The link already sent was cancelled — send the notice again.'
+            : 'Send the notice again so they see it.';
     }
 
     private static function noteOrNull(mixed $note): ?string

@@ -85,6 +85,12 @@ warn(
     \App\Core\XlsxReader::isAvailable(),
     'enable extension=zip in php.ini, or upload salary sheets as .csv'
 );
+// Without it notifications are only logged and salary notices refuse to send.
+warn(
+    'MAIL_HOST is set (email notifications, salary notices)',
+    (string) Config::get('mail.host', '') !== '',
+    'set MAIL_* in .env; until then salary notices cannot be emailed'
+);
 check(
     'sodium loaded',
     extension_loaded('sodium'),

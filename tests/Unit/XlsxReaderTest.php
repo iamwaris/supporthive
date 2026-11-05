@@ -96,6 +96,34 @@ final class XlsxReaderTest extends TestCase
         XlsxReader::rows($path, 10);
     }
 
+    /**
+     * A UTF-16 part hides "<!DOCTYPE" from a byte search (every other byte
+     * is NUL), so the parser-level refusal is what must stop it.
+     */
+    public function testRefusesADoctypeInAUtf16Part(): void
+    {
+        $sheet = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY a "aaaa">]><worksheet xmlns="'
+            . self::NS . '"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>&a;</t></is></c></row>'
+            . '</sheetData></worksheet>';
+        $utf16 = "\xFF\xFE" . mb_convert_encoding($sheet, 'UTF-16LE', 'UTF-8');
+        self::assertStringNotContainsString('<!DOCTYPE', $utf16, 'the fixture must defeat the byte check');
+        $path = $this->zip(['xl/worksheets/sheet1.xml' => $utf16]);
+
+        $this->expectException(UnreadableSpreadsheet::class);
+        $this->expectExceptionMessage('does not accept');
+        XlsxReader::rows($path, 10);
+    }
+
+    public function testReadsAUtf16PartWithoutADoctype(): void
+    {
+        $sheet = '<?xml version="1.0" encoding="UTF-16"?><worksheet xmlns="' . self::NS . '"><sheetData>'
+            . '<row r="1"><c r="A1" t="inlineStr"><is><t>Emp ID</t></is></c></row></sheetData></worksheet>';
+        $utf16 = "\xFF\xFE" . mb_convert_encoding($sheet, 'UTF-16LE', 'UTF-8');
+        $path = $this->zip(['xl/worksheets/sheet1.xml' => $utf16]);
+
+        self::assertSame(['Emp ID'], XlsxReader::rows($path, 10)[1]);
+    }
+
     public function testRefusesAPartLargerThanTheCapEvenWhenItCompressesWell(): void
     {
         $padding = str_repeat(' ', XlsxReader::MAX_ENTRY_BYTES + 10);

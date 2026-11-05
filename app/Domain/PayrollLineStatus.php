@@ -28,10 +28,19 @@ enum PayrollLineStatus: string
         };
     }
 
-    /** Figures and screenshot can change only before the employee has seen them, or after they queried them. */
+    /**
+     * Figures and screenshot can change until the employee confirms.
+     * Changing a sent line cancels its link (back to draft, to resend).
+     */
     public function canEdit(): bool
     {
-        return $this === self::Draft || $this === self::Query;
+        return $this !== self::Confirmed;
+    }
+
+    /** Correcting the line now would cancel a link the employee may be about to use. */
+    public function editCancelsLink(): bool
+    {
+        return $this === self::Sent;
     }
 
     /** Sending again is allowed until the employee confirms. */

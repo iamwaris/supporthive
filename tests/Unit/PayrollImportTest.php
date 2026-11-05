@@ -181,7 +181,10 @@ final class PayrollImportTest extends TestCase
     {
         self::assertTrue(PayrollLineStatus::Draft->canEdit());
         self::assertTrue(PayrollLineStatus::Query->canEdit());
-        self::assertFalse(PayrollLineStatus::Sent->canEdit());
+        self::assertTrue(PayrollLineStatus::Sent->canEdit());
+        self::assertTrue(PayrollLineStatus::Sent->editCancelsLink());
+        self::assertFalse(PayrollLineStatus::Query->editCancelsLink());
+        self::assertFalse(PayrollLineStatus::Draft->editCancelsLink());
         self::assertFalse(PayrollLineStatus::Confirmed->canEdit());
 
         self::assertTrue(PayrollLineStatus::Draft->canSend());

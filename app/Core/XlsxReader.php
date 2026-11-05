@@ -80,7 +80,7 @@ final class XlsxReader
 
         $relationId = null;
         $reader = self::xml(self::entry($zip, 'xl/workbook.xml'));
-        while ($reader->read()) {
+        while (self::advance($reader)) {
             if ($reader->nodeType === XMLReader::ELEMENT && $reader->localName === 'sheet') {
                 $relationId = $reader->getAttributeNs(
                     'id',
@@ -97,7 +97,7 @@ final class XlsxReader
 
         $reader = self::xml(self::entry($zip, 'xl/_rels/workbook.xml.rels'));
         $target = null;
-        while ($reader->read()) {
+        while (self::advance($reader)) {
             if (
                 $reader->nodeType === XMLReader::ELEMENT
                 && $reader->localName === 'Relationship'
@@ -160,6 +160,14 @@ final class XlsxReader
         if (!$reader instanceof XMLReader) {
             throw new UnreadableSpreadsheet('That workbook is damaged and could not be read.');
         }
+
+        // The byte check above cannot see a DOCTYPE in a UTF-16 part, so the
+        // parser is also told never to load a DTD or substitute entities,
+        // and advance() refuses any DOCTYPE node it meets, however encoded.
+        $reader->setParserProperty(XMLReader::LOADDTD, false);
+        $reader->setParserProperty(XMLReader::SUBST_ENTITIES, false);
+        $reader->setParserProperty(XMLReader::DEFAULTATTRS, false);
+        $reader->setParserProperty(XMLReader::VALIDATE, false);
 
         return $reader;
     }
@@ -290,6 +298,9 @@ final class XlsxReader
             libxml_use_internal_errors($previous);
         }
 
+        if ($more && $reader->nodeType === XMLReader::DOC_TYPE) {
+            throw new UnreadableSpreadsheet('That workbook contains content this reader does not accept.');
+        }
         if ($errors !== []) {
             throw new UnreadableSpreadsheet('That workbook is damaged and could not be read.');
         }
