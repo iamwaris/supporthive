@@ -1097,11 +1097,13 @@ final class PayrollNoticeTest extends TestCase
             'This replaces the salary notice we sent earlier for October 2026.',
             $page['body']
         );
-        self::assertStringContainsString('"correction":true', (string) Database::instance()->value(
+        // Decoded, not matched as text: MySQL 8's JSON type re-serialises with spaces and reorders keys.
+        $sentMeta = json_decode((string) Database::instance()->value(
             "SELECT meta FROM audit_log WHERE action = 'payroll_line.sent' AND entity_id = :id
              ORDER BY id DESC LIMIT 1",
             ['id' => $this->lineIdFor($this->annId)]
-        ));
+        ), true, flags: JSON_THROW_ON_ERROR);
+        self::assertTrue($sentMeta['after']['correction'] ?? null);
     }
 
     public function testCorrectionWordingSurvivesAFullReimport(): void
