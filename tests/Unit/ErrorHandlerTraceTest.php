@@ -36,21 +36,27 @@ final class ErrorHandlerTraceTest extends TestCase
     public function testTheTraceHasLocationsAndFunctionsButNoArgumentsEvenWhenTheIniAllowsThem(): void
     {
         ini_set('zend.exception_ignore_args', '0');
-        // Short enough that PHP's own trace prints it whole (it cuts strings at 15).
         $secret = 'PK36' . bin2hex(random_bytes(5));
 
         try {
             self::throwWith($secret);
         } catch (RuntimeException $e) {
-            // The setting really is off here, so the built-in string leaks:
-            // this proves the assertion below is testing something.
-            self::assertStringContainsString($secret, $e->getTraceAsString());
-
             $trace = implode("\n", ErrorHandler::traceWithoutArguments($e));
             self::assertStringNotContainsString($secret, $trace);
             self::assertStringContainsString(__FILE__, $trace);
             self::assertStringContainsString(self::class . '::throwWith()', $trace);
             self::assertStringEndsWith('{main}', $trace);
+
+            // Proof the assertions above test something: the frame really
+            // carries the secret. Read from getTrace(), not
+            // getTraceAsString(), whose printing of it depends on
+            // zend.exception_string_param_max_len (0 in php.ini-production,
+            // which CI uses, so it prints '...').
+            if (filter_var(ini_get('zend.exception_ignore_args'), FILTER_VALIDATE_BOOLEAN)) {
+                self::markTestSkipped('zend.exception_ignore_args could not be turned off here, so the frame '
+                    . 'carries no arguments to leak; the argument-free assertions above still ran.');
+            }
+            self::assertSame([$secret], $e->getTrace()[0]['args'] ?? null);
         }
     }
 

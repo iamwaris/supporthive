@@ -99,7 +99,7 @@ final class ControllerActionRunner
         $stderr = stream_get_contents($pipes[2]) ?: '';
         fclose($pipes[1]);
         fclose($pipes[2]);
-        proc_close($process);
+        $exitCode = proc_close($process);
         unlink($phpFile);
 
         $resultJson = is_file($resultFile) ? (string) file_get_contents($resultFile) : '';
@@ -111,9 +111,13 @@ final class ControllerActionRunner
         $result = $resultJson !== '' ? json_decode($resultJson, true) : null;
         $status = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
 
-        if ($status === 0) {
+        // The status starts at 200, so it cannot reveal a crash by itself:
+        // an uncaught error ends in ErrorHandler::handle(), which exits 1
+        // under the CLI, while redirect(), json() and abort() exit 0.
+        if ($status === 0 || $exitCode !== 0) {
             throw new RuntimeException(
-                'Subprocess for ' . $controllerClass . '::' . $method . '() produced no status. '
+                'Subprocess for ' . $controllerClass . '::' . $method . '() failed (exit code '
+                . $exitCode . ', status ' . $status . '). '
                 . "stdout:\n" . $stdout . "\nstderr:\n" . $stderr
             );
         }
@@ -174,6 +178,15 @@ final class ControllerActionRunner
                 ]));
             });
 
+            // A web SAPI starts every response at 200 before any output, so
+            // a page that renders and returns is a 200, and an action can only
+            // change the status before it prints. The CLI starts with no
+            // status at all; setting it here, ahead of the action, mirrors
+            // the web. Setting it after the action instead lands after the
+            // page's output, which PHP 8.3 refuses ("headers already sent"),
+            // and a status an action itself sets after printing still fails.
+            http_response_code(200);
+
             \$controllerClass = {$controllerClassLiteral};
             \$controller = new \$controllerClass();
             // Called with the route params regardless of whether {$method}()
@@ -181,14 +194,6 @@ final class ControllerActionRunner
             // App\\Core\\Router::invoke() always calls ->{method}(\$params);
             // PHP does not error on an unused extra positional argument.
             \$controller->{$method}({$routeParamsLiteral});
-
-            // Reached only when the action returned normally — a page that
-            // rendered without exiting, which over HTTP is a 200. The CLI
-            // has no status of its own, and a crash never gets here, so a
-            // missing status still means something went wrong.
-            if (http_response_code() === false) {
-                http_response_code(200);
-            }
             PHP;
     }
 }
