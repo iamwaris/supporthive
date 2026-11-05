@@ -31,19 +31,26 @@ final class PayrollRunLine extends Model
     /** Every column the public notice reads, joined with its run and employee. */
     private const PUBLIC_COLUMNS = 'l.id, l.branch_id, l.run_id, l.employee_code, l.salary, l.absent_days,
         l.working_days, l.screenshot_filename, l.token_expires_at, l.status, l.signed_name, l.responded_at,
-        l.query_text, r.period_month, r.note, u.name';
+        l.query_text, r.period_month, r.note, r.withdrawn_at AS run_withdrawn_at, u.name';
 
     protected string $table = 'payroll_run_lines';
 
     /** @var list<string> */
     protected array $fillable = ['salary', 'absent_days', 'working_days', 'screenshot_filename'];
 
-    /** @return list<array<string,mixed>> the run's lines with each employee's name and email, by Employee ID */
+    /**
+     * The run's lines with each employee's name and email, by Employee ID.
+     * run_withdrawn_at is set when the run was withdrawn (PAY-3): every
+     * notice sent from then on is a correction.
+     *
+     * @return list<array<string,mixed>>
+     */
     public function forRun(int $runId): array
     {
         return $this->db()->all(
-            'SELECT l.*, u.name, u.email, u.status AS user_status
+            'SELECT l.*, u.name, u.email, u.status AS user_status, r.withdrawn_at AS run_withdrawn_at
              FROM payroll_run_lines l
+             JOIN payroll_runs r ON r.id = l.run_id AND r.branch_id = l.branch_id
              JOIN users u ON u.id = l.user_id
              WHERE l.run_id = :run AND l.branch_id = :branch
              ORDER BY l.employee_code',
@@ -55,8 +62,9 @@ final class PayrollRunLine extends Model
     public function findInRun(int $runId, int $lineId): ?array
     {
         return $this->db()->first(
-            'SELECT l.*, u.name, u.email, u.status AS user_status
+            'SELECT l.*, u.name, u.email, u.status AS user_status, r.withdrawn_at AS run_withdrawn_at
              FROM payroll_run_lines l
+             JOIN payroll_runs r ON r.id = l.run_id AND r.branch_id = l.branch_id
              JOIN users u ON u.id = l.user_id
              WHERE l.id = :id AND l.run_id = :run AND l.branch_id = :branch
              LIMIT 1',
@@ -227,7 +235,7 @@ final class PayrollRunLine extends Model
      * emailed must not show the old figures or accept an answer to them.
      * The token is dropped (that link now gets the neutral page) and the
      * line goes back to draft for the admin to send again. emailed_at is
-     * kept — an email did go out, which is what locks the month's note.
+     * kept as history: an email did go out.
      *
      * @param array<string,mixed> $line the row as locked, before this change
      */

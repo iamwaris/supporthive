@@ -58,13 +58,129 @@ final class PayrollRun extends Model
         );
     }
 
-    public function hasEmailedLines(int $runId): bool
+    /**
+     * True while any employee holds a notice of this run: a line awaiting a
+     * response (live link) or already answered. That is what locks the
+     * month's note and a full re-import. A line that was emailed but is a
+     * draft again — its link cancelled by a correction or a withdrawal —
+     * no longer counts; emailed_at stays on it as history.
+     */
+    public function hasOutstandingNotices(int $runId): bool
     {
         return (int) $this->db()->value(
-            'SELECT COUNT(*) FROM payroll_run_lines
-             WHERE run_id = :run AND branch_id = :branch AND emailed_at IS NOT NULL',
+            "SELECT COUNT(*) FROM payroll_run_lines
+             WHERE run_id = :run AND branch_id = :branch AND status IN ('sent','confirmed','query')",
             ['run' => $runId, 'branch' => $this->requireBranchId()]
         ) > 0;
+    }
+
+    /** The name of whoever last withdrew the run, or null if never withdrawn (or that user is gone). */
+    public function withdrawnByName(int $runId): ?string
+    {
+        $name = $this->db()->value(
+            'SELECT u.name FROM payroll_runs r JOIN users u ON u.id = r.withdrawn_by
+             WHERE r.id = :id AND r.branch_id = :branch',
+            ['id' => $runId, 'branch' => $this->requireBranchId()]
+        );
+
+        return $name === null ? null : (string) $name;
+    }
+
+    /**
+     * Withdraw every notice of the run (PAY-3), in one transaction with the
+     * run row locked: each line's prior state — status, figures, signature
+     * or query, when it was emailed and answered — goes to the audit log,
+     * then every line becomes a draft with no link and no response. The
+     * screenshot and emailed_at stay. The run records when, by whom and
+     * why; every notice sent afterwards is a correction.
+     *
+     * Returns the counts of lines by prior status, or null when nothing was
+     * out with employees (never sent, or already withdrawn — a second
+     * concurrent withdrawal lands here once the first commits).
+     *
+     * @return array{confirmed:int,query:int,sent:int,draft:int}|null
+     */
+    public function withdraw(int $runId, string $reason): ?array
+    {
+        $branchId = $this->requireBranchId();
+
+        /** @var array{confirmed:int,query:int,sent:int,draft:int}|null */
+        return Database::instance()->transaction(function (Database $db) use ($runId, $branchId, $reason): ?array {
+            $run = $db->first(
+                'SELECT id, period_month FROM payroll_runs WHERE id = :id AND branch_id = :branch FOR UPDATE',
+                ['id' => $runId, 'branch' => $branchId]
+            );
+            if ($run === null) {
+                return null;
+            }
+
+            $lines = $db->all(
+                'SELECT id, employee_code, status, salary, absent_days, working_days, signed_name, responded_at,
+                        response_ip, query_text, emailed_at, token_expires_at
+                 FROM payroll_run_lines WHERE run_id = :run AND branch_id = :branch
+                 ORDER BY id FOR UPDATE',
+                ['run' => $runId, 'branch' => $branchId]
+            );
+
+            $counts = ['confirmed' => 0, 'query' => 0, 'sent' => 0, 'draft' => 0];
+            foreach ($lines as $line) {
+                $counts[(string) $line['status']]++;
+            }
+            if ($counts['confirmed'] + $counts['query'] + $counts['sent'] === 0) {
+                return null;
+            }
+
+            foreach ($lines as $line) {
+                Audit::record(
+                    'payroll_line.withdrawn',
+                    'payroll_run_lines',
+                    (int) $line['id'],
+                    [
+                        'status' => $line['status'],
+                        'salary' => $line['salary'],
+                        'absent_days' => $line['absent_days'],
+                        'working_days' => $line['working_days'],
+                        'signed_name' => $line['signed_name'],
+                        'responded_at' => $line['responded_at'],
+                        'response_ip' => $line['response_ip'],
+                        'query_text' => $line['query_text'],
+                        'emailed_at' => $line['emailed_at'],
+                        'link_expires_at' => $line['token_expires_at'],
+                    ],
+                    ['status' => 'draft']
+                );
+            }
+
+            $db->update(
+                'payroll_run_lines',
+                [
+                    'status' => 'draft',
+                    'token_hash' => null,
+                    'token_expires_at' => null,
+                    'signed_name' => null,
+                    'responded_at' => null,
+                    'response_ip' => null,
+                    'response_user_agent' => null,
+                    'query_text' => null,
+                ],
+                'run_id = :run AND branch_id = :branch',
+                ['run' => $runId, 'branch' => $branchId]
+            );
+            $db->update(
+                'payroll_runs',
+                ['withdrawn_at' => date('Y-m-d H:i:s'), 'withdrawn_by' => Auth::id(), 'withdraw_reason' => $reason],
+                'id = :id AND branch_id = :branch',
+                ['id' => $runId, 'branch' => $branchId]
+            );
+
+            Audit::record('payroll_run.withdrawn', 'payroll_runs', $runId, null, [
+                'period_month' => $run['period_month'],
+                'reason' => $reason,
+                'lines' => count($lines),
+            ] + $counts);
+
+            return $counts;
+        });
     }
 
     /**
@@ -94,14 +210,15 @@ final class PayrollRun extends Model
 
     /**
      * Create the month's run with these lines, or replace an existing run's
-     * lines — only while none of them has been emailed, re-checked under a
-     * row lock. Screenshot files of replaced lines are removed once the
+     * lines — only while no notice is out with an employee (see
+     * hasOutstandingNotices(); after a withdrawal, none is), re-checked
+     * under a row lock. Screenshot files of replaced lines are removed once the
      * change is durable. Returns the run id.
      *
      * @param list<array{
      *     user_id:int,name:string,employee_code:string,salary:string,absent_days:string,working_days:string
      * }> $lines
-     * @throws RuntimeException when the existing run has emailed lines
+     * @throws RuntimeException when the existing run has a notice out with an employee
      */
     public function import(string $periodMonth, ?string $note, array $lines): int
     {
@@ -123,8 +240,8 @@ final class PayrollRun extends Model
                 $runId = $this->create(['period_month' => $periodMonth, 'note' => $note, 'created_by' => Auth::id()]);
             } else {
                 $runId = (int) $existing['id'];
-                if ($this->hasEmailedLines($runId)) {
-                    throw new RuntimeException('Notices for this month have already been emailed.');
+                if ($this->hasOutstandingNotices($runId)) {
+                    throw new RuntimeException('Notices for this month are out with employees.');
                 }
                 $replacedFiles = array_values(array_filter(array_map(
                     static fn (array $row): ?string => $row['screenshot_filename'] === null
@@ -258,7 +375,7 @@ final class PayrollRun extends Model
         }
     }
 
-    /** @return bool false once any line has been emailed, when the note is no longer editable */
+    /** @return bool false while any notice is out with an employee, when the note is no longer editable */
     public function updateNote(int $runId, ?string $note): bool
     {
         return (bool) Database::instance()->transaction(function (Database $db) use ($runId, $note): bool {
@@ -266,7 +383,7 @@ final class PayrollRun extends Model
                 'SELECT id, note FROM payroll_runs WHERE id = :id AND branch_id = :branch FOR UPDATE',
                 ['id' => $runId, 'branch' => $this->requireBranchId()]
             );
-            if ($run === null || $this->hasEmailedLines($runId)) {
+            if ($run === null || $this->hasOutstandingNotices($runId)) {
                 return false;
             }
 

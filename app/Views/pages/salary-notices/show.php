@@ -4,11 +4,13 @@
  * One month's salary notices: the note, then one row per employee with
  * their figures, screenshot, email status and response, and the actions
  * each line allows in its current state. Plain forms throughout; <details>
- * is the confirm step for sending, so nothing needs JavaScript.
+ * is the confirm step for sending and for withdrawing the month, so nothing
+ * needs JavaScript.
  *
  * @var array<string,mixed>                               $run
  * @var list<array<string,mixed>>                         $lines        PayrollRunLine::forRun()
- * @var bool                                              $noteEditable no line emailed yet
+ * @var bool                                              $noteEditable no notice out with an employee
+ * @var string|null                                       $withdrawnBy  who last withdrew the month, null if never
  * @var list<array{name:string,employee_code:?string}>    $missing      active employees with no line in this run
  * @var list<array{row:int,employee_code:string,message:string}> $sheetErrors problems in a rejected "add employees" file
  * @var string                                            $symbol       currency symbol
@@ -36,6 +38,9 @@ foreach ($lines as $line) {
         $withoutScreenshot++;
     }
 }
+$outstanding = $counts['sent'] + $counts['confirmed'] + $counts['query'];
+$monthLabel = date('F Y', (int) strtotime((string) $run['period_month']));
+$withdrawError = $errors['withdraw_reason'][0] ?? null;
 $cancelWarning = "This cancels the link already sent; you'll need to resend.";
 $badge = [
     'draft' => 'badge-mute',
@@ -45,6 +50,22 @@ $badge = [
 ];
 ?>
 <div class="flex flex-col gap-5">
+
+    <?php if ($withdrawnBy !== null) : ?>
+        <section class="card border-brand-400 p-5" aria-labelledby="withdrawn-heading">
+            <h2 id="withdrawn-heading" class="font-display text-sm font-semibold text-ink">Notices withdrawn</h2>
+            <p class="mt-1 text-sm text-slate-700">
+                Withdrawn on <?= e($when($run['withdrawn_at'])) ?> by <?= e($withdrawnBy) ?>:
+                <span class="whitespace-pre-line"><?= e(rtrim((string) $run['withdraw_reason'], '. ')) ?></span>.
+                Correct the figures, then resend.
+            </p>
+            <p class="mt-1 text-xs text-slate-600">
+                Every notice sent from now on is marked as an updated notice that replaces the earlier one.
+                To replace every line at once, <a href="<?= e(url('/salary-notices/new')) ?>" class="font-medium text-brand-900 underline">re-import the sheet</a>
+                for <?= e($monthLabel) ?> while nothing is sent.
+            </p>
+        </section>
+    <?php endif; ?>
 
     <?php if ($missing !== []) : ?>
         <section class="card border-brand-400 p-5" aria-labelledby="missing-heading">
@@ -89,7 +110,7 @@ $badge = [
                 <textarea id="run-note" name="note" rows="3" maxlength="5000"
                           class="<?= isset($errors['note'][0]) ? 'input-error' : 'input' ?>"
                           aria-describedby="run-note-help<?= isset($errors['note'][0]) ? ' run-note-error' : '' ?>"><?= e(old('note', (string) ($run['note'] ?? ''))) ?></textarea>
-                <p id="run-note-help" class="help -mt-1">Shown to every employee. It can change until the first notice is emailed.</p>
+                <p id="run-note-help" class="help -mt-1">Shown to every employee. It can change until a notice is sent.</p>
                 <?php if (isset($errors['note'][0])) : ?>
                     <p id="run-note-error" class="error"><?= e($errors['note'][0]) ?></p>
                 <?php endif; ?>
@@ -97,7 +118,7 @@ $badge = [
             </form>
         <?php else : ?>
             <p class="mt-2 text-sm whitespace-pre-line text-slate-700"><?= e(($run['note'] ?? '') !== '' ? (string) $run['note'] : 'No note.') ?></p>
-            <p class="help">Locked: notices for this month have been emailed.</p>
+            <p class="help">Locked: notices for this month are out with employees. Withdrawing them unlocks it.</p>
         <?php endif; ?>
     </section>
 
@@ -355,4 +376,40 @@ $badge = [
             <div><button type="submit" class="btn-primary">Upload and add</button></div>
         </form>
     </section>
+
+    <?php if ($outstanding > 0) : ?>
+        <section id="withdraw" class="card border-bad-line p-5 sm:p-6" aria-labelledby="withdraw-heading">
+            <h2 id="withdraw-heading" class="font-display text-sm font-semibold text-bad-text">Danger zone: withdraw this month's notices</h2>
+            <p class="mt-1 text-xs text-slate-600">
+                For when the wrong figures went out. Every line goes back to "Not sent" so you can correct it and send
+                an updated notice — to everyone, including those who already confirmed.
+            </p>
+            <details class="mt-3" <?= $withdrawError !== null ? 'open' : '' ?>>
+                <summary class="btn-secondary cursor-pointer list-none text-bad-text [&::-webkit-details-marker]:hidden">Withdraw this month's notices…</summary>
+                <form method="post" action="<?= e(url($base . '/withdraw')) ?>" class="mt-3 flex max-w-xl flex-col gap-3 rounded-lg border border-bad-line bg-bad-bg p-4" novalidate>
+                    <?= csrf_field() ?>
+                    <p class="text-sm font-medium text-bad-text">
+                        Every link already emailed for <?= e($monthLabel) ?> stops working, including
+                        <?= e($counts['confirmed'] === 1 ? '1 confirmed response' : $counts['confirmed'] . ' confirmed responses') ?><?= e($counts['query'] > 0 ? ' and ' . ($counts['query'] === 1 ? '1 query' : $counts['query'] . ' queries') : '') ?>.
+                        Their confirmations are kept in the audit log. You can then re-import or edit, and resend.
+                    </p>
+                    <p class="text-xs text-slate-700">
+                        Screenshots stay attached. Nobody is emailed until you send again.
+                    </p>
+                    <div>
+                        <label for="withdraw-reason" class="label">Reason (required, shown on this page)</label>
+                        <textarea id="withdraw-reason" name="withdraw_reason" rows="2" required maxlength="500"
+                                  class="<?= $withdrawError !== null ? 'input-error' : 'input' ?>"
+                                  aria-describedby="withdraw-reason-help<?= $withdrawError !== null ? ' withdraw-reason-error' : '' ?>"
+                                  <?= $withdrawError !== null ? 'aria-invalid="true"' : '' ?>><?= e(old('withdraw_reason')) ?></textarea>
+                        <p id="withdraw-reason-help" class="help">Up to 500 characters, e.g. "Imported the September sheet by mistake".</p>
+                        <?php if ($withdrawError !== null) : ?>
+                            <p id="withdraw-reason-error" class="error"><?= e($withdrawError) ?></p>
+                        <?php endif; ?>
+                    </div>
+                    <div><button type="submit" class="btn-dark">Yes, withdraw <?= e($monthLabel) ?></button></div>
+                </form>
+            </details>
+        </section>
+    <?php endif; ?>
 </div>

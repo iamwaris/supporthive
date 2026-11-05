@@ -24,11 +24,12 @@ use PDOException;
 use RuntimeException;
 
 /**
- * Salary notices (PAY-1, PAY-2), admin only (`can:administer`), scoped to
+ * Salary notices (PAY-1, PAY-2, PAY-3), admin only (`can:administer`), scoped to
  * the admin's branch: import a month's sheet, add employees missing from it
  * with a further file, attach each employee's attendance screenshot, preview
  * the email and the notice page, email each employee their private link, and
- * see who confirmed or queried.
+ * see who confirmed or queried, and withdraw the whole month to correct
+ * and resend it.
  *
  * Every run id resolves through PayrollRun::find() (branch-scoped) and every
  * line id through PayrollRunLine::findInRun() (branch- and run-scoped), so
@@ -44,6 +45,7 @@ final class PayrollController extends Controller
      */
     public const MONTH_RULE = 'required|regex:/^20\d{2}-(?!00)(?!1[3-9])[01]\d$/';
     private const NOTE_RULE = 'nullable|max:5000';
+    private const WITHDRAW_REASON_RULE = 'required|max:500';
 
     private const FIGURE_RULES = [
         'salary' => 'required|money|max:16',
@@ -104,7 +106,7 @@ final class PayrollController extends Controller
         try {
             $result = PayrollImport::validate($rows, $runs->branchEmployees());
             $existing = $runs->findForMonth($periodMonth);
-            $alreadyEmailed = $existing !== null && $runs->hasEmailedLines((int) $existing['id']);
+            $outstanding = $existing !== null && $runs->hasOutstandingNotices((int) $existing['id']);
         } catch (PDOException $e) {
             Logger::error('Payroll import lookup failed', ['error' => $e->getMessage()]);
             $this->failImport('Nothing was saved: the sheet could not be checked just now. Please try again.');
@@ -117,10 +119,10 @@ final class PayrollController extends Controller
         }
 
         if ($existing !== null) {
-            if ($alreadyEmailed) {
+            if ($outstanding) {
                 $this->failImport(
-                    'Notices for ' . $monthLabel . ' have already been emailed, so its lines cannot be replaced. '
-                    . 'Correct individual lines on the run page instead.'
+                    'Notices for ' . $monthLabel . ' are out with employees, so its lines cannot be replaced. '
+                    . 'Correct individual lines on the run page, or withdraw this month\'s notices there first.'
                 );
             }
             if ($clean['replace'] !== '1') {
@@ -283,7 +285,7 @@ final class PayrollController extends Controller
         $clean = $this->validate(['note' => self::NOTE_RULE], $back . '#note');
 
         if (!(new PayrollRun())->updateNote((int) $run['id'], self::noteOrNull($clean['note']))) {
-            Session::flash('error', 'The note can no longer change: notices for this month have been emailed.');
+            Session::flash('error', 'The note can no longer change: notices for this month are out with employees.');
             Http::redirect($back);
         }
 
@@ -366,6 +368,53 @@ final class PayrollController extends Controller
     {
         [, $line] = $this->findLineOr404($params);
         self::streamScreenshot($line);
+    }
+
+    /**
+     * Withdraw every notice of the month (PAY-3): every link already emailed
+     * stops working, confirmations and queries included, and every line is a
+     * draft again for the admin to correct and resend. The prior state of
+     * each line is kept in the audit log. Needs a reason; the confirm step is
+     * a plain form on the run page.
+     *
+     * @param array<string,string> $params
+     */
+    public function withdraw(array $params): void
+    {
+        $run = $this->findRunOr404($params);
+        $back = '/salary-notices/' . (int) $run['id'];
+        $clean = $this->validate(['withdraw_reason' => self::WITHDRAW_REASON_RULE], $back . '#withdraw');
+        $reason = str_replace("\r\n", "\n", trim((string) $clean['withdraw_reason']));
+        $monthLabel = PayrollNoticeSender::monthLabel((string) $run['period_month']);
+
+        try {
+            $counts = (new PayrollRun())->withdraw((int) $run['id'], $reason);
+        } catch (PDOException $e) {
+            Logger::error('Payroll withdraw failed', ['run_id' => (int) $run['id'], 'error' => $e->getMessage()]);
+            Session::flash('error', 'Nothing was withdrawn: please try again.');
+            Http::redirect($back);
+        }
+
+        if ($counts === null) {
+            Session::flash(
+                'error',
+                'There is nothing to withdraw: no notice for ' . $monthLabel . ' is out with employees.'
+            );
+            Http::redirect($back);
+        }
+
+        Logger::info('Salary notices withdrawn', ['run_id' => (int) $run['id']] + $counts);
+        Session::flash(
+            'success',
+            'Withdrew the notices for ' . $monthLabel . ': every emailed link has stopped working'
+            . match ($counts['confirmed']) {
+                0 => '',
+                1 => ', including 1 confirmed response',
+                default => ', including ' . $counts['confirmed'] . ' confirmed responses',
+            }
+            . '. Correct the figures, then resend.'
+        );
+        Http::redirect($back);
     }
 
     /** "Send to all not yet sent": draft lines only. @param array<string,string> $params */
@@ -480,7 +529,8 @@ final class PayrollController extends Controller
             'pageMeta' => self::employees(count($lines)),
             'run' => $run,
             'lines' => $lines,
-            'noteEditable' => !$runs->hasEmailedLines($runId),
+            'noteEditable' => !$runs->hasOutstandingNotices($runId),
+            'withdrawnBy' => $run['withdrawn_at'] === null ? null : ($runs->withdrawnByName($runId) ?? 'a former user'),
             'missing' => $runs->activeEmployeesWithoutLine($runId),
             'sheetErrors' => $sheetErrors,
             'editLineId' => (int) (Session::flash('payroll_edit_line') ?? 0),

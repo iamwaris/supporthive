@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use App\Controllers\PayrollController;
 use App\Controllers\SalaryNoticeController;
+use App\Core\Config;
 use App\Core\Database;
 use App\Core\RateLimiter;
 use App\Models\PayrollRun;
@@ -14,6 +15,8 @@ use App\Services\Payroll\PayrollImport;
 use App\Services\Mail\MailTransport;
 use App\Services\Mail\NullMailer;
 use App\Services\Payroll\PayrollNoticeSender;
+use PDO;
+use PDOException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Tests\Support\BranchFixture;
@@ -891,6 +894,373 @@ final class PayrollNoticeTest extends TestCase
             'SELECT COUNT(*) FROM payroll_run_lines WHERE run_id = :run',
             ['run' => $this->runId]
         ));
+    }
+
+    /**
+     * PAY-3: send Ann, Bob and Cal, then Ann confirms, Cal queries and Bob
+     * stays awaiting a response. Returns each one's token.
+     *
+     * @return array<int,string>
+     */
+    private function sendAllAndRespond(): array
+    {
+        $_SESSION = $this->sessionA();
+        $this->attachFakeScreenshot($this->lineIdFor($this->bobId));
+        $tokens = $this->send([$this->annId, $this->bobId, $this->calId]);
+        self::assertTrue(
+            PayrollRunLine::respond($tokens[$this->annId], 'confirmed', 'Pay Ann Signed', null, '10.1.1.1', 'UA')
+        );
+        self::assertTrue(
+            PayrollRunLine::respond($tokens[$this->calId], 'query', null, 'Absent is wrong.', '10.1.1.2', 'UA')
+        );
+
+        return $tokens;
+    }
+
+    /** @return array{confirmed:int,query:int,sent:int,draft:int}|null */
+    private function withdraw(string $reason = 'Imported the wrong sheet.'): ?array
+    {
+        $_SESSION = $this->sessionA();
+        $counts = (new PayrollRun())->withdraw($this->runId, $reason);
+        $_SESSION = [];
+
+        return $counts;
+    }
+
+    /**
+     * @param array<string,mixed> $session
+     * @return array{status:int,body:string,session:array<string,mixed>}
+     */
+    private function postWithdraw(array $session, string $reason, ?int $runId = null): array
+    {
+        return ControllerActionRunner::run(
+            PayrollController::class,
+            'withdraw',
+            $session,
+            ['withdraw_reason' => $reason],
+            [],
+            'POST',
+            ['id' => (string) ($runId ?? $this->runId)]
+        );
+    }
+
+    public function testWithdrawResetsConfirmedSentAndQueriedLinesAndKillsTheirLinks(): void
+    {
+        $tokens = $this->sendAllAndRespond();
+        $users = [$this->annId, $this->bobId, $this->calId];
+        $screenshots = array_map(fn (int $id): mixed => $this->line($id)['screenshot_filename'], $users);
+
+        self::assertSame(['confirmed' => 1, 'query' => 1, 'sent' => 1, 'draft' => 0], $this->withdraw());
+
+        $cleared = [
+            'token_hash',
+            'token_expires_at',
+            'signed_name',
+            'responded_at',
+            'response_ip',
+            'response_user_agent',
+            'query_text',
+        ];
+        foreach ($users as $i => $userId) {
+            $line = $this->line($userId);
+            self::assertSame('draft', $line['status']);
+            foreach ($cleared as $column) {
+                self::assertNull($line[$column], $column);
+            }
+            self::assertSame($screenshots[$i], $line['screenshot_filename'], 'the screenshot is kept');
+            self::assertNotNull($line['emailed_at'], 'when it was emailed stays as history');
+            self::assertNull(PayrollRunLine::findByToken($tokens[$userId]));
+            self::assertFalse(PayrollRunLine::respond($tokens[$userId], 'confirmed', 'Late', null, '1.1.1.1', 'x'));
+        }
+
+        // The old links of a confirmed line (Ann) and of a sent line (Bob) both get the neutral page.
+        foreach ([$this->annId, $this->bobId] as $userId) {
+            $page = $this->viewNotice($tokens[$userId]);
+            self::assertSame(404, $page['status']);
+            self::assertStringContainsString('This link is no longer active', $page['body']);
+            self::assertStringNotContainsString('Pay Ann', $page['body']);
+            self::assertStringNotContainsString('Pay Bob', $page['body']);
+        }
+    }
+
+    public function testTheAuditLogKeepsEachLinesPriorStateIncludingTheSignature(): void
+    {
+        $this->sendAllAndRespond();
+        $this->withdraw('Wrong month imported.');
+
+        $annMeta = json_decode((string) Database::instance()->value(
+            "SELECT meta FROM audit_log WHERE action = 'payroll_line.withdrawn' AND entity_id = :id",
+            ['id' => $this->lineIdFor($this->annId)]
+        ), true);
+        self::assertSame('confirmed', $annMeta['before']['status']);
+        self::assertSame('Pay Ann Signed', $annMeta['before']['signed_name']);
+        self::assertSame('10.1.1.1', $annMeta['before']['response_ip']);
+        self::assertSame(self::SALARY, (string) $annMeta['before']['salary']);
+        self::assertNotNull($annMeta['before']['responded_at']);
+        self::assertNotNull($annMeta['before']['emailed_at']);
+
+        $calMeta = (string) Database::instance()->value(
+            "SELECT meta FROM audit_log WHERE action = 'payroll_line.withdrawn' AND entity_id = :id",
+            ['id' => $this->lineIdFor($this->calId)]
+        );
+        self::assertStringContainsString('Absent is wrong.', $calMeta);
+
+        $runMeta = json_decode((string) Database::instance()->value(
+            "SELECT meta FROM audit_log WHERE action = 'payroll_run.withdrawn' AND entity_id = :id",
+            ['id' => $this->runId]
+        ), true);
+        self::assertSame('Wrong month imported.', $runMeta['after']['reason']);
+        self::assertSame(3, $runMeta['after']['lines']);
+        self::assertSame(1, $runMeta['after']['confirmed']);
+        self::assertSame(1, $runMeta['after']['query']);
+        self::assertSame(1, $runMeta['after']['sent']);
+    }
+
+    public function testNothingToWithdrawWhenNoNoticeIsOut(): void
+    {
+        self::assertNull($this->withdraw(), 'nothing was ever sent');
+
+        $this->send([$this->annId]);
+        self::assertNotNull($this->withdraw());
+        self::assertNull($this->withdraw(), 'a second withdrawal finds every line already a draft');
+        self::assertSame(1, (int) Database::instance()->value(
+            "SELECT COUNT(*) FROM audit_log WHERE action = 'payroll_run.withdrawn' AND entity_id = :id",
+            ['id' => $this->runId]
+        ));
+    }
+
+    public function testFullReplaceNoteAndEditsAreAllowedAgainAfterAWithdrawal(): void
+    {
+        $this->sendAllAndRespond();
+        $_SESSION = $this->sessionA();
+        $runs = new PayrollRun();
+        self::assertFalse($runs->updateNote($this->runId, 'Changed.'));
+        try {
+            $runs->import(self::MONTH, null, []);
+            self::fail('a replace must be refused while notices are out');
+        } catch (RuntimeException) {
+            // Refused, as before PAY-3.
+        }
+
+        $this->withdraw();
+        $_SESSION = $this->sessionA();
+
+        // The line Ann had confirmed can be corrected now.
+        self::assertTrue((new PayrollRunLine())->updateFigures($this->runId, $this->lineIdFor($this->annId), [
+            'salary' => '40000.00',
+            'absent_days' => '0.0',
+            'working_days' => '26.0',
+        ]));
+        self::assertTrue($runs->updateNote($this->runId, 'Corrected figures.'));
+
+        $result = PayrollImport::validate([
+            1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'],
+            2 => ['PAY-1', '41000', '0', '26'],
+        ], $runs->branchEmployees());
+        self::assertSame($this->runId, $runs->import(self::MONTH, 'Corrected.', $result->lines));
+        self::assertSame('41000.00', (string) $this->line($this->annId)['salary']);
+        self::assertSame([], $this->line($this->bobId), 'the old lines were replaced');
+        foreach ($this->screenshotFiles as $path) {
+            self::assertFileDoesNotExist($path, 'replacing lines removes their screenshots, as before');
+        }
+        self::assertNotNull(
+            Database::instance()->value('SELECT withdrawn_at FROM payroll_runs WHERE id = :id', ['id' => $this->runId]),
+            'the withdrawal survives the re-import'
+        );
+    }
+
+    public function testNoticesSentAfterAWithdrawalSayTheyAreCorrections(): void
+    {
+        $before = new RecordingMailTransport();
+        $this->send([$this->annId], $before);
+        self::assertSame('Your salary notice for October 2026', $before->sent[0]->subject);
+        self::assertStringNotContainsString('This replaces', $before->sent[0]->textBody);
+
+        $this->withdraw();
+        $mail = new RecordingMailTransport();
+        $token = $this->send([$this->annId, $this->calId], $mail)[$this->annId];
+
+        self::assertCount(2, $mail->sent, 'Cal was not emailed before, but every send after a withdrawal counts');
+        foreach ($mail->sent as $message) {
+            self::assertSame('Updated salary notice — October 2026', $message->subject);
+            self::assertStringContainsString(
+                'This replaces the salary notice we sent earlier for October 2026. '
+                . 'Please review and confirm again. The earlier link no longer works.',
+                $message->textBody
+            );
+        }
+
+        $page = $this->viewNotice($token);
+        self::assertSame(200, $page['status']);
+        self::assertStringContainsString('Updated notice', $page['body']);
+        self::assertStringContainsString(
+            'This replaces the salary notice we sent earlier for October 2026.',
+            $page['body']
+        );
+        self::assertStringContainsString('"correction":true', (string) Database::instance()->value(
+            "SELECT meta FROM audit_log WHERE action = 'payroll_line.sent' AND entity_id = :id
+             ORDER BY id DESC LIMIT 1",
+            ['id' => $this->lineIdFor($this->annId)]
+        ));
+    }
+
+    public function testCorrectionWordingSurvivesAFullReimport(): void
+    {
+        $this->send([$this->annId]);
+        $this->withdraw();
+        $_SESSION = $this->sessionA();
+        $runs = new PayrollRun();
+        $result = PayrollImport::validate([
+            1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'],
+            2 => ['PAY-1', '41000', '0', '26'],
+        ], $runs->branchEmployees());
+        $runs->import(self::MONTH, null, $result->lines);
+        $this->attachFakeScreenshot($this->lineIdFor($this->annId));
+
+        $mail = new RecordingMailTransport();
+        $this->send([$this->annId], $mail);
+        self::assertSame('Updated salary notice — October 2026', $mail->sent[0]->subject);
+    }
+
+    public function testPreviewsShowTheCorrectionAfterAWithdrawal(): void
+    {
+        $this->send([$this->annId]);
+        $this->withdraw();
+        $annLineId = $this->lineIdFor($this->annId);
+
+        $_SESSION = $this->sessionA();
+        $annLine = (new PayrollRunLine())->findInRun($this->runId, $annLineId);
+        self::assertNotNull($annLine);
+        $preview = $this->sender(new RecordingMailTransport())->preview($annLine, self::MONTH);
+        self::assertSame('Updated salary notice — October 2026', $preview->subject);
+        self::assertStringContainsString('This replaces the salary notice we sent earlier', $preview->textBody);
+        $_SESSION = [];
+
+        $email = $this->runAs('previewEmail', $this->sessionA(), $this->runId, $annLineId);
+        self::assertSame(200, $email['status']);
+        self::assertStringContainsString('Updated salary notice — October 2026', $email['body']);
+        $page = $this->runAs('previewNotice', $this->sessionA(), $this->runId, $annLineId);
+        self::assertSame(200, $page['status']);
+        self::assertStringContainsString('Updated notice', $page['body']);
+        self::assertStringContainsString('This replaces the salary notice we sent earlier', $page['body']);
+    }
+
+    public function testWithdrawingThroughTheControllerNeedsAReason(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+
+        foreach (['', '   ', str_repeat('x', 501)] as $reason) {
+            $result = $this->postWithdraw($this->sessionA(), $reason);
+            self::assertSame(302, $result['status'], 'a field error, not a 500');
+            self::assertArrayHasKey('withdraw_reason', $result['session']['_flash']['errors'] ?? []);
+            self::assertSame('sent', $this->line($this->annId)['status']);
+            self::assertNotNull(PayrollRunLine::findByToken($token));
+        }
+
+        $done = $this->postWithdraw($this->sessionA(), 'Imported the September sheet by mistake');
+        self::assertSame(302, $done['status']);
+        self::assertSame('draft', $this->line($this->annId)['status']);
+
+        $page = $this->runAs('show', $this->sessionA(), $this->runId);
+        self::assertSame(200, $page['status']);
+        self::assertStringContainsString('Withdrawn on', $page['body']);
+        self::assertStringContainsString('by Pay pay-admin-a@test.local', $page['body']);
+        self::assertStringContainsString('Imported the September sheet by mistake', $page['body']);
+        self::assertStringContainsString('Correct the figures, then resend.', $page['body']);
+        self::assertStringContainsString('id="run-note"', $page['body'], 'the note is editable again');
+        self::assertStringNotContainsString('id="withdraw"', $page['body'], 'nothing left to withdraw');
+    }
+
+    public function testTheRunPageOffersTheWithdrawalWithItsConsequences(): void
+    {
+        $this->sendAllAndRespond();
+
+        $page = $this->runAs('show', $this->sessionA(), $this->runId);
+        self::assertStringContainsString('id="withdraw"', $page['body']);
+        self::assertStringContainsString(
+            'Every link already emailed for October 2026 stops working, including',
+            $page['body']
+        );
+        self::assertStringContainsString('1 confirmed response', $page['body']);
+        self::assertStringContainsString('name="withdraw_reason"', $page['body']);
+        self::assertStringContainsString('/salary-notices/' . $this->runId . '/withdraw', $page['body']);
+    }
+
+    public function testAnotherBranchGets404AndNonAdminsGet403OnWithdraw(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        $partnerId = $this->insertUser('pay-partner@test.local', 'partner', $this->branchAId);
+        $before = $this->stateSnapshot();
+
+        self::assertSame(404, $this->postWithdraw($this->sessionB(), 'Not mine')['status']);
+        self::assertSame(404, $this->postWithdraw($this->sessionA(), 'No such run', $this->runId + 100000)['status']);
+
+        foreach ([$this->annId, $partnerId] as $userId) {
+            $result = ControllerActionRunner::run(
+                RouteDispatch::class,
+                'dispatch',
+                [
+                    '_auth_user_id' => $userId,
+                    '_active_branch_id' => $this->branchAId,
+                    '_csrf_token' => 'pay-csrf',
+                    '_csrf_issued_at' => time(),
+                ],
+                ['_csrf' => 'pay-csrf', 'withdraw_reason' => 'Trying'],
+                [],
+                'POST',
+                ['uri' => '/salary-notices/' . $this->runId . '/withdraw']
+            );
+            self::assertSame(403, $result['status'], 'user ' . $userId);
+        }
+
+        self::assertSame($before, $this->stateSnapshot());
+        self::assertNotNull(PayrollRunLine::findByToken($token));
+    }
+
+    /**
+     * The withdrawal holds the run row and every line row locked until it
+     * commits, so a concurrent withdrawal, re-import, send or answer waits
+     * for it and then sees the drafts it left.
+     */
+    public function testAWithdrawalLocksTheRunAndItsLinesUntilItCommits(): void
+    {
+        $token = $this->send([$this->annId])[$this->annId];
+        $other = $this->secondConnection();
+        $lockQueries = [
+            'SELECT id FROM payroll_runs WHERE id = ? FOR UPDATE NOWAIT' => $this->runId,
+            'SELECT id FROM payroll_run_lines WHERE id = ? FOR UPDATE NOWAIT' => $this->lineIdFor($this->annId),
+        ];
+
+        Database::instance()->transaction(function () use ($other, $lockQueries): void {
+            self::assertNotNull($this->withdraw());
+            foreach ($lockQueries as $sql => $id) {
+                try {
+                    $other->prepare($sql)->execute([$id]);
+                    self::fail('the row should be locked: ' . $sql);
+                } catch (PDOException) {
+                    // Locked until the withdrawal commits, as intended.
+                }
+            }
+        });
+
+        foreach ($lockQueries as $sql => $id) {
+            self::assertTrue($other->prepare($sql)->execute([$id]), 'free once committed');
+        }
+        self::assertFalse(PayrollRunLine::respond($token, 'confirmed', 'Pay Ann', null, '1.1.1.1', 'x'));
+        self::assertNull($this->withdraw(), 'a withdrawal that waited finds nothing left to withdraw');
+    }
+
+    private function secondConnection(): PDO
+    {
+        /** @var array{host:string,port:int,name:string,user:string,pass:string} $c */
+        $c = Config::get('database', []);
+
+        return new PDO(
+            sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $c['host'], $c['port'], $c['name']),
+            $c['user'],
+            $c['pass'],
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+        );
     }
 
     public function testDeletingTheBranchRemovesItsRuns(): void

@@ -160,6 +160,8 @@ $router->get('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@
 $router->post('/salary-notices/{id}/lines', 'PayrollController@addLines', ['can:administer']);
 $router->get('/salary-notices/{id}/lines/{line}/preview-email', 'PayrollController@previewEmail', ['can:administer']);
 $router->get('/salary-notices/{id}/lines/{line}/preview', 'PayrollController@previewNotice', ['can:administer']);
+// PAY-3: withdraw every notice of the month (all links die, lines back to draft) to correct and resend.
+$router->post('/salary-notices/{id}/withdraw', 'PayrollController@withdraw', ['can:administer']);
 
 $router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
 $router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);

@@ -9,7 +9,8 @@ namespace App\Domain;
  *
  * draft -> sent -> confirmed | query. A response is final for that send:
  * only a query can be sent again (which clears it, after the audit log has
- * kept a copy). A confirmed line is closed.
+ * kept a copy). A confirmed line is closed, unless the admin withdraws the
+ * whole month (PAY-3), which returns every line to draft.
  */
 enum PayrollLineStatus: string
 {

@@ -136,6 +136,7 @@ final class PayrollNoticeSender
                     ]
                     : ['status' => $status->value],
                 ['status' => PayrollLineStatus::Sent->value, 'link_expires_at' => $expiresAt]
+                    + (self::isCorrection($row) ? ['correction' => true] : [])
             );
             $sent[] = $name;
         }
@@ -189,10 +190,12 @@ final class PayrollNoticeSender
     public function compose(array $row, string $month, string $link, string $expiresAt): MailMessage
     {
         $expiresOn = date('j F Y', (int) strtotime($expiresAt));
+        $correction = self::isCorrection($row);
 
         $lines = [
             'Hello ' . MailMessage::headerText((string) $row['name']) . ',',
             '',
+            ...($correction ? [self::correctionNotice($month), ''] : []),
             'Your salary notice for ' . $month . ' is ready.',
             '',
             'Please open the link below to see your salary, attendance and the note for the month,',
@@ -210,9 +213,29 @@ final class PayrollNoticeSender
             $this->fromAddress,
             $this->fromName,
             [(string) $row['email']],
-            'Your salary notice for ' . $month,
+            ($correction ? 'Updated salary notice — ' : 'Your salary notice for ') . $month,
             implode("\n", $lines)
         );
+    }
+
+    /**
+     * Whether this line's notice replaces one withdrawn earlier (PAY-3):
+     * once a run is withdrawn, every notice sent from it is a correction.
+     * Kept on the run, not the line, so a re-import that replaces the
+     * lines does not lose it.
+     *
+     * @param array<string,mixed> $row a line with its run's withdrawn_at as run_withdrawn_at
+     */
+    public static function isCorrection(array $row): bool
+    {
+        return ($row['run_withdrawn_at'] ?? null) !== null;
+    }
+
+    /** The sentence telling the employee this notice replaces an earlier one; the email and the page share it. */
+    public static function correctionNotice(string $month): string
+    {
+        return 'This replaces the salary notice we sent earlier for ' . $month . '. '
+            . 'Please review and confirm again. The earlier link no longer works.';
     }
 
     public function linkFor(string $token): string

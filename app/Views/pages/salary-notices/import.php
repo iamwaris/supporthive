@@ -60,8 +60,10 @@ $noteField = $field('note');
                 <label class="flex items-start gap-2 text-sm text-ink">
                     <input type="checkbox" name="replace" value="1" class="mt-0.5 h-4 w-4">
                     <span>
-                        <strong>Replace its lines.</strong> The run for <?= e($replaceMonth) ?> has not been emailed yet;
-                        its current lines and attached screenshots are deleted and replaced by this file.
+                        <strong>Replace its lines.</strong> No notice for <?= e($replaceMonth) ?> is out with employees
+                        (none sent yet, or the month was withdrawn). Its current lines <strong>and their attached
+                        screenshots are deleted</strong> and replaced by this file, so you will attach every
+                        screenshot again before sending.
                     </span>
                 </label>
             </div>
@@ -87,7 +89,7 @@ $noteField = $field('note');
             <textarea id="import-note" name="note" rows="4" maxlength="5000"
                       class="<?= e($noteField['class']) ?>"
                       <?= $noteField['error'] !== null ? 'aria-invalid="true" aria-describedby="import-note-error"' : '' ?>><?= e($note) ?></textarea>
-            <p class="help">Shown to every employee on their notice. You can change it until the first notice is emailed.</p>
+            <p class="help">Shown to every employee on their notice. You can change it until a notice is sent.</p>
             <?php if ($noteField['error'] !== null) : ?>
                 <p id="import-note-error" class="error"><?= e($noteField['error']) ?></p>
             <?php endif; ?>

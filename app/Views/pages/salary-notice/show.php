@@ -24,6 +24,7 @@
 declare(strict_types=1);
 
 use App\Domain\PayrollLineStatus;
+use App\Services\Payroll\PayrollNoticeSender;
 
 $errors = $errors ?? [];
 $preview = $preview ?? null;
@@ -50,6 +51,13 @@ $queryError = $errors['query_text'][0] ?? null;
         <?= e((string) $line['name']) ?> · Employee ID <span class="money"><?= e((string) $line['employee_code']) ?></span>
     </p>
 </header>
+
+<?php if (PayrollNoticeSender::isCorrection($line)) : ?>
+    <aside class="mb-5 rounded-xl border border-brand-400 bg-brand-50 px-4 py-3 text-sm text-ink" aria-labelledby="updated-heading">
+        <p id="updated-heading" class="font-semibold">Updated notice</p>
+        <p class="mt-1 text-slate-700"><?= e(PayrollNoticeSender::correctionNotice($monthLabel)) ?></p>
+    </aside>
+<?php endif; ?>
 
 <?php if (!empty($flash['success'])) : ?>
     <div role="status" aria-live="polite" class="mb-5 rounded-xl border border-ok-line bg-ok-bg px-4 py-3 text-sm text-ok-text">
