@@ -567,9 +567,15 @@ final class RememberMeTest extends TestCase
         self::assertSame(0, $this->tokenCount($employee), 'employee password reset');
 
         RememberMe::issue($employee, 'Phone');
-        ControllerActionRunner::run(EmployeeController::class, 'toggleStatus', $session, [], [], 'POST', [
-            'id' => (string) $employee,
-        ]);
+        ControllerActionRunner::run(
+            EmployeeController::class,
+            'toggleStatus',
+            $session,
+            ['to' => 'suspended'],
+            [],
+            'POST',
+            ['id' => (string) $employee]
+        );
         self::assertSame(0, $this->tokenCount($employee), 'employee deactivation');
     }
 

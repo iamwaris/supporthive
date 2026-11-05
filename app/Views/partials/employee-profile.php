@@ -36,7 +36,7 @@ $rows = [
     <div>
         <dt class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Status</dt>
         <dd class="mt-1">
-            <span class="<?= $isActive ? 'badge-ok' : 'badge-bad' ?>"><?= e($isActive ? 'Active' : 'Deactivated') ?></span>
+            <span class="<?= $isActive ? 'badge-ok' : 'badge-mute' ?>"><?= e($isActive ? 'Active' : 'Disabled') ?></span>
         </dd>
     </div>
 </dl>

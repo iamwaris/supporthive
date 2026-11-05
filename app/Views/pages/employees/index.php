@@ -6,7 +6,7 @@
  * @var list<array<string,mixed>>          $employees
  * @var array<int,string>                  $salaries  user id => salary in effect today (admin-only data)
  * @var array<int,string>                  $bankMasks user id => masked account number or IBAN (admin-only data)
- * @var array{q:?string,status:?string}    $filters
+ * @var array{q:?string,status:string}     $filters  status: active (default) | suspended | all
  * @var int                                $total
  * @var int                                $page
  * @var int                                $pages
@@ -18,18 +18,20 @@ declare(strict_types=1);
 use App\Services\Settings;
 
 $symbol = Settings::string('currency_symbol', 'Rs');
-$statusLabels = ['active' => 'Active', 'suspended' => 'Deactivated'];
+$statusLabels = ['active' => 'Active', 'suspended' => 'Disabled', 'all' => 'All'];
 
 $pageUrl = static function (int $target) use ($filters): string {
+    // Active is the default, so it stays out of the URL.
+    $status = $filters['status'] !== 'active' ? $filters['status'] : null;
     $query = array_filter(
-        ['q' => $filters['q'], 'status' => $filters['status'], 'page' => $target > 1 ? $target : null],
+        ['q' => $filters['q'], 'status' => $status, 'page' => $target > 1 ? $target : null],
         static fn (mixed $v): bool => $v !== null && $v !== ''
     );
 
     return url('/employees') . ($query === [] ? '' : '?' . http_build_query($query));
 };
 
-$filtered = $filters['q'] !== null || $filters['status'] !== null;
+$filtered = $filters['q'] !== null || $filters['status'] !== 'active';
 ?>
 
 <div class="flex flex-col gap-4">
@@ -44,7 +46,6 @@ $filtered = $filters['q'] !== null || $filters['status'] !== null;
             <div class="sm:w-44">
                 <label for="emp-status" class="label">Status</label>
                 <select id="emp-status" name="status" class="input">
-                    <option value="">Any status</option>
                     <?php foreach ($statusLabels as $value => $label) : ?>
                         <option value="<?= e($value) ?>" <?= $filters['status'] === $value ? 'selected' : '' ?>><?= e($label) ?></option>
                     <?php endforeach; ?>
@@ -118,8 +119,8 @@ $filtered = $filters['q'] !== null || $filters['status'] !== null;
                             </td>
                             <td class="td money hidden whitespace-nowrap text-slate-600 xl:table-cell"><?= e($bankMasks[$id] ?? '—') ?></td>
                             <td class="td">
-                                <span class="<?= $isActive ? 'badge-ok' : 'badge-bad' ?>">
-                                    <?= e($isActive ? 'Active' : 'Deactivated') ?>
+                                <span class="<?= $isActive ? 'badge-ok' : 'badge-mute' ?>">
+                                    <?= e($isActive ? 'Active' : 'Disabled') ?>
                                 </span>
                             </td>
                             <td class="td text-right whitespace-nowrap">

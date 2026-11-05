@@ -81,17 +81,35 @@ $statusBadges = ['scheduled' => 'badge-warn', 'current' => 'badge-ok', 'past' =>
             <h2 id="account-heading" class="font-display text-sm font-semibold text-ink">Account</h2>
 
             <div>
+                <?php if (!$isActive) : ?>
+                    <p class="mb-2"><span class="badge-mute">Disabled</span></p>
+                <?php endif; ?>
                 <p class="text-xs text-slate-600">
                     <?= e($isActive
-                        ? 'Deactivating signs the employee out immediately and blocks sign-in until reactivated. Nothing is deleted.'
-                        : 'This employee cannot sign in. Reactivate to restore access.') ?>
+                        ? 'Disabling signs the employee out on their next click, ends "remember me" on every device and blocks sign-in until enabled. Nothing is deleted.'
+                        : 'This employee cannot sign in. A salary notice link already emailed to them still works. Enable to restore access.') ?>
                 </p>
-                <form method="post" action="<?= e(url('/employees/' . $id . '/toggle')) ?>" class="mt-2">
-                    <?= csrf_field() ?>
-                    <button type="submit" class="<?= $isActive ? 'btn-secondary text-bad-text' : 'btn-dark' ?>">
-                        <?= e($isActive ? 'Deactivate' : 'Reactivate') ?>
-                    </button>
-                </form>
+                <?php if ($isActive) : ?>
+                    <details class="mt-2">
+                        <summary class="btn-secondary cursor-pointer list-none text-bad-text [&::-webkit-details-marker]:hidden">Disable</summary>
+                        <div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <p class="text-xs text-slate-700">
+                                <?= e((string) $employee['name']) ?> will be signed out and unable to sign in. Their records stay.
+                            </p>
+                            <form method="post" action="<?= e(url('/employees/' . $id . '/toggle')) ?>" class="mt-2">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="to" value="suspended">
+                                <button type="submit" class="btn-dark">Yes, disable</button>
+                            </form>
+                        </div>
+                    </details>
+                <?php else : ?>
+                    <form method="post" action="<?= e(url('/employees/' . $id . '/toggle')) ?>" class="mt-2">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="to" value="active">
+                        <button type="submit" class="btn-dark">Enable</button>
+                    </form>
+                <?php endif; ?>
             </div>
 
             <div class="border-t border-slate-200 pt-5">

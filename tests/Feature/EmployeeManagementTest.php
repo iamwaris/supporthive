@@ -218,7 +218,7 @@ final class EmployeeManagementTest extends TestCase
             self::assertSame(404, $this->act('show', [], $id), "show {$id}");
             self::assertSame(404, $this->act('edit', [], $id), "edit {$id}");
             self::assertSame(404, $this->act('update', $this->validPost(['name' => 'tampered']), $id), "update {$id}");
-            self::assertSame(404, $this->act('toggleStatus', ['x' => '1'], $id), "toggle {$id}");
+            self::assertSame(404, $this->act('toggleStatus', ['to' => 'suspended'], $id), "toggle {$id}");
             self::assertSame(404, $this->act('resetPassword', ['x' => '1'], $id), "reset {$id}");
         }
 
@@ -260,9 +260,16 @@ final class EmployeeManagementTest extends TestCase
             ['id' => $id]
         );
 
-        self::assertSame(302, $this->act('toggleStatus', ['x' => '1'], $id));
+        self::assertSame(302, $this->act('toggleStatus', ['to' => 'suspended'], $id));
         self::assertSame('suspended', $status());
+        // Asking again for the status it already has changes nothing (double-submit, stale tab).
+        self::assertSame(302, $this->act('toggleStatus', ['to' => 'suspended'], $id));
+        self::assertSame('suspended', $status());
+        self::assertSame(302, $this->act('toggleStatus', ['to' => 'active'], $id));
+        self::assertSame('active', $status());
+        // No target, or a made-up one, changes nothing.
         self::assertSame(302, $this->act('toggleStatus', ['x' => '1'], $id));
+        self::assertSame(302, $this->act('toggleStatus', ['to' => 'pending'], $id));
         self::assertSame('active', $status());
 
         self::assertSame(302, $this->act('resetPassword', ['x' => '1'], $id));

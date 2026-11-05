@@ -43,14 +43,16 @@ final class EmployeeController extends Controller
     {
         $filters = Validator::make($this->queryStrings(['q', 'status', 'page']), [
             'q' => 'nullable|max:100',
-            'status' => 'nullable|in:active,suspended',
+            'status' => 'nullable|in:active,suspended,all',
             'page' => 'nullable|int|between:1,100000',
         ])->validated();
 
         // A field that failed validation is simply absent from validated(),
         // so a tampered filter falls back to its default instead of erroring.
+        // The list shows active employees unless asked for disabled or all.
         $term = isset($filters['q']) ? (string) $filters['q'] : null;
-        $status = isset($filters['status']) ? (string) $filters['status'] : null;
+        $statusFilter = isset($filters['status']) ? (string) $filters['status'] : 'active';
+        $status = $statusFilter === 'all' ? null : $statusFilter;
         $page = isset($filters['page']) ? (int) $filters['page'] : 1;
 
         $employees = new EmployeeProfile();
@@ -70,7 +72,7 @@ final class EmployeeController extends Controller
             ),
             // Masked (****1234) — a list never shows a whole account number.
             'bankMasks' => self::bankMasks($rows),
-            'filters' => ['q' => $term, 'status' => $status],
+            'filters' => ['q' => $term, 'status' => $statusFilter],
             'total' => $total,
             'page' => $page,
             'pages' => $pages,
@@ -207,9 +209,16 @@ final class EmployeeController extends Controller
     }
 
     /**
-     * Deactivates or reactivates the login. A deactivated employee cannot
-     * sign in, and a session they already have open ends on its next request
-     * (Auth::requireLogin() re-checks status every time).
+     * Disables or enables the login (EMP-DISABLE). Nothing is deleted:
+     * salaries, documents, transactions and salary notices all stay. A
+     * disabled employee cannot sign in (Auth::attempt() and the remember-me
+     * path both refuse a non-active account), every remember-me token they
+     * hold is revoked, and a session they already have open ends on its next
+     * request (Auth::requireLogin() re-checks status every time).
+     *
+     * The form posts the status it wants (`to`), so a double-submit or a
+     * stale tab cannot flip the account back: asking for the status it
+     * already has changes nothing.
      *
      * @param array<string,string> $params
      */
@@ -217,27 +226,38 @@ final class EmployeeController extends Controller
     {
         $employee = $this->findOr404($params);
         $id = (int) $employee['id'];
-        $wasActive = (string) $employee['status'] === 'active';
-        $newStatus = $wasActive ? 'suspended' : 'active';
+        $back = '/employees/' . $id;
+        $clean = $this->validate(['to' => 'required|in:active,suspended'], $back);
+        $newStatus = (string) $clean['to'];
+        $disabling = $newStatus === 'suspended';
+
+        if ((string) $employee['status'] === $newStatus) {
+            Session::flash(
+                'success',
+                (string) $employee['name'] . ($disabling ? ' is already disabled.' : ' is already enabled.')
+            );
+            Http::redirect($back);
+        }
 
         (new User())->updateById($id, ['status' => $newStatus]);
-        if ($wasActive) {
+        if ($disabling) {
             RememberMe::revokeAllForUser($id);
         }
 
-        Logger::security($wasActive ? 'Employee deactivated' : 'Employee reactivated', [
+        Logger::security($disabling ? 'Employee disabled' : 'Employee enabled', [
             'user_id' => $id,
             'by' => Auth::id(),
         ]);
+        // Action names kept from before the rename, so the audit history reads as one series.
         Audit::record(
-            $wasActive ? 'employee.deactivated' : 'employee.reactivated',
+            $disabling ? 'employee.deactivated' : 'employee.reactivated',
             'users',
             $id,
             ['status' => $employee['status']],
             ['status' => $newStatus]
         );
-        Session::flash('success', (string) $employee['name'] . ($wasActive ? ' deactivated.' : ' reactivated.'));
-        Http::redirect('/employees/' . $id);
+        Session::flash('success', (string) $employee['name'] . ($disabling ? ' disabled.' : ' enabled.'));
+        Http::redirect($back);
     }
 
     /** @param array<string,string> $params */
