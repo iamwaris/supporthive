@@ -42,9 +42,13 @@ final class PayrollImport
      * @param array<int,list<string>> $rows sheet row number => cell values
      * @param list<array{user_id:int,name:string,employee_code:?string,active:bool}> $employees every employee
      *        of the branch, active or disabled
+     * @param list<int> $alreadyInRun user ids that already have a line in the run being added to;
+     *        empty for a whole-month import
      */
-    public static function validate(array $rows, array $employees): PayrollImportResult
+    public static function validate(array $rows, array $employees, array $alreadyInRun = []): PayrollImportResult
     {
+        $inRun = array_fill_keys($alreadyInRun, true);
+
         $byCode = [];
         foreach ($employees as $employee) {
             if ($employee['employee_code'] !== null && $employee['employee_code'] !== '') {
@@ -93,6 +97,9 @@ final class PayrollImport
                     $rowErrors[] = 'No employee with this Employee ID in this branch.';
                 } elseif (!$employee['active']) {
                     $rowErrors[] = 'Employee ' . $code . ' is disabled.';
+                    $employee = null;
+                } elseif (isset($inRun[$employee['user_id']])) {
+                    $rowErrors[] = 'Employee ' . $code . ' is already in this month — edit their row instead.';
                     $employee = null;
                 }
             }

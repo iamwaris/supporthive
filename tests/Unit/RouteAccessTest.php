@@ -259,7 +259,7 @@ final class RouteAccessTest extends TestCase
             self::assertNotContains($key, $this->reachableBy(Access::PARTNER));
         }
 
-        self::assertSame(10, $found);
+        self::assertSame(13, $found);
     }
 
     public function testRegisterIsReadableWithViewAndChangeableOnlyWithWrite(): void

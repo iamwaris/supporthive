@@ -50,6 +50,8 @@ final class SalaryNoticeController extends Controller
             'status' => PayrollLineStatus::from((string) $line['status']),
             'monthLabel' => PayrollNoticeSender::monthLabel((string) $line['period_month']),
             'base' => '/salary-notice/' . $token,
+            'screenshotUrl' => '/salary-notice/' . $token . '/screenshot',
+            'preview' => null,
         ], 'layouts/public');
 
         // Controller::validate() keeps a failed answer in _old for this one

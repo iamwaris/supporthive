@@ -155,6 +155,11 @@ $router->post('/salary-notices/{id}/lines/{line}/send', 'PayrollController@sendL
 $router->post('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@uploadScreenshot', ['can:administer']);
 // Streamed from storage/documents, never a public path.
 $router->get('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@screenshot', ['can:administer']);
+// PAY-2: add employees missing from the first file (new draft lines only),
+// and read-only previews of the email and the notice page — no token, no send.
+$router->post('/salary-notices/{id}/lines', 'PayrollController@addLines', ['can:administer']);
+$router->get('/salary-notices/{id}/lines/{line}/preview-email', 'PayrollController@previewEmail', ['can:administer']);
+$router->get('/salary-notices/{id}/lines/{line}/preview', 'PayrollController@previewNotice', ['can:administer']);
 
 $router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
 $router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);

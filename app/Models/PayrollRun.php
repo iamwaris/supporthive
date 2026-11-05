@@ -142,18 +142,7 @@ final class PayrollRun extends Model
                 $this->updateById($runId, ['note' => $note]);
             }
 
-            foreach ($lines as $line) {
-                $db->insert('payroll_run_lines', [
-                    'branch_id' => $branchId,
-                    'run_id' => $runId,
-                    'user_id' => $line['user_id'],
-                    'employee_code' => $line['employee_code'],
-                    'salary' => $line['salary'],
-                    'absent_days' => $line['absent_days'],
-                    'working_days' => $line['working_days'],
-                    'status' => 'draft',
-                ]);
-            }
+            self::insertDraftLines($db, $branchId, $runId, $lines);
 
             Audit::record(
                 $existing === null ? 'payroll_run.imported' : 'payroll_run.reimported',
@@ -171,6 +160,102 @@ final class PayrollRun extends Model
 
             return $runId;
         });
+    }
+
+    /**
+     * Add employees who were missing from the month's first file, as draft
+     * lines, whether or not the run's other lines were already emailed.
+     * Existing lines are never touched. The run row is locked so two uploads
+     * for the same run are serialised; an employee already in the run (a
+     * concurrent upload got there first) aborts the whole append, as does
+     * the UNIQUE(run_id, user_id) key as a last line of defence.
+     *
+     * @param list<array{
+     *     user_id:int,name:string,employee_code:string,salary:string,absent_days:string,working_days:string
+     * }> $lines
+     * @throws RuntimeException when the run is not this branch's or an employee already has a line in it
+     */
+    public function appendLines(int $runId, array $lines): void
+    {
+        $branchId = $this->requireBranchId();
+
+        Database::instance()->transaction(static function (Database $db) use ($branchId, $runId, $lines): void {
+            $run = $db->first(
+                'SELECT id FROM payroll_runs WHERE id = :id AND branch_id = :branch FOR UPDATE',
+                ['id' => $runId, 'branch' => $branchId]
+            );
+            if ($run === null) {
+                throw new RuntimeException('Payroll run not found in this branch.');
+            }
+
+            $present = array_map(
+                static fn (array $row): int => (int) $row['user_id'],
+                $db->all(
+                    'SELECT user_id FROM payroll_run_lines WHERE run_id = :run AND branch_id = :branch',
+                    ['run' => $runId, 'branch' => $branchId]
+                )
+            );
+            foreach ($lines as $line) {
+                if (in_array($line['user_id'], $present, true)) {
+                    throw new RuntimeException('An employee being added already has a line in this run.');
+                }
+            }
+
+            self::insertDraftLines($db, $branchId, $runId, $lines);
+
+            Audit::record('payroll_run.lines_added', 'payroll_runs', $runId, null, [
+                'lines' => count($lines),
+                'employee_codes' => array_map(static fn (array $line): string => $line['employee_code'], $lines),
+            ]);
+        });
+    }
+
+    /**
+     * Active employees of this branch with no line in the run: they get no
+     * notice this month unless they are added.
+     *
+     * @return list<array{name:string,employee_code:?string}>
+     */
+    public function activeEmployeesWithoutLine(int $runId): array
+    {
+        $rows = $this->db()->all(
+            "SELECT u.name, p.employee_code
+             FROM employee_profiles p
+             JOIN users u ON u.id = p.user_id AND u.role = 'employee' AND u.status = 'active'
+             WHERE p.branch_id = :branch
+               AND NOT EXISTS (
+                   SELECT 1 FROM payroll_run_lines l
+                   WHERE l.run_id = :run AND l.branch_id = :line_branch AND l.user_id = u.id
+               )
+             ORDER BY u.name",
+            ['branch' => $this->requireBranchId(), 'run' => $runId, 'line_branch' => $this->requireBranchId()]
+        );
+
+        return array_map(static fn (array $row): array => [
+            'name' => (string) $row['name'],
+            'employee_code' => $row['employee_code'] === null ? null : (string) $row['employee_code'],
+        ], $rows);
+    }
+
+    /**
+     * @param list<array{
+     *     user_id:int,name:string,employee_code:string,salary:string,absent_days:string,working_days:string
+     * }> $lines
+     */
+    private static function insertDraftLines(Database $db, int $branchId, int $runId, array $lines): void
+    {
+        foreach ($lines as $line) {
+            $db->insert('payroll_run_lines', [
+                'branch_id' => $branchId,
+                'run_id' => $runId,
+                'user_id' => $line['user_id'],
+                'employee_code' => $line['employee_code'],
+                'salary' => $line['salary'],
+                'absent_days' => $line['absent_days'],
+                'working_days' => $line['working_days'],
+                'status' => 'draft',
+            ]);
+        }
     }
 
     /** @return bool false once any line has been emailed, when the note is no longer editable */

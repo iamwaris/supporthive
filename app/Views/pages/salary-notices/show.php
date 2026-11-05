@@ -9,7 +9,8 @@
  * @var array<string,mixed>                               $run
  * @var list<array<string,mixed>>                         $lines        PayrollRunLine::forRun()
  * @var bool                                              $noteEditable no line emailed yet
- * @var list<array{name:string,employee_code:?string}>    $missing      active employees not in the imported file
+ * @var list<array{name:string,employee_code:?string}>    $missing      active employees with no line in this run
+ * @var list<array{row:int,employee_code:string,message:string}> $sheetErrors problems in a rejected "add employees" file
  * @var string                                            $symbol       currency symbol
  * @var float                                             $maxUploadMb
  * @var int                                               $editLineId   the line whose figure form just failed, else 0
@@ -48,12 +49,23 @@ $badge = [
     <?php if ($missing !== []) : ?>
         <section class="card border-brand-400 p-5" aria-labelledby="missing-heading">
             <h2 id="missing-heading" class="font-display text-sm font-semibold text-brand-900">
-                Warning: <?= e(count($missing) === 1 ? '1 active employee is' : count($missing) . ' active employees are') ?> not in the file
+                Warning: <?= e(count($missing) === 1 ? '1 active employee is' : count($missing) . ' active employees are') ?> not in this month
             </h2>
-            <p class="mt-1 text-xs text-slate-600">They get no notice this month. If that is a mistake, add them to the sheet and import it again.</p>
+            <p class="mt-1 text-xs text-slate-600">
+                They get no notice this month. If that is a mistake, upload a file with just their rows under
+                <a href="#add-employees" class="font-medium text-brand-900 underline">Add employees to this month</a>.
+            </p>
             <ul class="mt-2 list-disc pl-5 text-sm text-slate-700">
                 <?php foreach ($missing as $person) : ?>
-                    <li><?= e($person['name']) ?> — <?= e($person['employee_code'] ?? 'no Employee ID set') ?></li>
+                    <li>
+                        <?= e($person['name']) ?> —
+                        <?php if ($person['employee_code'] !== null && $person['employee_code'] !== '') : ?>
+                            <span class="money"><?= e($person['employee_code']) ?></span>
+                            · <a href="#add-employees" class="text-brand-900 underline">add with a file</a>
+                        <?php else : ?>
+                            no Employee ID set — set it on their profile first
+                        <?php endif; ?>
+                    </li>
                 <?php endforeach; ?>
             </ul>
         </section>
@@ -92,6 +104,10 @@ $badge = [
     <section class="card overflow-hidden" aria-labelledby="lines-heading">
         <div class="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
             <h2 id="lines-heading" class="flex-1 font-display text-sm font-semibold text-ink">Employees</h2>
+            <?php if ($lines !== []) : ?>
+                <a href="<?= e(url($base . '/lines/' . (int) $lines[0]['id'] . '/preview-email')) ?>" class="btn-secondary"
+                   aria-label="<?= e('Preview email, as ' . (string) $lines[0]['name'] . ' would receive it') ?>">Preview email</a>
+            <?php endif; ?>
             <?php if ($counts['draft'] > 0) : ?>
                 <details class="relative">
                     <summary class="btn-primary cursor-pointer list-none [&::-webkit-details-marker]:hidden">Send to all not yet sent</summary>
@@ -128,7 +144,9 @@ $badge = [
                     <tbody>
                         <tr>
                             <td class="td" colspan="6">
-                                <p class="py-10 text-center text-sm text-slate-600">This run has no lines. Import the month's sheet again.</p>
+                                <p class="py-10 text-center text-sm text-slate-600">
+                                    This run has no lines. Add employees with a file <a href="#add-employees" class="text-brand-900 underline">below</a>.
+                                </p>
                             </td>
                         </tr>
                     </tbody>
@@ -195,6 +213,10 @@ $badge = [
                                     <?php if ($hasScreenshot) : ?>
                                         <a href="<?= e($screenshotUrl) ?>" target="_blank" rel="noopener" class="btn-secondary lg:hidden">View screenshot</a>
                                     <?php endif; ?>
+                                    <a href="<?= e(url($lineBase . '/preview-email')) ?>" class="btn-secondary"
+                                       aria-label="<?= e('Preview email for ' . (string) $line['name']) ?>">Preview email</a>
+                                    <a href="<?= e(url($lineBase . '/preview')) ?>" class="btn-secondary"
+                                       aria-label="<?= e('Preview notice page for ' . (string) $line['name']) ?>">Preview notice page</a>
 
                                     <?php if ($cancelsLink) : ?>
                                         <details>
@@ -297,5 +319,40 @@ $badge = [
                 <?php endforeach; ?>
             </table>
         </div>
+    </section>
+
+    <?php if ($sheetErrors !== []) : ?>
+        <?php
+        $sheetErrorsAction = 'added';
+        require APP_PATH . '/Views/partials/payroll-sheet-errors.php';
+        ?>
+    <?php endif; ?>
+
+    <section id="add-employees" class="card p-5 sm:p-6" aria-labelledby="add-employees-heading">
+        <h2 id="add-employees-heading" class="font-display text-sm font-semibold text-ink">Add employees to this month</h2>
+        <p class="mt-1 text-xs text-slate-600">
+            For anyone missing from the first file. Their rows are added as "Not sent"; nobody is emailed and no
+            existing row changes, even if other notices were already sent. Everyone in the file must be new to
+            this month — to correct someone already listed, edit their row instead.
+        </p>
+        <form method="post" action="<?= e(url($base . '/lines')) ?>" enctype="multipart/form-data" class="mt-4 flex flex-col gap-3" novalidate>
+            <?= csrf_field() ?>
+            <div>
+                <label for="add-sheet" class="label">Sheet with the employees to add (.xlsx or .csv)</label>
+                <input id="add-sheet" name="sheet" type="file" required
+                       accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                       class="<?= isset($errors['sheet'][0]) ? 'input-error' : 'input' ?>"
+                       aria-describedby="add-sheet-help<?= isset($errors['sheet'][0]) ? ' add-sheet-error' : '' ?>"
+                       <?= isset($errors['sheet'][0]) ? 'aria-invalid="true"' : '' ?>>
+                <p id="add-sheet-help" class="help">
+                    Same format as the import: first row <span class="money">EmpID, Salary, Absent, WorkingDays</span>,
+                    then one row per employee. Nothing is added unless every row is valid.
+                </p>
+                <?php if (isset($errors['sheet'][0])) : ?>
+                    <p id="add-sheet-error" class="error"><?= e($errors['sheet'][0]) ?></p>
+                <?php endif; ?>
+            </div>
+            <div><button type="submit" class="btn-primary">Upload and add</button></div>
+        </form>
     </section>
 </div>

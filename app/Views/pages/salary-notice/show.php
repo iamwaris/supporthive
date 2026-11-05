@@ -7,10 +7,16 @@
  * Confirm (typing their full name) or a query — as plain forms; afterwards
  * it is read-only. Says nothing about the organisation (public layout).
  *
- * @var array<string,mixed>        $line        PayrollRunLine::findByToken()
+ * The admin's "Preview notice page" (PAY-2) renders this same view with
+ * $preview set: a banner says whose page it is, and the answer forms are
+ * replaced by a note, so the preview holds no form that posts anywhere.
+ *
+ * @var array<string,mixed>        $line          PayrollRunLine::findByToken(), or a line plus its run's note
  * @var PayrollLineStatus          $status
- * @var string                     $monthLabel  "October 2026"
- * @var string                     $base        /salary-notice/{token}
+ * @var string                     $monthLabel    "October 2026"
+ * @var string                     $base          /salary-notice/{token}; unused in a preview
+ * @var string|null                $screenshotUrl null when no screenshot is attached (preview only)
+ * @var array{name:string,back:string,email:string}|null $preview
  * @var array<string,string|null>  $flash
  * @var array<string,list<string>> $errors
  */
@@ -20,12 +26,23 @@ declare(strict_types=1);
 use App\Domain\PayrollLineStatus;
 
 $errors = $errors ?? [];
+$preview = $preview ?? null;
 $when = static fn (mixed $value): string => date('j F Y, H:i', (int) strtotime((string) $value));
 $days = static fn (mixed $value): string => rtrim(rtrim(number_format((float) $value, 1), '0'), '.');
 $note = trim((string) ($line['note'] ?? ''));
 $nameError = $errors['signed_name'][0] ?? null;
 $queryError = $errors['query_text'][0] ?? null;
 ?>
+<?php if ($preview !== null) : ?>
+    <aside class="mb-6 rounded-xl border-2 border-dashed border-brand-400 bg-brand-50 px-4 py-3 text-sm text-ink" aria-labelledby="preview-heading">
+        <p id="preview-heading" class="font-semibold">Preview — this is what <?= e($preview['name']) ?> will see</p>
+        <p class="mt-1 text-xs text-slate-700">Nothing here is sent or saved, and the answer buttons are switched off.</p>
+        <p class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            <a href="<?= e(url($preview['back'])) ?>" class="font-medium text-brand-900 underline">Back to the month</a>
+            <a href="<?= e(url($preview['email'])) ?>" class="font-medium text-brand-900 underline">Preview the email</a>
+        </p>
+    </aside>
+<?php endif; ?>
 <header class="mb-6">
     <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">Salary notice</p>
     <h1 class="mt-1 font-display text-2xl font-semibold tracking-tight text-ink"><?= e($monthLabel) ?></h1>
@@ -67,13 +84,28 @@ $queryError = $errors['query_text'][0] ?? null;
 
 <section class="card mt-5 p-5 sm:p-6" aria-labelledby="attendance-heading">
     <h2 id="attendance-heading" class="font-display text-sm font-semibold text-ink">Your attendance record</h2>
-    <a href="<?= e(url($base . '/screenshot')) ?>" target="_blank" rel="noopener" class="mt-3 block rounded-lg border border-slate-200 hover:border-slate-400">
-        <img src="<?= e(url($base . '/screenshot')) ?>" alt="<?= e('Your attendance record for ' . $monthLabel) ?>" class="w-full rounded-lg">
-    </a>
-    <p class="help">Opens full size in a new tab.</p>
+    <?php if ($screenshotUrl !== null) : ?>
+        <a href="<?= e(url($screenshotUrl)) ?>" target="_blank" rel="noopener" class="mt-3 block rounded-lg border border-slate-200 hover:border-slate-400">
+            <img src="<?= e(url($screenshotUrl)) ?>" alt="<?= e('Your attendance record for ' . $monthLabel) ?>" class="w-full rounded-lg">
+        </a>
+        <p class="help">Opens full size in a new tab.</p>
+    <?php else : ?>
+        <p class="mt-3 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-700">
+            No screenshot attached yet. This notice cannot be sent until one is.
+        </p>
+    <?php endif; ?>
 </section>
 
-<?php if ($status === PayrollLineStatus::Confirmed) : ?>
+<?php if ($preview !== null && ($status === PayrollLineStatus::Draft || $status === PayrollLineStatus::Sent)) : ?>
+    <section class="card mt-5 border-dashed p-5 sm:p-6" aria-labelledby="preview-answer-heading">
+        <h2 id="preview-answer-heading" class="font-display text-base font-semibold text-ink">Is everything correct?</h2>
+        <p class="mt-1 text-sm text-slate-700">
+            Here <?= e($preview['name']) ?> either confirms by typing their full name, or raises a query with a comment.
+            They can answer only once per email.
+        </p>
+        <p class="mt-3 text-xs font-medium text-slate-600">Preview — answering is switched off.</p>
+    </section>
+<?php elseif ($status === PayrollLineStatus::Confirmed) : ?>
     <section class="card mt-5 p-5 sm:p-6" aria-labelledby="done-heading">
         <h2 id="done-heading" class="font-display text-base font-semibold text-ink">Thank you — confirmed</h2>
         <p class="mt-2 text-sm text-slate-700">
@@ -87,7 +119,7 @@ $queryError = $errors['query_text'][0] ?? null;
         <p class="mt-2 text-sm text-slate-700">Sent on <?= e($when($line['responded_at'])) ?>. Someone will get back to you. You wrote:</p>
         <p class="mt-2 rounded-lg bg-slate-50 p-3 text-sm whitespace-pre-line text-slate-700"><?= e((string) $line['query_text']) ?></p>
     </section>
-<?php else : ?>
+<?php elseif ($preview === null) : ?>
     <section id="confirm" class="card mt-5 p-5 sm:p-6" aria-labelledby="confirm-heading">
         <h2 id="confirm-heading" class="font-display text-base font-semibold text-ink">Is everything correct?</h2>
         <p class="mt-1 text-sm text-slate-600">Type your full name and press Confirm. You can answer only once.</p>

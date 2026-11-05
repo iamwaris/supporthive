@@ -19,6 +19,7 @@ use RuntimeException;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
 use Tests\Support\RecordingMailTransport;
+use Tests\Support\RouteDispatch;
 
 /**
  * Salary notices end to end against the test database (PAY-1).
@@ -637,6 +638,259 @@ final class PayrollNoticeTest extends TestCase
         self::assertSame(302, $result['status']);
         self::assertArrayHasKey('query_text', $result['session']['_flash']['errors'] ?? []);
         self::assertSame('sent', $this->line($this->annId)['status']);
+    }
+
+    /** @return array{status:int,body:string,session:array<string,mixed>} */
+    private function runAs(string $action, array $session, int $runId, ?int $lineId = null): array
+    {
+        return ControllerActionRunner::run(
+            PayrollController::class,
+            $action,
+            $session,
+            [],
+            [],
+            $action === 'addLines' ? 'POST' : 'GET',
+            ['id' => (string) $runId] + ($lineId === null ? [] : ['line' => (string) $lineId])
+        );
+    }
+
+    /** Every line of the run, plus the audit log size: what a read-only action must leave as it was. */
+    private function stateSnapshot(): array
+    {
+        return [
+            Database::instance()->all(
+                'SELECT * FROM payroll_run_lines WHERE run_id = :run ORDER BY id',
+                ['run' => $this->runId]
+            ),
+            (int) Database::instance()->value('SELECT COUNT(*) FROM audit_log'),
+        ];
+    }
+
+    /**
+     * PAY-2: the preview is built by the same method as the real email, so
+     * the two differ only in the link, and building it issues no token.
+     */
+    public function testEmailPreviewIsTheSentEmailExceptForTheLinkAndChangesNothing(): void
+    {
+        $_SESSION = $this->sessionA();
+        $annLine = (new PayrollRunLine())->findInRun($this->runId, $this->lineIdFor($this->annId));
+        self::assertNotNull($annLine);
+        $before = $this->stateSnapshot();
+
+        $sender = $this->sender(new RecordingMailTransport());
+        $preview = $sender->preview($annLine, self::MONTH);
+        self::assertSame($before, $this->stateSnapshot(), 'previewing issues no token and writes nothing');
+        self::assertNull($sender->skipReasonFor($annLine));
+
+        $mail = new RecordingMailTransport();
+        $token = $this->send([$this->annId], $mail)[$this->annId];
+        $sent = $mail->sent[0];
+
+        $placeholder = 'https://app.test/base/salary-notice/' . PayrollNoticeSender::PREVIEW_LINK_TOKEN;
+        self::assertStringContainsString($placeholder, $preview->textBody);
+        self::assertSame(
+            str_replace('https://app.test/base/salary-notice/' . $token, $placeholder, $sent->textBody),
+            $preview->textBody
+        );
+        self::assertSame($sent->subject, $preview->subject);
+        self::assertSame($sent->to, $preview->to);
+        self::assertSame($sent->fromAddress, $preview->fromAddress);
+        self::assertSame($sent->fromName, $preview->fromName);
+        self::assertSame(0, preg_match('#/salary-notice/[a-f0-9]{64}#', $preview->textBody));
+    }
+
+    public function testBothPreviewPagesRenderForTheAdminAndChangeNothing(): void
+    {
+        $annLineId = $this->lineIdFor($this->annId);
+        $before = $this->stateSnapshot();
+
+        $email = $this->runAs('previewEmail', $this->sessionA(), $this->runId, $annLineId);
+        self::assertSame(200, $email['status']);
+        self::assertStringContainsString('Pay Ann', $email['body']);
+        self::assertStringContainsString('Preview notice page', $email['body']);
+        self::assertSame(0, preg_match('#/salary-notice/[a-f0-9]{64}#', $email['body']));
+
+        $page = $this->runAs('previewNotice', $this->sessionA(), $this->runId, $annLineId);
+        self::assertSame(200, $page['status']);
+        self::assertStringContainsString('Preview — this is what Pay Ann will see', $page['body']);
+        self::assertStringContainsString('45,678.90', $page['body']);
+        self::assertStringContainsString('Paid on the 5th.', $page['body']);
+        self::assertStringContainsString(
+            '/salary-notices/' . $this->runId . '/lines/' . $annLineId . '/screenshot',
+            $page['body'],
+            'the screenshot comes through the admin route'
+        );
+        self::assertStringNotContainsString('<form', $page['body'], 'no live form on the preview');
+        self::assertStringNotContainsString('action=', $page['body']);
+        self::assertStringNotContainsString('/confirm', $page['body']);
+        self::assertStringNotContainsString('Pay Cal', $page['body']);
+
+        // Bob has no screenshot yet: the preview says so instead of a broken image.
+        $bob = $this->runAs('previewNotice', $this->sessionA(), $this->runId, $this->lineIdFor($this->bobId));
+        self::assertSame(200, $bob['status']);
+        self::assertStringContainsString('No screenshot attached yet', $bob['body']);
+
+        self::assertSame($before, $this->stateSnapshot());
+    }
+
+    public function testPreviewsAndAddingForAnotherBranchAre404(): void
+    {
+        $annLineId = $this->lineIdFor($this->annId);
+        $before = $this->stateSnapshot();
+
+        foreach (['previewEmail', 'previewNotice'] as $action) {
+            $other = $this->runAs($action, $this->sessionB(), $this->runId, $annLineId);
+            self::assertSame(404, $other['status'], $action);
+            self::assertSame(
+                404,
+                $this->runAs($action, $this->sessionA(), $this->runId + 100000, $annLineId)['status'],
+                $action . ' with a line under the wrong run'
+            );
+        }
+        self::assertSame(404, $this->runAs('addLines', $this->sessionB(), $this->runId)['status']);
+        self::assertSame($before, $this->stateSnapshot());
+    }
+
+    public function testNonAdminsAreRefusedThePreviewAndAddRoutes(): void
+    {
+        $partnerId = $this->insertUser('pay-partner@test.local', 'partner', $this->branchAId);
+        $lineBase = '/salary-notices/' . $this->runId . '/lines/' . $this->lineIdFor($this->annId);
+        $requests = [
+            ['GET', $lineBase . '/preview-email'],
+            ['GET', $lineBase . '/preview'],
+            ['POST', '/salary-notices/' . $this->runId . '/lines'],
+        ];
+
+        foreach ([$this->annId, $partnerId] as $userId) {
+            foreach ($requests as [$method, $uri]) {
+                $result = ControllerActionRunner::run(
+                    RouteDispatch::class,
+                    'dispatch',
+                    [
+                        '_auth_user_id' => $userId,
+                        '_active_branch_id' => $this->branchAId,
+                        '_csrf_token' => 'pay-csrf',
+                        '_csrf_issued_at' => time(),
+                    ],
+                    ['_csrf' => 'pay-csrf'],
+                    [],
+                    $method,
+                    ['uri' => $uri]
+                );
+                self::assertSame(403, $result['status'], $method . ' ' . $uri . ' as user ' . $userId);
+                self::assertStringNotContainsString('45,678', $result['body']);
+            }
+        }
+    }
+
+    /**
+     * PAY-2: employees missing from the first file can be added after other
+     * notices went out, without touching any existing line.
+     */
+    public function testAddingEmployeesAfterOthersWereSentLeavesExistingLinesAlone(): void
+    {
+        $deeId = $this->insertEmployee('pay-dee@test.local', 'Pay Dee', 'PAY-4');
+        $token = $this->send([$this->annId])[$this->annId];
+
+        $page = $this->runAs('show', $this->sessionA(), $this->runId);
+        self::assertStringContainsString('Pay Dee', $page['body'], 'listed as missing from this month');
+        self::assertStringContainsString('href="#add-employees"', $page['body']);
+
+        $_SESSION = $this->sessionA();
+        $before = Database::instance()->all(
+            'SELECT * FROM payroll_run_lines WHERE run_id = :run ORDER BY id',
+            ['run' => $this->runId]
+        );
+        $inRun = array_map(static fn (array $row): int => (int) $row['user_id'], $before);
+        $result = PayrollImport::validate([
+            1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'],
+            2 => ['pay-4', '25000', '2', '26'],
+        ], (new PayrollRun())->branchEmployees(), $inRun);
+        self::assertTrue($result->passes());
+
+        (new PayrollRun())->appendLines($this->runId, $result->lines);
+
+        $dee = $this->line($deeId);
+        self::assertSame('draft', $dee['status']);
+        self::assertSame('25000.00', (string) $dee['salary']);
+        self::assertNull($dee['token_hash']);
+        self::assertSame($before, Database::instance()->all(
+            'SELECT * FROM payroll_run_lines WHERE run_id = :run AND user_id <> :dee ORDER BY id',
+            ['run' => $this->runId, 'dee' => $deeId]
+        ), 'existing lines are untouched');
+        self::assertNotNull(PayrollRunLine::findByToken($token), 'the link already sent still works');
+        $meta = (string) Database::instance()->value(
+            "SELECT meta FROM audit_log WHERE action = 'payroll_run.lines_added' AND entity_id = :id",
+            ['id' => $this->runId]
+        );
+        self::assertStringContainsString('PAY-4', $meta);
+
+        $after = $this->runAs('show', $this->sessionA(), $this->runId);
+        self::assertStringNotContainsString('not in this month', $after['body']);
+    }
+
+    public function testAddingAnEmployeeAlreadyInTheRunIsRejectedAndNothingIsSaved(): void
+    {
+        $deeId = $this->insertEmployee('pay-dee@test.local', 'Pay Dee', 'PAY-4');
+        $_SESSION = $this->sessionA();
+        $runs = new PayrollRun();
+        $inRun = array_map(
+            static fn (array $row): int => (int) $row['user_id'],
+            (new PayrollRunLine())->forRun($this->runId)
+        );
+
+        $result = PayrollImport::validate([
+            1 => ['EmpID', 'Salary', 'Absent', 'WorkingDays'],
+            2 => ['PAY-4', '25000', '0', '26'],
+            3 => ['PAY-1', '1', '0', '26'],
+        ], $runs->branchEmployees(), $inRun);
+
+        self::assertFalse($result->passes());
+        self::assertSame([], $result->lines, 'all or nothing');
+        self::assertSame(
+            [[
+                'row' => 3,
+                'employee_code' => 'PAY-1',
+                'message' => 'Employee PAY-1 is already in this month — edit their row instead.',
+            ]],
+            $result->errors
+        );
+
+        // The same employee slipping past the check (a concurrent upload) is
+        // refused under the run lock, and the rest of that append rolls back.
+        $countBefore = count($runs->activeEmployeesWithoutLine($this->runId));
+        try {
+            $runs->appendLines($this->runId, [
+                ['user_id' => $deeId, 'name' => 'Pay Dee', 'employee_code' => 'PAY-4',
+                    'salary' => '1.00', 'absent_days' => '0.0', 'working_days' => '26.0'],
+                ['user_id' => $this->annId, 'name' => 'Pay Ann', 'employee_code' => 'PAY-1',
+                    'salary' => '1.00', 'absent_days' => '0.0', 'working_days' => '26.0'],
+            ]);
+            self::fail('appending an employee already in the run must throw');
+        } catch (RuntimeException) {
+        }
+        self::assertSame([], $this->line($deeId));
+        self::assertSame(self::SALARY, (string) $this->line($this->annId)['salary']);
+        self::assertSame($countBefore, count($runs->activeEmployeesWithoutLine($this->runId)));
+        self::assertSame(0, (int) Database::instance()->value(
+            "SELECT COUNT(*) FROM audit_log WHERE action = 'payroll_run.lines_added' AND entity_id = :id",
+            ['id' => $this->runId]
+        ));
+    }
+
+    public function testAddingWithNoFileReturnsTheFieldErrorNotA500(): void
+    {
+        $result = $this->runAs('addLines', $this->sessionA(), $this->runId);
+
+        self::assertSame(302, $result['status']);
+        self::assertSame(
+            ['Choose the .xlsx or .csv file with the employees to add.'],
+            $result['session']['_flash']['errors']['sheet'] ?? null
+        );
+        self::assertSame(3, (int) Database::instance()->value(
+            'SELECT COUNT(*) FROM payroll_run_lines WHERE run_id = :run',
+            ['run' => $this->runId]
+        ));
     }
 
     public function testDeletingTheBranchRemovesItsRuns(): void

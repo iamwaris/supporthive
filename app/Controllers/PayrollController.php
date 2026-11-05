@@ -19,14 +19,16 @@ use App\Models\PayrollRunLine;
 use App\Services\Payroll\PayrollImport;
 use App\Services\Payroll\PayrollNoticeSender;
 use App\Services\Settings;
+use InvalidArgumentException;
 use PDOException;
 use RuntimeException;
 
 /**
- * Salary notices (PAY-1), admin only (`can:administer`), scoped to the
- * admin's branch: import a month's sheet, attach each employee's
- * attendance screenshot, email each employee their private link, and see
- * who confirmed or queried.
+ * Salary notices (PAY-1, PAY-2), admin only (`can:administer`), scoped to
+ * the admin's branch: import a month's sheet, add employees missing from it
+ * with a further file, attach each employee's attendance screenshot, preview
+ * the email and the notice page, email each employee their private link, and
+ * see who confirmed or queried.
  *
  * Every run id resolves through PayrollRun::find() (branch-scoped) and every
  * line id through PayrollRunLine::findInRun() (branch- and run-scoped), so
@@ -97,7 +99,7 @@ final class PayrollController extends Controller
         $note = self::noteOrNull($clean['note']);
         $monthLabel = PayrollNoticeSender::monthLabel($periodMonth);
 
-        $rows = $this->readUploadedSheet();
+        $rows = $this->readUploadedSheet('/salary-notices/new', 'Choose the month\'s .xlsx or .csv file.');
         $runs = new PayrollRun();
         try {
             $result = PayrollImport::validate($rows, $runs->branchEmployees());
@@ -138,13 +140,14 @@ final class PayrollController extends Controller
             $this->failImport('Nothing was saved: this month changed while you were importing. Please try again.');
         }
 
-        if ($result->missing !== []) {
-            Session::flash('payroll_missing', $result->missing);
-        }
         Session::flash(
             'success',
-            'Imported ' . count($result->lines) . ' ' . (count($result->lines) === 1 ? 'employee' : 'employees')
-            . ' for ' . $monthLabel . '. Attach each screenshot, then send.'
+            'Imported ' . self::employees(count($result->lines)) . ' for ' . $monthLabel . '. '
+            . ($result->missing === []
+                ? ''
+                : self::employees(count($result->missing)) . ' active in this branch '
+                    . (count($result->missing) === 1 ? 'is' : 'are') . ' not in the file — see the list below. ')
+            . 'Attach each screenshot, then send.'
         );
         Http::redirect('/salary-notices/' . $runId);
     }
@@ -152,24 +155,124 @@ final class PayrollController extends Controller
     /** @param array<string,string> $params */
     public function show(array $params): void
     {
+        $this->renderRun($this->findRunOr404($params), [], 200);
+    }
+
+    /**
+     * Add employees missing from the month's first file: a further sheet in
+     * the same format, validated like an import and saved all-or-nothing as
+     * new draft lines. Allowed whether or not other notices were emailed,
+     * because it never touches an existing line.
+     *
+     * @param array<string,string> $params
+     */
+    public function addLines(array $params): void
+    {
         $run = $this->findRunOr404($params);
         $runId = (int) $run['id'];
-        $lines = (new PayrollRunLine())->forRun($runId);
-        $monthLabel = PayrollNoticeSender::monthLabel((string) $run['period_month']);
+        $back = '/salary-notices/' . $runId . '#add-employees';
 
-        $this->view('pages/salary-notices/show', [
-            'title' => 'Salary notices — ' . $monthLabel,
+        $rows = $this->readUploadedSheet($back, 'Choose the .xlsx or .csv file with the employees to add.');
+        $runs = new PayrollRun();
+        try {
+            $inRun = array_map(
+                static fn (array $line): int => (int) $line['user_id'],
+                (new PayrollRunLine())->forRun($runId)
+            );
+            $result = PayrollImport::validate($rows, $runs->branchEmployees(), $inRun);
+        } catch (PDOException $e) {
+            Logger::error('Payroll add-lines lookup failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
+            $this->failWithFieldErrors(
+                ['sheet' => 'Nothing was added: the file could not be checked just now. Please try again.'],
+                $back
+            );
+        }
+
+        if (!$result->passes()) {
+            Logger::info('Payroll add-lines rejected', ['run_id' => $runId, 'errors' => count($result->errors)]);
+            $this->renderRun($run, $result->errors, 422);
+            return;
+        }
+
+        try {
+            $runs->appendLines($runId, $result->lines);
+        } catch (RuntimeException | PDOException $e) {
+            // Most likely another upload added one of these employees between the check and the write.
+            Logger::error('Payroll add-lines failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
+            $this->failWithFieldErrors(
+                ['sheet' => 'Nothing was added: this month changed while you were uploading. '
+                    . 'Reload the page, check who is already listed, and try again.'],
+                $back
+            );
+        }
+
+        Session::flash(
+            'success',
+            'Added ' . self::employees(count($result->lines)) . '. Attach each screenshot, then send.'
+        );
+        Http::redirect('/salary-notices/' . $runId);
+    }
+
+    /**
+     * The notice email for one line, exactly as it would be sent, with a
+     * placeholder in place of the private link. Issues no token, sends
+     * nothing, changes nothing.
+     *
+     * @param array<string,string> $params
+     */
+    public function previewEmail(array $params): void
+    {
+        [$run, $line] = $this->findLineOr404($params);
+        Http::sendPrivatePageHeaders();
+
+        $sender = PayrollNoticeSender::fromConfig();
+        try {
+            $message = $sender->preview($line, (string) $run['period_month']);
+        } catch (InvalidArgumentException) {
+            // No valid recipient or MAIL_FROM: skipReasonFor() below says which.
+            $message = null;
+        }
+
+        $monthLabel = PayrollNoticeSender::monthLabel((string) $run['period_month']);
+        $this->view('pages/salary-notices/preview-email', [
+            'title' => 'Preview email — ' . (string) $line['name'],
             'nav' => 'salary-notices',
-            'pageTitle' => 'Salary notices — ' . $monthLabel,
-            'pageMeta' => count($lines) . (count($lines) === 1 ? ' employee' : ' employees'),
+            'pageTitle' => 'Preview email',
+            'pageMeta' => (string) $line['name'] . ' · ' . $monthLabel,
             'run' => $run,
-            'lines' => $lines,
-            'noteEditable' => !(new PayrollRun())->hasEmailedLines($runId),
-            'missing' => Session::flash('payroll_missing') ?? [],
-            'editLineId' => (int) (Session::flash('payroll_edit_line') ?? 0),
-            'symbol' => Settings::string('currency_symbol', 'Rs'),
-            'maxUploadMb' => round((int) Config::get('uploads.max_bytes', 5_242_880) / 1048576, 1),
+            'line' => $line,
+            'message' => $message,
+            'skipReason' => $sender->mailIsConfigured()
+                ? $sender->skipReasonFor($line)
+                : 'email is not configured (MAIL_HOST)',
         ]);
+    }
+
+    /**
+     * The page an employee opens from their email, for this line, rendered
+     * from the same view with its answer forms replaced by a preview banner.
+     *
+     * @param array<string,string> $params
+     */
+    public function previewNotice(array $params): void
+    {
+        [$run, $line] = $this->findLineOr404($params);
+        Http::sendPrivatePageHeaders();
+        $lineBase = '/salary-notices/' . (int) $run['id'] . '/lines/' . (int) $line['id'];
+
+        $this->view('pages/salary-notice/show', [
+            'title' => 'Preview: salary notice for ' . (string) $line['name'],
+            'line' => ['note' => $run['note'], 'period_month' => $run['period_month']] + $line,
+            'status' => PayrollLineStatus::from((string) $line['status']),
+            'monthLabel' => PayrollNoticeSender::monthLabel((string) $run['period_month']),
+            'base' => '',
+            'screenshotUrl' => $line['screenshot_filename'] === null ? null : $lineBase . '/screenshot',
+            'preview' => [
+                'name' => (string) $line['name'],
+                'back' => '/salary-notices/' . (int) $run['id'] . '#line-' . (int) $line['id'],
+                'email' => $lineBase . '/preview-email',
+            ],
+        ], 'layouts/public');
     }
 
     /** @param array<string,string> $params */
@@ -355,36 +458,79 @@ final class PayrollController extends Controller
     }
 
     /**
-     * The uploaded sheet's rows, or back to the form with the reason.
+     * Render the run page. $sheetErrors are the row-by-row problems of a
+     * rejected "add employees" file, listed on the page itself (status 422)
+     * like the import form's, so a long list never sits in the session.
+     *
+     * @param array<string,mixed> $run
+     * @param list<array{row:int,employee_code:string,message:string}> $sheetErrors
+     */
+    private function renderRun(array $run, array $sheetErrors, int $status): void
+    {
+        $runId = (int) $run['id'];
+        $runs = new PayrollRun();
+        $lines = (new PayrollRunLine())->forRun($runId);
+        $monthLabel = PayrollNoticeSender::monthLabel((string) $run['period_month']);
+
+        http_response_code($status);
+        $this->view('pages/salary-notices/show', [
+            'title' => 'Salary notices — ' . $monthLabel,
+            'nav' => 'salary-notices',
+            'pageTitle' => 'Salary notices — ' . $monthLabel,
+            'pageMeta' => self::employees(count($lines)),
+            'run' => $run,
+            'lines' => $lines,
+            'noteEditable' => !$runs->hasEmailedLines($runId),
+            'missing' => $runs->activeEmployeesWithoutLine($runId),
+            'sheetErrors' => $sheetErrors,
+            'editLineId' => (int) (Session::flash('payroll_edit_line') ?? 0),
+            'symbol' => Settings::string('currency_symbol', 'Rs'),
+            'maxUploadMb' => round((int) Config::get('uploads.max_bytes', 5_242_880) / 1048576, 1),
+        ]);
+    }
+
+    /**
+     * The uploaded sheet's rows, or back to $back with the reason on the
+     * `sheet` field.
      *
      * @return array<int,list<string>>
      */
-    private function readUploadedSheet(): array
+    private function readUploadedSheet(string $back, string $noFileMessage): array
     {
+        $fail = function (string $message) use ($back): never {
+            $this->failWithFieldErrors(['sheet' => $message], $back);
+        };
+
         $file = $_FILES['sheet'] ?? null;
         if (!is_array($file) || (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-            $this->failImport('Choose the month\'s .xlsx or .csv file.', 'sheet');
+            $fail($noFileMessage);
         }
         if ((int) $file['error'] !== UPLOAD_ERR_OK) {
-            $this->failImport('The file did not upload completely. Please try again.', 'sheet');
+            $fail('The file did not upload completely. Please try again.');
         }
 
         $tmp = (string) ($file['tmp_name'] ?? '');
         if (!is_uploaded_file($tmp)) {
             Logger::security('Payroll sheet rejected: not an uploaded file', ['ip' => Http::clientIp()]);
-            $this->failImport('The file did not upload completely. Please try again.', 'sheet');
+            $fail('The file did not upload completely. Please try again.');
         }
 
         $maxBytes = (int) Config::get('uploads.max_bytes', 5_242_880);
         if ((int) $file['size'] > $maxBytes) {
-            $this->failImport('That file is larger than ' . round($maxBytes / 1048576, 1) . ' MB.', 'sheet');
+            $fail('That file is larger than ' . round($maxBytes / 1048576, 1) . ' MB.');
         }
 
         try {
             return SpreadsheetReader::read($tmp, PayrollImport::MAX_ROWS + 1);
         } catch (UnreadableSpreadsheet $e) {
-            $this->failImport($e->getMessage(), 'sheet');
+            $fail($e->getMessage());
         }
+    }
+
+    /** "1 employee", "3 employees" */
+    private static function employees(int $count): string
+    {
+        return $count . ' ' . ($count === 1 ? 'employee' : 'employees');
     }
 
     /** @param list<array{row:int,employee_code:string,message:string}> $importErrors */
@@ -408,9 +554,9 @@ final class PayrollController extends Controller
         ]);
     }
 
-    private function failImport(string $message, string $field = 'period_month'): never
+    private function failImport(string $message): never
     {
-        $this->failWithFieldErrors([$field => $message], '/salary-notices/new');
+        $this->failWithFieldErrors(['period_month' => $message], '/salary-notices/new');
     }
 
     private function failLine(string $message, string $anchor): never

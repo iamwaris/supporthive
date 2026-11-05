@@ -33,33 +33,11 @@ $noteField = $field('note');
 <div class="flex max-w-3xl flex-col gap-5">
 
     <?php if ($importErrors !== []) : ?>
-        <section class="card border-bad-line p-5 sm:p-6" role="alert" aria-labelledby="import-errors-heading">
-            <h2 id="import-errors-heading" class="font-display text-sm font-semibold text-bad-text">
-                Nothing was imported — <?= e(count($importErrors) === 1 ? '1 problem' : count($importErrors) . ' problems') ?> in the file
-            </h2>
-            <p class="mt-1 text-xs text-slate-600">Correct these in the sheet, then choose the file again and import.</p>
-            <div class="mt-3 overflow-x-auto">
-                <table class="w-full border-collapse">
-                    <caption class="sr-only">Problems found in the uploaded sheet, by row</caption>
-                    <thead>
-                        <tr>
-                            <th scope="col" class="th">Row</th>
-                            <th scope="col" class="th">EmpID</th>
-                            <th scope="col" class="th">Problem</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($importErrors as $problem) : ?>
-                            <tr>
-                                <td class="td money"><?= e((string) $problem['row']) ?></td>
-                                <td class="td money"><?= e($problem['employee_code'] !== '' ? $problem['employee_code'] : '—') ?></td>
-                                <td class="td"><?= e($problem['message']) ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </section>
+        <?php
+        $sheetErrors = $importErrors;
+        $sheetErrorsAction = 'imported';
+        require APP_PATH . '/Views/partials/payroll-sheet-errors.php';
+        ?>
     <?php endif; ?>
 
     <form method="post" action="<?= e(url('/salary-notices')) ?>" enctype="multipart/form-data" class="card flex flex-col gap-5 p-5 sm:p-6" novalidate>

@@ -30,6 +30,13 @@ final class PayrollNoticeSender
 {
     public const LINK_DAYS = 30;
 
+    /**
+     * Stands in for the token in a previewed link. Visibly not a token (the
+     * public route accepts only [A-Za-z0-9_-]), so a copied preview link
+     * can never open anyone's notice.
+     */
+    public const PREVIEW_LINK_TOKEN = '••••••••';
+
     public function __construct(
         private readonly PayrollRunLine $lines,
         private readonly MailTransport $transport,
@@ -98,10 +105,10 @@ final class PayrollNoticeSender
             }
 
             $token = PayrollRunLine::newToken();
-            $expiresAt = date('Y-m-d H:i:s', time() + self::LINK_DAYS * 86400);
+            $expiresAt = self::linkExpiry();
 
             try {
-                $this->transport->send($this->compose($row, $month, $token, $expiresAt));
+                $this->transport->send($this->compose($row, $month, $this->linkFor($token), $expiresAt));
             } catch (Throwable $e) {
                 Logger::error('Salary notice email was not sent', [
                     'line_id' => (int) $row['id'],
@@ -144,10 +151,43 @@ final class PayrollNoticeSender
         return $timestamp === false ? $periodMonth : date('F Y', $timestamp);
     }
 
-    /** @param array<string,mixed> $row */
-    public function compose(array $row, string $month, string $token, string $expiresAt): MailMessage
+    /**
+     * The email exactly as send() would build it for this line now, for the
+     * admin to check first. Only the link differs: it is PREVIEW_LINK_TOKEN
+     * in place of a token, because a real token is issued only by a send.
+     * Reads and writes nothing.
+     *
+     * @param array<string,mixed> $row a line as PayrollRunLine::findInRun() returns it
+     * @throws \InvalidArgumentException when the recipient or MAIL_FROM is not a valid address
+     */
+    public function preview(array $row, string $periodMonth): MailMessage
     {
-        $link = rtrim($this->appUrl, '/') . '/salary-notice/' . $token;
+        return $this->compose(
+            $row,
+            self::monthLabel($periodMonth),
+            $this->linkFor(self::PREVIEW_LINK_TOKEN),
+            self::linkExpiry()
+        );
+    }
+
+    /**
+     * Why send() would skip this line right now, or null when it would go.
+     *
+     * @param array<string,mixed> $row
+     */
+    public function skipReasonFor(array $row): ?string
+    {
+        return $this->skipReason($row, PayrollLineStatus::from((string) $row['status']));
+    }
+
+    /**
+     * The one place the notice email is written, shared by send() and
+     * preview() so what the admin previews is what the employee receives.
+     *
+     * @param array<string,mixed> $row
+     */
+    public function compose(array $row, string $month, string $link, string $expiresAt): MailMessage
+    {
         $expiresOn = date('j F Y', (int) strtotime($expiresAt));
 
         $lines = [
@@ -173,6 +213,16 @@ final class PayrollNoticeSender
             'Your salary notice for ' . $month,
             implode("\n", $lines)
         );
+    }
+
+    public function linkFor(string $token): string
+    {
+        return rtrim($this->appUrl, '/') . '/salary-notice/' . $token;
+    }
+
+    private static function linkExpiry(): string
+    {
+        return date('Y-m-d H:i:s', time() + self::LINK_DAYS * 86400);
     }
 
     /** @param array<string,mixed> $row */
