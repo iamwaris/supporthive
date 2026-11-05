@@ -4,7 +4,8 @@
  * Bare layout for the public new-joiner pages (/join/...). Deliberately
  * says nothing about the organisation, the branch or the application behind
  * it: the page is reachable by anyone holding the link. No navigation and
- * no scripts — the form works as plain HTML.
+ * no scripts of its own — the form works as plain HTML (the form view adds
+ * one optional script, see pages/join/form.php).
  *
  * @var string                    $content
  * @var array<string,string|null> $flash

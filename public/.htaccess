@@ -23,6 +23,15 @@ DirectoryIndex index.php
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    # One canonical host: www.<host> -> <host>, derived from the request, so
+    # no domain is hard-coded. The session cookie belongs to one host; a form
+    # opened on www and posted to the bare domain (or the other way round)
+    # arrives with no session and fails CSRF. Runs first so it is one hop
+    # straight to HTTPS (every non-localhost host is HTTPS-only, see below).
+    # localhost and 127.0.0.1 never start with www. and are unaffected.
+    RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+    RewriteRule ^ https://%1%{REQUEST_URI} [L,R=301]
+
     # Force HTTPS in production. Safe to leave on: localhost is excluded.
     RewriteCond %{HTTPS} !=on
     RewriteCond %{HTTP_HOST} !^localhost [NC]
@@ -80,6 +89,17 @@ DirectoryIndex index.php
     Header always unset Content-Security-Policy
     Header unset Content-Security-Policy
     Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
+</IfModule>
+
+# Never let LiteSpeed's page cache (LSCache, Hostinger) store a PHP response.
+# Every page is per-session: a cached GET replays one visitor's CSRF token to
+# everyone, and their next POST fails. PHP also sends
+# X-LiteSpeed-Cache-Control: no-cache on every response (Http::securityHeaders())
+# for hosts where this directive is not honoured. This only concerns the
+# server-side page cache: static files are not cached by it and keep their
+# long browser caching from mod_expires below.
+<IfModule LiteSpeed>
+    CacheDisable public /
 </IfModule>
 
 <IfModule mod_php.c>

@@ -41,7 +41,10 @@ $router->get('/', static fn (): never => Http::redirect(Access::landingPath((str
 // is literal, so it resolves before /join/{token}.
 $router->get('/join/submitted', 'JoinController@submitted');
 $router->get('/join/{token}', 'JoinController@show');
-$router->post('/join/{token}', 'JoinController@submit');
+// A rejected CSRF token here is almost always a lost session (a restored
+// tab, a cached page), not an attack: send the visitor back to a fresh form
+// with their safe fields kept instead of a dead-end 419. Nothing is stored.
+$router->post('/join/{token}', 'JoinController@submit', [], 'JoinController@recoverLostSession');
 
 // --- Authentication -------------------------------------------------------
 $router->get('/login', 'AuthController@showLogin', ['guest']);

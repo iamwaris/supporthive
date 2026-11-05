@@ -356,7 +356,7 @@ final class Auth
         if (!self::hasRole(...$roles)) {
             Logger::security('Authorisation denied', [
                 'user_id' => self::id(),
-                'path'    => Http::path(),
+                'path'    => Http::redactForLog(Http::path()),
                 'needed'  => $roles,
             ]);
             Http::abort(403);

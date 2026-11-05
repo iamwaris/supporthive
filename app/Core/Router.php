@@ -13,7 +13,11 @@ use App\Services\Access;
  */
 final class Router
 {
-    /** @var array<string, array<string, array{handler:callable|string, middleware:list<string>}>> */
+    /**
+     * @var array<string, array<string, array{
+     *     handler:callable|string, middleware:list<string>, onCsrfFailure:callable|string|null
+     * }>>
+     */
     private array $routes = ['GET' => [], 'POST' => [], 'PUT' => [], 'PATCH' => [], 'DELETE' => []];
 
     /** @param callable|string $handler "Controller@method" or a closure */
@@ -22,9 +26,20 @@ final class Router
         $this->add('GET', $path, $handler, $middleware);
     }
 
-    public function post(string $path, callable|string $handler, array $middleware = []): void
-    {
-        $this->add('POST', $path, $handler, $middleware);
+    /**
+     * $onCsrfFailure ("Controller@method" or a closure, called with the route
+     * params) answers a rejected CSRF token on this route instead of the plain
+     * 419 — for a public form whose visitor's session can vanish under them.
+     * It replaces the handler for that request; the token is still enforced.
+     * It runs before the route's middleware, so it belongs on public routes only.
+     */
+    public function post(
+        string $path,
+        callable|string $handler,
+        array $middleware = [],
+        callable|string|null $onCsrfFailure = null
+    ): void {
+        $this->add('POST', $path, $handler, $middleware, $onCsrfFailure);
     }
 
     public function put(string $path, callable|string $handler, array $middleware = []): void
@@ -38,9 +53,18 @@ final class Router
     }
 
     /** @param list<string> $middleware */
-    private function add(string $method, string $path, callable|string $handler, array $middleware): void
-    {
-        $this->routes[$method]['/' . trim($path, '/')] = ['handler' => $handler, 'middleware' => $middleware];
+    private function add(
+        string $method,
+        string $path,
+        callable|string $handler,
+        array $middleware,
+        callable|string|null $onCsrfFailure = null
+    ): void {
+        $this->routes[$method]['/' . trim($path, '/')] = [
+            'handler' => $handler,
+            'middleware' => $middleware,
+            'onCsrfFailure' => $onCsrfFailure,
+        ];
     }
 
     public function dispatch(): void
@@ -55,10 +79,17 @@ final class Router
         // touches a request that Csrf::check() below has to validate.
         RememberMe::restoreSession();
 
-        // CSRF is enforced for every unsafe method before any handler runs.
-        Csrf::check();
-
+        // CSRF is enforced for every unsafe method before any handler or
+        // middleware runs, and before a 404 for an unknown path. Matching
+        // first only looks the route up so its own failure answer can run.
         $route = $this->match($method, $path);
+        $onCsrfFailure = $route['onCsrfFailure'] ?? null;
+        Csrf::check(
+            $onCsrfFailure === null || $route === null
+                ? null
+                : fn () => $this->invoke($onCsrfFailure, $route['params'])
+        );
+
         if ($route === null) {
             Http::abort(404);
         }
@@ -71,7 +102,10 @@ final class Router
     }
 
     /**
-     * @return array{handler:callable|string, middleware:list<string>, params:array<string,string>}|null
+     * @return array{
+     *     handler:callable|string, middleware:list<string>, onCsrfFailure:callable|string|null,
+     *     params:array<string,string>
+     * }|null
      */
     private function match(string $method, string $path): ?array
     {
@@ -136,7 +170,7 @@ final class Router
                 'user_id' => Auth::id(),
                 'role'    => $role,
                 'ability' => $ability,
-                'path'    => Http::path(),
+                'path'    => Http::redactForLog(Http::path()),
             ]);
             Http::abort(403);
         }

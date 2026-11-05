@@ -51,7 +51,9 @@ final class ErrorHandler
             'exception' => $e::class,
             'file'      => $e->getFile(),
             'line'      => $e->getLine(),
-            'path'      => $_SERVER['REQUEST_URI'] ?? 'cli',
+            'path'      => isset($_SERVER['REQUEST_URI'])
+                ? Http::redactForLog((string) $_SERVER['REQUEST_URI'])
+                : 'cli',
             'trace'     => self::traceWithoutArguments($e),
         ]);
 

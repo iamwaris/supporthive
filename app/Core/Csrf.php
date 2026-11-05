@@ -48,8 +48,15 @@ final class Csrf
     /**
      * Enforce CSRF on the current request. Aborts with 419 on failure.
      * Safe methods (GET/HEAD/OPTIONS) are skipped; they must never change state.
+     *
+     * $onFailure lets one route answer a rejected token its own way (see
+     * Router::post()'s $onCsrfFailure). It runs instead of the handler, never
+     * alongside it, and if it returns the request still ends in the 419, so
+     * a recovery path can never fall through into the protected action.
+     *
+     * @param (callable():void)|null $onFailure
      */
-    public static function check(): void
+    public static function check(?callable $onFailure = null): void
     {
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
         if (in_array($method, ['GET', 'HEAD', 'OPTIONS'], true)) {
@@ -61,9 +68,12 @@ final class Csrf
         if (!self::isValid(is_string($candidate) ? $candidate : null)) {
             Logger::security('CSRF token rejected', [
                 'ip'     => Http::clientIp(),
-                'path'   => $_SERVER['REQUEST_URI'] ?? '',
+                'path'   => Http::redactForLog((string) ($_SERVER['REQUEST_URI'] ?? '')),
                 'method' => $method,
             ]);
+            if ($onFailure !== null) {
+                $onFailure();
+            }
             Http::abort(419, 'Your session expired. Please reload the page and try again.');
         }
     }

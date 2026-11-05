@@ -56,6 +56,12 @@ final class JoinController extends Controller
      */
     public const HONEYPOT = 'hp_contact_ref';
 
+    /**
+     * Marks the form reached through recoverLostSession(), in the URL rather
+     * than the session because a lost session is the very thing it guards.
+     */
+    private const RECOVERED_QUERY = 'resubmit';
+
     private const STARTED_KEY = '_join_form_started_at';
     private const SUBMITTED_KEY = '_join_submitted';
 
@@ -83,7 +89,7 @@ final class JoinController extends Controller
         // so the timer always measures the visit that leads to the POST.
         Session::set(self::STARTED_KEY, time());
 
-        $this->renderForm($token);
+        $this->renderForm($token, isset($_GET[self::RECOVERED_QUERY]));
     }
 
     /** @param array<string,string> $params */
@@ -91,18 +97,8 @@ final class JoinController extends Controller
     {
         Http::sendPrivatePageHeaders();
 
-        if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > self::MAX_BODY_BYTES) {
-            Logger::security('Joiner form rejected: body too large', ['ip' => Http::clientIp()]);
-            $this->message(413, 'That was too much to send', 'Please check your details and try again.');
-        }
-
         $token = (string) ($params['token'] ?? '');
-        RateLimiter::guard('join-submit-ip:' . Http::clientIp(), self::SUBMIT_PER_IP, self::WINDOW_SECONDS);
-        RateLimiter::guard(
-            'join-submit-token:' . EmployeeJoinLink::hash($token),
-            self::SUBMIT_PER_TOKEN,
-            self::WINDOW_SECONDS
-        );
+        $this->guardSubmission($token);
 
         $branchId = EmployeeJoinLink::activeBranchFor($token);
         if ($branchId === null) {
@@ -149,6 +145,53 @@ final class JoinController extends Controller
     }
 
     /**
+     * The POST's CSRF token matched no live session (Router::dispatch() runs
+     * this instead of submit()). For a real joiner that is a session that
+     * went away under them — a tab restored from the back/forward cache, a
+     * page cache replaying someone else's GET, a cookie set on the other
+     * host — so a dead-end 419 throws their typing away for nothing.
+     *
+     * Nothing is stored and CSRF is still enforced: the visitor is sent back
+     * to a fresh GET of the form (new session, token and timer) with the safe
+     * fields refilled. The account number and IBAN are never kept, as after
+     * any failed submit. The round trip counts against the same submit rate
+     * limits, and the GET against the view limit.
+     *
+     * It cannot loop: the redirect is a GET, which CSRF never checks, and it
+     * carries ?resubmit=1 into the form's action. Should that form fail CSRF
+     * too (the browser is not keeping the cookie at all), this returns and
+     * Csrf::check() ends the request in the neutral timed-out page instead
+     * of bouncing again.
+     *
+     * @param array<string,string> $params
+     */
+    public function recoverLostSession(array $params): void
+    {
+        Http::sendPrivatePageHeaders();
+
+        $token = (string) ($params['token'] ?? '');
+        $this->guardSubmission($token);
+
+        // A dead link must never read as "timed out", or the page would
+        // tell a guesser the link once existed.
+        if (EmployeeJoinLink::activeBranchFor($token) === null) {
+            $this->inactive();
+        }
+
+        if (isset($_GET[self::RECOVERED_QUERY])) {
+            return;
+        }
+
+        Session::set('_old', $this->safeInputToKeep());
+        Session::flash(
+            'error',
+            'Your form timed out before it was sent — nothing was saved. '
+            . 'Please check your details and press Submit again.'
+        );
+        Http::redirect('/join/' . $token . '?' . self::RECOVERED_QUERY . '=1', 303);
+    }
+
+    /**
      * The thank-you page, once, right after a submission from this browser.
      * Anyone else asking for it gets the neutral page.
      */
@@ -187,6 +230,42 @@ final class JoinController extends Controller
         return $this->validate(self::RULES, $back, $input, array_merge(BankDetails::NOT_FLASHED, [self::HONEYPOT]));
     }
 
+    /** Body size cap, then the per-IP and per-token submit limits; any POST to the form counts. */
+    private function guardSubmission(string $token): void
+    {
+        if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > self::MAX_BODY_BYTES) {
+            Logger::security('Joiner form rejected: body too large', ['ip' => Http::clientIp()]);
+            $this->message(413, 'That was too much to send', 'Please check your details and try again.');
+        }
+
+        RateLimiter::guard('join-submit-ip:' . Http::clientIp(), self::SUBMIT_PER_IP, self::WINDOW_SECONDS);
+        RateLimiter::guard(
+            'join-submit-token:' . EmployeeJoinLink::hash($token),
+            self::SUBMIT_PER_TOKEN,
+            self::WINDOW_SECONDS
+        );
+    }
+
+    /**
+     * The form's own fields as typed, for old() after a lost session: an
+     * allow-list, so the account number, IBAN, honeypot, CSRF token and
+     * anything smuggled in stay out of the session, and only strings.
+     *
+     * @return array<string,string>
+     */
+    private function safeInputToKeep(): array
+    {
+        $kept = [];
+        foreach (array_diff(array_keys(self::RULES), BankDetails::NOT_FLASHED) as $field) {
+            $value = $_POST[$field] ?? null;
+            if (is_string($value)) {
+                $kept[$field] = $value;
+            }
+        }
+
+        return $kept;
+    }
+
     private function finish(): never
     {
         Session::forget(self::STARTED_KEY);
@@ -195,11 +274,11 @@ final class JoinController extends Controller
         Http::redirect('/join/submitted');
     }
 
-    private function renderForm(string $token): void
+    private function renderForm(string $token, bool $recovered = false): void
     {
         $this->view('pages/join/form', [
             'title' => 'Joining form',
-            'action' => '/join/' . $token,
+            'action' => '/join/' . $token . ($recovered ? '?' . self::RECOVERED_QUERY . '=1' : ''),
             'honeypot' => self::HONEYPOT,
         ], 'layouts/public');
     }

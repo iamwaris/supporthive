@@ -2,7 +2,8 @@
 
 /**
  * The public new-joiner form. Plain HTML: no JavaScript is needed to fill it
- * in or submit it. Asks only for the joiner's own details — designation and
+ * in or submit it. join-form.js only reloads a copy restored from the
+ * back/forward cache, whose CSRF token may belong to a session that is gone. Asks only for the joiner's own details — designation and
  * salary are set by an admin on approval and are not fields here. The
  * Employee ID asked for here is a suggestion the admin confirms or changes
  * on approval.
@@ -99,3 +100,4 @@ $sections = [
         <button type="submit" class="btn-primary w-full sm:w-auto">Submit my details</button>
     </div>
 </form>
+<script src="<?= e(asset('assets/js/join-form.js')) ?>" defer></script>

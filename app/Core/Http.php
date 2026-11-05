@@ -39,6 +39,27 @@ final class Http
 
         header_remove('X-Powered-By');
 
+        foreach (self::securityHeaders(Config::isProduction()) as $line) {
+            header($line);
+        }
+    }
+
+    /**
+     * The header lines sendSecurityHeaders() sends, separate so they can be
+     * tested without a web SAPI.
+     *
+     * The two cache lines apply to every PHP response, not only the private
+     * pages: none of them may be served from a shared cache. Each page is
+     * per-session (a CSRF token in every form, a signed-in user's data), so a
+     * LiteSpeed/Hostinger page cache replaying one visitor's GET to another
+     * hands out a token that matches nobody's session, and the next POST
+     * fails CSRF. Static files never pass through PHP, so their long browser
+     * caching (see public/.htaccess) is untouched.
+     *
+     * @return list<string>
+     */
+    public static function securityHeaders(bool $production): array
+    {
         $csp = [
             "default-src 'self'",
             "script-src 'self' 'unsafe-eval'",
@@ -52,18 +73,35 @@ final class Http
             "object-src 'none'",
         ];
 
-        header('Content-Security-Policy: ' . implode('; ', $csp));
-        header('X-Content-Type-Options: nosniff');
-        header('X-Frame-Options: DENY');
-        header('Referrer-Policy: strict-origin-when-cross-origin');
-        header('Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()');
-        header('Cross-Origin-Opener-Policy: same-origin');
-        header('Cross-Origin-Resource-Policy: same-origin');
-        header('X-Permitted-Cross-Domain-Policies: none');
+        $lines = [
+            'Content-Security-Policy: ' . implode('; ', $csp),
+            'X-Content-Type-Options: nosniff',
+            'X-Frame-Options: DENY',
+            'Referrer-Policy: strict-origin-when-cross-origin',
+            'Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()',
+            'Cross-Origin-Opener-Policy: same-origin',
+            'Cross-Origin-Resource-Policy: same-origin',
+            'X-Permitted-Cross-Domain-Policies: none',
+            'X-LiteSpeed-Cache-Control: no-cache',
+            'Vary: Cookie',
+        ];
 
-        if (Config::isProduction()) {
-            header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
+        if ($production) {
+            $lines[] = 'Strict-Transport-Security: max-age=31536000; includeSubDomains; preload';
         }
+
+        return $lines;
+    }
+
+    /**
+     * A request URI or path made safe for a log line: the secret token in a
+     * public joining link (/join/{token}) becomes /join/[redacted]. Whoever
+     * reads the logs must not be able to open someone's joining form.
+     * /join/submitted carries nothing secret and is kept as it is.
+     */
+    public static function redactForLog(string $uriOrPath): string
+    {
+        return (string) preg_replace('#/join/(?!submitted(?:[/?\#]|$))[^/?\#]+#', '/join/[redacted]', $uriOrPath);
     }
 
     /**
@@ -255,7 +293,7 @@ final class Http
             self::sendPrivatePageHeaders();
             [$heading, $text] = match ($status) {
                 429 => ['Too many attempts', 'Please wait a while, then try again.'],
-                419 => ['This page has expired', 'Go back, reload the form and submit it again.'],
+                419 => ['Your form timed out before it was sent', 'Nothing was saved. Please open the link again.'],
                 default => ['This link is no longer active', 'Please ask the person who sent it to you for a new one.'],
             };
             echo View::capture(

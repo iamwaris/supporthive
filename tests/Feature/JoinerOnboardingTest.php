@@ -202,6 +202,26 @@ final class JoinerOnboardingTest extends TestCase
         );
     }
 
+    /**
+     * A POST to the joining form through the real router, CSRF included.
+     *
+     * @param array<string,mixed> $session
+     * @param array<string,mixed> $post
+     * @return array{status:int,body:string,session:array<string,mixed>}
+     */
+    private function dispatchJoinPost(array $session, array $post, string $query = ''): array
+    {
+        return ControllerActionRunner::run(
+            RouteDispatch::class,
+            'dispatch',
+            $session,
+            $post,
+            [],
+            'POST',
+            ['uri' => '/join/' . $this->token . $query]
+        );
+    }
+
     /** An employee of branch A, jnr-existing@test.local, holding $employeeCode. */
     private function createExistingEmployee(string $employeeCode): void
     {
@@ -795,17 +815,156 @@ final class JoinerOnboardingTest extends TestCase
         self::assertSame(0, $count($this->branchAId));
     }
 
-    public function testRateLimitAndExpiredFormPagesUnderJoinAreNeutral(): void
+    // --- A session lost before the submit (JOIN-5) -----------------------------
+
+    /**
+     * Regression for the 419 seen on iPhone: a POST whose CSRF token matches
+     * no live session — none at all, or a different one — stores nothing and
+     * goes back to the form with the safe fields kept, never the account
+     * number, IBAN, honeypot or token, and the timeout message.
+     */
+    public function testALostSessionOnAnActiveLinkReturnsToTheFormWithTheSafeFieldsKept(): void
     {
-        $expired = ControllerActionRunner::run(
+        $sessions = [
+            'no session' => [],
+            'another session' => ['_csrf_token' => bin2hex(random_bytes(32)), '_csrf_issued_at' => time()],
+        ];
+        foreach ($sessions as $case => $session) {
+            $result = $this->dispatchJoinPost(
+                $session,
+                $this->joinerPost() + ['_csrf' => bin2hex(random_bytes(32)), 'designation' => 'Manager']
+            );
+
+            self::assertSame(303, $result['status'], $case . ': ' . $result['body']);
+            self::assertSame(
+                [
+                    'name' => 'Jnr Joiner',
+                    'email' => 'jnr-joiner@test.local',
+                    'employee_code' => 'JNR-S1',
+                    'phone' => '+92 300 1112223',
+                    'joining_date' => '2026-12-01',
+                    'bank_name' => self::BANK,
+                ],
+                $result['session']['_old'] ?? null,
+                $case
+            );
+            self::assertSame(
+                'Your form timed out before it was sent — nothing was saved. '
+                . 'Please check your details and press Submit again.',
+                $result['session']['_flash']['error'] ?? null,
+                $case
+            );
+            self::assertArrayNotHasKey('_join_submitted', $result['session'], $case);
+        }
+        self::assertSame(0, $this->submissionCount());
+    }
+
+    /**
+     * The round trip: the redirected GET shows the message and the kept
+     * fields, issues a fresh token and timer, and the form can then be sent.
+     * An immediate resubmit gets the existing "take a moment" message; after
+     * a short pause it goes through.
+     */
+    public function testAfterTheLostSessionTheFormIsPrefilledAndCanBeSubmittedAgain(): void
+    {
+        $lost = $this->dispatchJoinPost([], $this->joinerPost() + ['_csrf' => 'stale']);
+        self::assertSame(303, $lost['status']);
+
+        $form = ControllerActionRunner::run(
             RouteDispatch::class,
             'dispatch',
+            $lost['session'],
             [],
-            $this->joinerPost(),
             [],
-            'POST',
-            ['uri' => '/join/' . $this->token]
+            'GET',
+            ['uri' => '/join/' . $this->token . '?resubmit=1']
         );
+        self::assertSame(200, $form['status']);
+        self::assertStringContainsString('Your form timed out before it was sent', $form['body']);
+        self::assertStringContainsString('value="Jnr Joiner"', $form['body']);
+        self::assertStringContainsString('value="' . self::BANK . '"', $form['body']);
+        self::assertStringNotContainsString('9876-5432-1012', $form['body']);
+        self::assertStringContainsString('/join/' . $this->token . '?resubmit=1"', $form['body']);
+        self::assertStringContainsString('assets/js/join-form.js', $form['body']);
+
+        $session = $form['session'];
+        $freshToken = (string) ($session['_csrf_token'] ?? '');
+        self::assertNotSame('', $freshToken);
+        self::assertGreaterThanOrEqual(time() - 5, $session['_join_form_started_at'] ?? 0);
+
+        $tooSoon = $this->dispatchJoinPost($session, $this->joinerPost() + ['_csrf' => $freshToken], '?resubmit=1');
+        self::assertSame(302, $tooSoon['status']);
+        self::assertSame(
+            'Please take a moment to check your details, then submit again.',
+            $tooSoon['session']['_flash']['error'] ?? null
+        );
+        self::assertSame(0, $this->submissionCount());
+
+        $session['_join_form_started_at'] = time() - 10;
+        $sent = $this->dispatchJoinPost($session, $this->joinerPost() + ['_csrf' => $freshToken], '?resubmit=1');
+        self::assertSame(302, $sent['status'], $sent['body']);
+        self::assertTrue($sent['session']['_join_submitted'] ?? false);
+        self::assertSame(self::IBAN, $this->onlySubmission()['bank_iban']);
+    }
+
+    public function testALostSessionOnADeadLinkShowsTheNeutralPageNotATimeout(): void
+    {
+        $this->admin('disableLink');
+
+        $result = $this->dispatchJoinPost([], $this->joinerPost());
+
+        self::assertSame(404, $result['status']);
+        self::assertStringContainsString('This link is no longer active', $result['body']);
+        self::assertStringContainsString('Please ask the person who sent it to you for a new one.', $result['body']);
+        self::assertStringNotContainsString('timed out', $result['body']);
+        self::assertArrayNotHasKey('_old', $result['session']);
+        self::assertSame(0, $this->submissionCount());
+    }
+
+    public function testTheRecoveryCountsTowardsTheSubmitRateLimit(): void
+    {
+        for ($i = 0; $i < 19; $i++) {
+            RateLimiter::hit('join-submit-ip:' . self::IP);
+        }
+
+        self::assertSame(303, $this->dispatchJoinPost([], $this->joinerPost())['status']);
+        self::assertSame(429, $this->dispatchJoinPost([], $this->joinerPost())['status']);
+        self::assertSame(0, $this->submissionCount());
+    }
+
+    /** Every other route keeps the plain 419: no recovery, nothing flashed. */
+    public function testOtherRoutesStillAnswerARejectedTokenWithThePlain419(): void
+    {
+        $cases = [
+            ['/login', [], ['email' => 'jnr-admin-a@test.local', 'password' => 'x']],
+            ['/joiners/link/regenerate', $this->sessionA(), []],
+        ];
+        foreach ($cases as [$uri, $session, $post]) {
+            $result = ControllerActionRunner::run(RouteDispatch::class, 'dispatch', $session, $post, [], 'POST', [
+                'uri' => $uri,
+            ]);
+
+            self::assertSame(419, $result['status'], $uri);
+            self::assertStringContainsString('Your session expired', $result['body'], $uri);
+            self::assertArrayNotHasKey('_old', $result['session'], $uri);
+        }
+    }
+
+    public function testTheSecurityLogRedactsTheJoiningToken(): void
+    {
+        $log = STORAGE_PATH . '/logs/security-' . date('Y-m-d') . '.log';
+
+        $this->dispatchJoinPost([], $this->joinerPost());
+
+        $written = is_file($log) ? (string) file_get_contents($log) : '';
+        self::assertStringContainsString('"path":"/join/[redacted]"', $written);
+        self::assertStringNotContainsString($this->token, $written);
+    }
+
+    public function testRateLimitAndExpiredFormPagesUnderJoinAreNeutral(): void
+    {
+        // A second lost session from the already-recovered form: no more bouncing.
+        $expired = $this->dispatchJoinPost([], $this->joinerPost(), '?resubmit=1');
 
         for ($i = 0; $i < 120; $i++) {
             RateLimiter::hit('join-view-ip:' . self::IP);
@@ -821,7 +980,9 @@ final class JoinerOnboardingTest extends TestCase
         );
 
         self::assertSame(419, $expired['status']);
-        self::assertStringContainsString('This page has expired', $expired['body']);
+        self::assertStringContainsString('Your form timed out before it was sent', $expired['body']);
+        self::assertStringContainsString('Nothing was saved. Please open the link again.', $expired['body']);
+        self::assertArrayNotHasKey('_old', $expired['session']);
         self::assertSame(429, $limited['status']);
         self::assertStringContainsString('Too many attempts', $limited['body']);
         foreach ([$expired['body'], $limited['body']] as $body) {
