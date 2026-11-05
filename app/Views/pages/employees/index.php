@@ -32,6 +32,7 @@ $pageUrl = static function (int $target) use ($filters): string {
 };
 
 $filtered = $filters['q'] !== null || $filters['status'] !== 'active';
+$joinedOn = static fn (mixed $date): string => date('j M Y', (int) strtotime((string) $date));
 ?>
 
 <div class="flex flex-col gap-4">
@@ -71,6 +72,7 @@ $filtered = $filters['q'] !== null || $filters['status'] !== 'active';
                         <th scope="col" class="th">Name</th>
                         <th scope="col" class="th hidden sm:table-cell">Employee ID</th>
                         <th scope="col" class="th hidden md:table-cell">Designation</th>
+                        <th scope="col" class="th hidden md:table-cell">Joined</th>
                         <th scope="col" class="th hidden lg:table-cell">Phone</th>
                         <th scope="col" class="th hidden text-right sm:table-cell">Salary</th>
                         <th scope="col" class="th hidden xl:table-cell">Bank account</th>
@@ -81,7 +83,7 @@ $filtered = $filters['q'] !== null || $filters['status'] !== 'active';
                 <tbody>
                     <?php if ($employees === []) : ?>
                         <tr>
-                            <td class="td" colspan="8">
+                            <td class="td" colspan="9">
                                 <p class="py-10 text-center text-sm text-slate-600">
                                     <?php if ($filtered) : ?>
                                         No employees match these filters.
@@ -99,6 +101,7 @@ $filtered = $filters['q'] !== null || $filters['status'] !== 'active';
                         <?php
                         $id = (int) $employee['id'];
                         $isActive = (string) $employee['status'] === 'active';
+                        $joiningDate = (string) ($employee['joining_date'] ?? '');
                         ?>
                         <tr>
                             <td class="td">
@@ -107,12 +110,24 @@ $filtered = $filters['q'] !== null || $filters['status'] !== 'active';
                                 </a>
                                 <p class="text-[11.5px] break-all text-slate-500"><?= e((string) $employee['email']) ?></p>
                                 <p class="text-[11.5px] text-slate-500 md:hidden"><?= e((string) $employee['designation']) ?></p>
+                                <?php if ($joiningDate !== '') : ?>
+                                    <p class="text-[11.5px] text-slate-500 md:hidden">
+                                        Joined <time datetime="<?= e($joiningDate) ?>"><?= e($joinedOn($joiningDate)) ?></time>
+                                    </p>
+                                <?php endif; ?>
                                 <?php if ($employee['employee_code'] !== null) : ?>
                                     <p class="text-[11.5px] text-slate-500 sm:hidden">ID <?= e((string) $employee['employee_code']) ?></p>
                                 <?php endif; ?>
                             </td>
                             <td class="td money hidden text-slate-600 sm:table-cell"><?= e((string) ($employee['employee_code'] ?? '—')) ?></td>
                             <td class="td hidden text-slate-600 md:table-cell"><?= e((string) $employee['designation']) ?></td>
+                            <td class="td hidden whitespace-nowrap text-slate-600 md:table-cell">
+                                <?php if ($joiningDate !== '') : ?>
+                                    <time datetime="<?= e($joiningDate) ?>"><?= e($joinedOn($joiningDate)) ?></time>
+                                <?php else : ?>
+                                    <span aria-hidden="true">—</span><span class="sr-only">Joining date not set</span>
+                                <?php endif; ?>
+                            </td>
                             <td class="td money hidden text-slate-600 lg:table-cell"><?= e((string) ($employee['phone'] ?? '—')) ?></td>
                             <td class="td money hidden text-right whitespace-nowrap text-slate-600 sm:table-cell">
                                 <?= e(isset($salaries[$id]) ? $symbol . ' ' . number_format((float) $salaries[$id], 2) : '—') ?>

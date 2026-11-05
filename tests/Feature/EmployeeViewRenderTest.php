@@ -143,6 +143,40 @@ final class EmployeeViewRenderTest extends TestCase
         self::assertStringContainsString($peopleLink, $index, 'admin sidebar has the People group');
     }
 
+    /**
+     * The list shows each joining date in the app's date format, and an
+     * accessible placeholder for an employee who has none.
+     */
+    public function testEmployeeListShowsJoiningDate(): void
+    {
+        (new EmployeeProfile())->createWithLogin([
+            'name' => 'EVR Undated',
+            'email' => 'evr-undated@test.local',
+            'phone' => null,
+            'designation' => 'Clerk',
+            'joining_date' => null,
+        ], password_hash('unused', PASSWORD_DEFAULT));
+
+        $html = $this->render('pages/employees/index', [
+            'employees' => (new EmployeeProfile())->search(null, null, 1, 20),
+            'salaries' => [],
+            'bankMasks' => [],
+            'filters' => ['q' => null, 'status' => 'active'],
+            'total' => 2,
+            'page' => 1,
+            'pages' => 1,
+            'perPage' => 20,
+        ]);
+
+        self::assertStringContainsString('>Joined</th>', $html);
+        self::assertSame(
+            2,
+            substr_count($html, '<time datetime="2026-03-01">1 Mar 2026</time>'),
+            'table cell and the narrow-screen line under the name'
+        );
+        self::assertSame(1, substr_count($html, 'Joining date not set'));
+    }
+
     public function testEmployeeShellShowsOnlyTheWorkspaceAndNoAssistant(): void
     {
         $this->seedDocument();
