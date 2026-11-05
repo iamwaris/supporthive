@@ -60,6 +60,7 @@ $groups = $canManageBranches || $isEmployee ? [] : [
     'People' => [
         ['key' => 'employees', 'label' => 'Employees', 'href' => '/employees', 'icon' => 'users', 'show' => $admin, 'ready' => true],
         ['key' => 'joiners', 'label' => 'New Joiners', 'href' => '/joiners', 'icon' => 'inbox', 'show' => $admin, 'ready' => true],
+        ['key' => 'salary-notices', 'label' => 'Salary notices', 'href' => '/salary-notices', 'icon' => 'coins', 'show' => $admin, 'ready' => true],
         ['key' => 'employee-documents', 'label' => 'Employee Documents', 'href' => '/employee-documents', 'icon' => 'doc', 'show' => $admin, 'ready' => true],
     ],
     'System' => [

@@ -43,9 +43,28 @@ final class HttpCacheAndLogPathTest extends TestCase
         );
     }
 
+    public function testTheSalaryNoticeTokenIsRedactedFromALoggedPath(): void
+    {
+        $token = str_repeat('cd', 32);
+
+        self::assertSame('/salary-notice/[redacted]', Http::redactForLog('/salary-notice/' . $token));
+        self::assertSame(
+            '/salary-notice/[redacted]/confirm',
+            Http::redactForLog('/salary-notice/' . $token . '/confirm')
+        );
+    }
+
     public function testPathsWithoutASecretAreLoggedAsTheyAre(): void
     {
-        foreach (['/join/submitted', '/join', '/joiners/12', '/joiners/link/regenerate', '/login?next=x'] as $path) {
+        $paths = [
+            '/join/submitted',
+            '/join',
+            '/joiners/12',
+            '/joiners/link/regenerate',
+            '/login?next=x',
+            '/salary-notices/3',
+        ];
+        foreach ($paths as $path) {
             self::assertSame($path, Http::redactForLog($path));
         }
     }

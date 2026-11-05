@@ -73,6 +73,24 @@ final class Upload
     }
 
     /**
+     * storePrivate(), narrowed to PNG, JPEG and WebP — for images a gated
+     * controller streams back inline, such as payroll attendance screenshots.
+     *
+     * @param array{name:string,type:string,tmp_name:string,error:int,size:int} $file
+     * @return array{path:string,filename:string,mime:string,size:int}
+     */
+    public static function storePrivateImage(array $file, string $subdirectory): array
+    {
+        return self::write(
+            STORAGE_PATH . '/documents',
+            'documents',
+            $file,
+            $subdirectory,
+            ['image/png', 'image/jpeg', 'image/webp']
+        );
+    }
+
+    /**
      * Does the file start with the PDF magic bytes? finfo already sniffs the
      * type; this is the stricter check that the header is at offset 0, which
      * is where a PDF reader looks and where a polyglot usually is not.

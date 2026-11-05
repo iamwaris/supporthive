@@ -1,9 +1,10 @@
 <?php
 
 /**
- * Bare layout for the public new-joiner pages (/join/...). Deliberately
- * says nothing about the organisation, the branch or the application behind
- * it: the page is reachable by anyone holding the link. No navigation and
+ * Bare layout for the public pages opened by a secret link: the new-joiner
+ * form (/join/...) and an employee's salary notice (/salary-notice/...).
+ * Deliberately says nothing about the organisation, the branch or the
+ * application behind it: the page is reachable by anyone holding the link. No navigation and
  * no scripts of its own — the form works as plain HTML (the form view adds
  * one optional script, see pages/join/form.php).
  *

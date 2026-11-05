@@ -11,6 +11,7 @@ use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Session;
 use App\Models\EmployeeDocument;
+use App\Models\PayrollRun;
 use App\Services\Audit;
 
 /**
@@ -285,6 +286,9 @@ final class BranchController extends Controller
             // (generated_by); both go with everything else in the branch.
             $db->delete('joiner_submissions', 'branch_id = :id', ['id' => $branchId]);
             $db->delete('employee_join_links', 'branch_id = :id', ['id' => $branchId]);
+            // Salary notices reference users (created_by, user_id) without
+            // cascading; their screenshots go once the delete is durable.
+            PayrollRun::deleteForBranch($db, $branchId);
             $documentPaths = array_map(
                 static fn (array $row): string => EmployeeDocument::filePath($row),
                 $db->all('SELECT stored_filename FROM employee_documents WHERE branch_id = :id', ['id' => $branchId])

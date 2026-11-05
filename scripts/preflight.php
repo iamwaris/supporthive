@@ -77,6 +77,14 @@ check('pdo_mysql loaded', extension_loaded('pdo_mysql'));
 check('mbstring loaded', extension_loaded('mbstring'));
 check('fileinfo loaded', extension_loaded('fileinfo'), 'needed for upload MIME detection');
 check('openssl loaded', extension_loaded('openssl'));
+// Salary notices (PAY-1) read .xlsx through ZipArchive + XMLReader. Without
+// them an .xlsx upload is refused with a clear message and CSV still works,
+// so this is a warning rather than a failure.
+warn(
+    'zip and xmlreader loaded (.xlsx salary sheets)',
+    \App\Core\XlsxReader::isAvailable(),
+    'enable extension=zip in php.ini, or upload salary sheets as .csv'
+);
 check(
     'sodium loaded',
     extension_loaded('sodium'),

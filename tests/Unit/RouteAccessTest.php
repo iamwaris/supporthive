@@ -22,7 +22,17 @@ use ReflectionProperty;
 final class RouteAccessTest extends TestCase
 {
     /** Reachable signed out by design. */
-    private const PUBLIC_PATHS = ['/', '/login', '/dev-login', '/join/submitted', '/join/{token}'];
+    private const PUBLIC_PATHS = [
+        '/',
+        '/login',
+        '/dev-login',
+        '/join/submitted',
+        '/join/{token}',
+        '/salary-notice/{token}',
+        '/salary-notice/{token}/screenshot',
+        '/salary-notice/{token}/confirm',
+        '/salary-notice/{token}/query',
+    ];
 
     private const EMPLOYEE_REACHABLE = [
         'GET /account/password',
@@ -207,6 +217,49 @@ final class RouteAccessTest extends TestCase
             $this->sorted(['GET /join/submitted', 'GET /join/{token}', 'POST /join/{token}']),
             $this->sorted($public)
         );
+    }
+
+    /**
+     * An employee's salary notice opens from the link in their email, signed
+     * in or not: the token is its protection, with CSRF on both answers and
+     * SalaryNoticeController's rate limits.
+     */
+    public function testPublicSalaryNoticeRoutesAreUngatedAndExactlyThese(): void
+    {
+        $public = [];
+        foreach ($this->routes() as $key => $middleware) {
+            if (preg_match('#^(GET|POST) /salary-notice/#', $key) === 1) {
+                $public[] = $key;
+                self::assertSame([], $middleware, "{$key} must be reachable without signing in");
+            }
+        }
+
+        self::assertSame(
+            $this->sorted([
+                'GET /salary-notice/{token}',
+                'GET /salary-notice/{token}/screenshot',
+                'POST /salary-notice/{token}/confirm',
+                'POST /salary-notice/{token}/query',
+            ]),
+            $this->sorted($public)
+        );
+    }
+
+    public function testSalaryNoticeAdministrationIsAdminOnly(): void
+    {
+        $found = 0;
+        foreach ($this->routes() as $key => $middleware) {
+            if (preg_match('#^(GET|POST) /salary-notices(/|$)#', $key) !== 1) {
+                continue;
+            }
+            $found++;
+            self::assertSame(['can:administer'], $middleware, $key);
+            self::assertContains($key, $this->reachableBy(Access::ADMIN));
+            self::assertNotContains($key, $this->reachableBy(Access::EMPLOYEE));
+            self::assertNotContains($key, $this->reachableBy(Access::PARTNER));
+        }
+
+        self::assertSame(10, $found);
     }
 
     public function testRegisterIsReadableWithViewAndChangeableOnlyWithWrite(): void

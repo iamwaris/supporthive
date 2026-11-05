@@ -95,13 +95,20 @@ final class Http
 
     /**
      * A request URI or path made safe for a log line: the secret token in a
-     * public joining link (/join/{token}) becomes /join/[redacted]. Whoever
-     * reads the logs must not be able to open someone's joining form.
+     * public joining link (/join/{token}) becomes /join/[redacted], and in a
+     * salary notice link (/salary-notice/{token}) likewise. Whoever reads the
+     * logs must not be able to open someone's form or salary notice.
      * /join/submitted carries nothing secret and is kept as it is.
      */
     public static function redactForLog(string $uriOrPath): string
     {
-        return (string) preg_replace('#/join/(?!submitted(?:[/?\#]|$))[^/?\#]+#', '/join/[redacted]', $uriOrPath);
+        $redacted = (string) preg_replace(
+            '#/join/(?!submitted(?:[/?\#]|$))[^/?\#]+#',
+            '/join/[redacted]',
+            $uriOrPath
+        );
+
+        return (string) preg_replace('#/salary-notice/[^/?\#]+#', '/salary-notice/[redacted]', $redacted);
     }
 
     /**
@@ -274,25 +281,29 @@ final class Http
         header('Referrer-Policy: no-referrer');
     }
 
-    /** The public joiner pages, /join and everything under it. */
-    public static function isPublicJoinPath(): bool
+    /**
+     * The public pages opened by a secret link: the joiner form (/join/...)
+     * and an employee's salary notice (/salary-notice/...).
+     */
+    public static function isPublicTokenPath(): bool
     {
         $path = self::path();
 
-        return $path === '/join' || str_starts_with($path, '/join/');
+        return $path === '/join' || str_starts_with($path, '/join/') || str_starts_with($path, '/salary-notice/');
     }
 
     public static function abort(int $status, string $message = ''): never
     {
         http_response_code($status);
 
-        // Someone holding a joining link must learn nothing about whose it
-        // is: a rate limit or an expired form there gets the same unbranded
-        // page as a dead link, never the app's own error pages.
-        if (self::isPublicJoinPath()) {
+        // Someone holding a joining or salary notice link must learn nothing
+        // about whose it is: a rate limit or an expired form there gets the
+        // same unbranded page as a dead link, never the app's own error pages.
+        if (self::isPublicTokenPath()) {
             self::sendPrivatePageHeaders();
             [$heading, $text] = match ($status) {
                 429 => ['Too many attempts', 'Please wait a while, then try again.'],
+                413 => ['That was too much to send', 'Please shorten your answer and try again.'],
                 419 => ['Your form timed out before it was sent', 'Nothing was saved. Please open the link again.'],
                 default => ['This link is no longer active', 'Please ask the person who sent it to you for a new one.'],
             };

@@ -13,7 +13,8 @@
  *   role:<a,b>        exact role list (super admin's branch screens only)
  *
  * tests/Unit/RouteAccessTest.php loads this file and asserts every route but
- * /, /login, /dev-login and the public /join form carries a gate, and snapshots exactly which routes
+ * /, /login, /dev-login, the public /join form and the public
+ * /salary-notice pages carries a gate, and snapshots exactly which routes
  * an employee (and a partner) can reach. A new route changes that snapshot on
  * purpose, never by accident.
  */
@@ -45,6 +46,25 @@ $router->get('/join/{token}', 'JoinController@show');
 // tab, a cached page), not an attack: send the visitor back to a fresh form
 // with their safe fields kept instead of a dead-end 419. Nothing is stored.
 $router->post('/join/{token}', 'JoinController@submit', [], 'JoinController@recoverLostSession');
+
+// An employee's own salary notice (PAY-1). Deliberately ungated like /join:
+// the token in the URL selects exactly one notice line, and
+// SalaryNoticeController rate-limits per IP and per token. Both answers
+// are POST + CSRF and final for that send.
+$router->get('/salary-notice/{token}', 'SalaryNoticeController@show');
+$router->get('/salary-notice/{token}/screenshot', 'SalaryNoticeController@screenshot');
+$router->post(
+    '/salary-notice/{token}/confirm',
+    'SalaryNoticeController@confirm',
+    [],
+    'SalaryNoticeController@recoverLostSession'
+);
+$router->post(
+    '/salary-notice/{token}/query',
+    'SalaryNoticeController@query',
+    [],
+    'SalaryNoticeController@recoverLostSession'
+);
 
 // --- Authentication -------------------------------------------------------
 $router->get('/login', 'AuthController@showLogin', ['guest']);
@@ -119,6 +139,22 @@ $router->get('/joiners/{id}', 'JoinerController@show', ['can:administer']);
 $router->post('/joiners/{id}/approve', 'JoinerController@approve', ['can:administer']);
 // Hard delete of a pending submission; POST only, so no GET can ever remove one.
 $router->post('/joiners/{id}/delete', 'JoinerController@destroy', ['can:administer']);
+
+// Salary notices (PAY-1): the monthly payroll sign-off. Admin work; every
+// run and line id is resolved branch-scoped in PayrollController, so
+// another branch's id is a 404. /salary-notices/new is literal, so it
+// resolves before /salary-notices/{id}.
+$router->get('/salary-notices', 'PayrollController@index', ['can:administer']);
+$router->get('/salary-notices/new', 'PayrollController@create', ['can:administer']);
+$router->post('/salary-notices', 'PayrollController@import', ['can:administer']);
+$router->get('/salary-notices/{id}', 'PayrollController@show', ['can:administer']);
+$router->post('/salary-notices/{id}/note', 'PayrollController@updateNote', ['can:administer']);
+$router->post('/salary-notices/{id}/send', 'PayrollController@sendAll', ['can:administer']);
+$router->post('/salary-notices/{id}/lines/{line}', 'PayrollController@updateLine', ['can:administer']);
+$router->post('/salary-notices/{id}/lines/{line}/send', 'PayrollController@sendLine', ['can:administer']);
+$router->post('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@uploadScreenshot', ['can:administer']);
+// Streamed from storage/documents, never a public path.
+$router->get('/salary-notices/{id}/lines/{line}/screenshot', 'PayrollController@screenshot', ['can:administer']);
 
 $router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
 $router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);
