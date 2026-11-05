@@ -17,6 +17,7 @@ use App\Models\JoinerSubmission;
 use App\Services\Audit;
 use App\Services\BankDetails;
 use App\Services\EmployeeOnboarding;
+use PDOException;
 
 /**
  * New joiners, admin only (`can:administer`), scoped to the admin's branch:
@@ -56,7 +57,10 @@ final class JoinerController extends Controller
 
         $masks = [];
         foreach ($rows as $row) {
-            $masks[(int) $row['id']] = BankDetails::maskedSummary($row, 'joiner_submissions', (int) $row['id']);
+            // Approved rows hold no bank details any more (moved to the employee).
+            $masks[(int) $row['id']] = $status === 'pending'
+                ? BankDetails::maskedSummary($row, 'joiner_submissions', (int) $row['id'])
+                : null;
         }
 
         $pending = $status === 'pending' ? $total : $submissions->countWithStatus('pending');
@@ -92,7 +96,10 @@ final class JoinerController extends Controller
             'pageTitle' => (string) $submission['name'],
             'pageMeta' => 'Submitted ' . date('j M Y, H:i', (int) strtotime((string) $submission['created_at'])),
             'submission' => $submission,
-            'bankDetails' => BankDetails::decrypt($submission, 'joiner_submissions', $id),
+            // Only a pending row still holds them; see JoinerSubmission::markApproved().
+            'bankDetails' => (string) $submission['status'] === 'pending'
+                ? BankDetails::decrypt($submission, 'joiner_submissions', $id)
+                : null,
             'defaults' => [
                 'designation' => EmployeeOnboarding::DEFAULT_DESIGNATION,
                 'salary' => EmployeeOnboarding::DEFAULT_STARTING_SALARY,
@@ -134,7 +141,40 @@ final class JoinerController extends Controller
         $startingSalary = EmployeeOnboarding::startingSalary($clean);
         $submissions = new JoinerSubmission();
 
-        $created = Database::instance()->transaction(
+        try {
+            $created = $this->approveInTransaction($submissions, $id, $fields, $startingSalary);
+        } catch (PDOException $e) {
+            // Another approval or employee took the email or Employee ID
+            // between the check above and this write.
+            $this->failWithFieldErrors(EmployeeOnboarding::conflictsFromDuplicate($e, $fields), $back . '#approve');
+        }
+
+        if ($created === null) {
+            Session::flash('error', 'This joiner has already been reviewed.');
+            Http::redirect($back);
+        }
+
+        Logger::security('Joiner approved', ['submission_id' => $id, 'user_id' => $created['id'], 'by' => Auth::id()]);
+        Session::flash(
+            'success',
+            EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])
+        );
+        Http::redirect('/employees/' . $created['id']);
+    }
+
+    /**
+     * @param array{
+     *     name:string,email:string,phone:?string,designation:string,joining_date:?string,employee_code:?string
+     * } $fields
+     * @return array{id:int,temporaryPassword:string}|null null when the row is no longer pending
+     */
+    private function approveInTransaction(
+        JoinerSubmission $submissions,
+        int $id,
+        array $fields,
+        ?string $startingSalary
+    ): ?array {
+        return Database::instance()->transaction(
             static function () use ($submissions, $id, $fields, $startingSalary): ?array {
                 $locked = $submissions->lockPending($id);
                 if ($locked === null) {
@@ -159,18 +199,6 @@ final class JoinerController extends Controller
                 return $created;
             }
         );
-
-        if ($created === null) {
-            Session::flash('error', 'This joiner has already been reviewed.');
-            Http::redirect($back);
-        }
-
-        Logger::security('Joiner approved', ['submission_id' => $id, 'user_id' => $created['id'], 'by' => Auth::id()]);
-        Session::flash(
-            'success',
-            EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])
-        );
-        Http::redirect('/employees/' . $created['id']);
     }
 
     /**

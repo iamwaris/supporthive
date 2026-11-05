@@ -7,11 +7,15 @@ namespace Tests\Feature;
 use App\Controllers\EmployeeController;
 use App\Controllers\PortalController;
 use App\Controllers\UserController;
+use App\Core\Config;
 use App\Core\Database;
 use App\Models\EmployeeProfile;
 use App\Services\BankDetails;
 use App\Services\EmployeeOnboarding;
+use PDOException;
 use PHPUnit\Framework\TestCase;
+use ReflectionProperty;
+use RuntimeException;
 use Tests\Support\BranchFixture;
 use Tests\Support\ControllerActionRunner;
 
@@ -482,5 +486,112 @@ final class EmployeeCodeAndBankDetailsTest extends TestCase
         self::assertStringContainsString('Unavailable', $show['body']);
         self::assertSame(200, $index['status']);
         self::assertStringContainsString('Unavailable', $index['body']);
+    }
+
+    // --- Duplicate-key race ---------------------------------------------------
+
+    /**
+     * Two requests both pass conflicts(), then the second write hits the
+     * unique key. Reproduced here by doing exactly that write after the
+     * conflicting row exists: the genuine PDOException must come back as the
+     * same field error conflicts() gives, not an error page.
+     */
+    public function testALostRaceOnTheEmployeeIdBecomesAFieldError(): void
+    {
+        $other = (new EmployeeProfile())->createWithLogin([
+            'name' => 'Ecbd Other',
+            'email' => 'ecbd-other@test.local',
+            'phone' => null,
+            'designation' => 'Technician',
+            'joining_date' => null,
+            'employee_code' => 'RACE-1',
+        ], password_hash('unused', PASSWORD_DEFAULT));
+        self::assertGreaterThan(0, $other);
+        $fields = ['email' => 'ecbd-employee@test.local', 'employee_code' => 'RACE-1'];
+
+        try {
+            Database::instance()->update(
+                'employee_profiles',
+                ['employee_code' => 'RACE-1'],
+                'user_id = :id',
+                ['id' => $this->employeeAId]
+            );
+            self::fail('The unique key must reject a second RACE-1 in the branch.');
+        } catch (PDOException $e) {
+            self::assertSame(
+                ['employee_code' => 'Another employee in this branch already has that Employee ID.'],
+                EmployeeOnboarding::conflictsFromDuplicate($e, $fields, $this->employeeAId)
+            );
+        }
+    }
+
+    public function testALostRaceOnTheEmailBecomesAFieldError(): void
+    {
+        try {
+            $this->insertUser('ecbd-employee@test.local', 'employee', $this->branchAId);
+            self::fail('The unique key must reject a second login with this email.');
+        } catch (PDOException $e) {
+            self::assertSame(
+                ['email' => 'That email is already in use by another account.'],
+                EmployeeOnboarding::conflictsFromDuplicate(
+                    $e,
+                    ['email' => 'ecbd-employee@test.local', 'employee_code' => null]
+                )
+            );
+        }
+    }
+
+    public function testOtherDatabaseFailuresAreNotDisguisedAsFieldErrors(): void
+    {
+        // A foreign-key failure (SQLSTATE 23000 too, but not a duplicate).
+        try {
+            Database::instance()->insert('employee_profiles', [
+                'user_id' => 999999999,
+                'branch_id' => $this->branchAId,
+                'designation' => 'Nobody',
+            ]);
+            self::fail('The foreign key must reject an unknown user.');
+        } catch (PDOException $e) {
+            try {
+                $fields = ['email' => 'ecbd-new@test.local', 'employee_code' => null];
+                EmployeeOnboarding::conflictsFromDuplicate($e, $fields);
+                self::fail('A non-duplicate failure must be rethrown.');
+            } catch (PDOException $rethrown) {
+                self::assertSame($e, $rethrown);
+            }
+        }
+
+        // A duplicate that no longer matches a field (nothing to show) is rethrown too.
+        try {
+            $this->insertUser('ecbd-employee@test.local', 'employee', $this->branchAId);
+        } catch (PDOException $e) {
+            $this->expectException(PDOException::class);
+            $fields = ['email' => 'ecbd-free@test.local', 'employee_code' => null];
+            EmployeeOnboarding::conflictsFromDuplicate($e, $fields);
+        }
+    }
+
+    // --- Missing key ----------------------------------------------------------
+
+    public function testAFormWithNoBankDetailsNeverNeedsTheKey(): void
+    {
+        $items = new ReflectionProperty(Config::class, 'items');
+        $original = $items->getValue();
+        self::assertIsArray($original);
+        $withoutKey = $original;
+        $withoutKey['app']['encryption_key'] = '';
+        $items->setValue(null, $withoutKey);
+
+        try {
+            self::assertSame(
+                ['bank_name_enc' => null, 'bank_account_number_enc' => null, 'bank_iban_enc' => null],
+                BankDetails::encrypt(['bank_name' => null, 'bank_account_number' => '', 'bank_iban' => null])
+            );
+
+            $this->expectException(RuntimeException::class);
+            BankDetails::encrypt(['bank_name' => self::BANK, 'bank_account_number' => null, 'bank_iban' => null]);
+        } finally {
+            $items->setValue(null, $original);
+        }
     }
 }

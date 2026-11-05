@@ -18,6 +18,7 @@ use App\Models\User;
 use App\Services\Audit;
 use App\Services\BankDetails;
 use App\Services\EmployeeOnboarding;
+use PDOException;
 
 /**
  * Employee management, admin only (`can:administer`), scoped to the admin's
@@ -102,7 +103,11 @@ final class EmployeeController extends Controller
             $this->failWithFieldErrors($conflicts, '/employees/new');
         }
 
-        $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
+        try {
+            $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
+        } catch (PDOException $e) {
+            $this->failWithFieldErrors(EmployeeOnboarding::conflictsFromDuplicate($e, $fields), '/employees/new');
+        }
         Session::flash(
             'success',
             EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])
@@ -184,7 +189,11 @@ final class EmployeeController extends Controller
             $this->failWithFieldErrors($conflicts, $back);
         }
 
-        (new EmployeeProfile())->updateWithLogin($id, $fields);
+        try {
+            (new EmployeeProfile())->updateWithLogin($id, $fields);
+        } catch (PDOException $e) {
+            $this->failWithFieldErrors(EmployeeOnboarding::conflictsFromDuplicate($e, $fields, $id), $back);
+        }
 
         $before = array_intersect_key($employee, $fields);
         $diff = Audit::diff($before, $fields);

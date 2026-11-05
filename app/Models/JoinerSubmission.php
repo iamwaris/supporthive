@@ -17,7 +17,8 @@ use App\Core\Model;
  * included. There is no rejected state.
  *
  * Bank details are stored only as App\Core\SecretBox ciphertext from the
- * moment of submission (App\Services\BankDetails).
+ * moment of submission (App\Services\BankDetails), and only while the row
+ * is pending: approval moves them to the employee and clears them here.
  *
  * Every admin read and write is scoped to the session's branch (Model). The
  * one write without a session branch, submit(), takes the branch the link
@@ -108,6 +109,12 @@ final class JoinerSubmission extends Model
         );
     }
 
+    /**
+     * Also clears the submission's bank ciphertext: by now it has been
+     * copied to the employee, which is the one place it lives from here on.
+     * Keeping a second copy would leave a stale full IBAN here after any
+     * later correction on the employee.
+     */
     public function markApproved(int $id, int $employeeUserId): void
     {
         $this->db()->update(
@@ -115,6 +122,9 @@ final class JoinerSubmission extends Model
             [
                 'status' => 'approved',
                 'employee_user_id' => $employeeUserId,
+                'bank_name_enc' => null,
+                'bank_account_number_enc' => null,
+                'bank_iban_enc' => null,
                 'reviewed_by' => Auth::id(),
                 'reviewed_at' => date('Y-m-d H:i:s'),
             ],

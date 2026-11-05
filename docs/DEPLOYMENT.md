@@ -254,7 +254,7 @@ and re-run); **2** a branch was skipped as above. The script is idempotent: a
 second run posts nothing. Until it has run, those legacy open entries cannot
 be settled (the screen says so); everything else works.
 
-**JOIN-1 (migrations `2026_11_05_000021` and `000022`, 2026-11-05): bank-detail
+**JOIN-1 (migrations `2026_11_05_000021` to `000023`, 2026-11-05): bank-detail
 encryption key.** Do these **before** pushing the commit that adds them — the
 deploy job refuses to run while the secret is missing:
 

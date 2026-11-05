@@ -10,6 +10,7 @@ use App\Core\Logger;
 use App\Models\EmployeeProfile;
 use App\Models\EmployeeSalary;
 use App\Models\User;
+use PDOException;
 
 /**
  * The one way an employee login is created, whichever screen asked for it
@@ -96,6 +97,33 @@ final class EmployeeOnboarding
             && (new EmployeeProfile())->employeeCodeExists($fields['employee_code'], $exceptUserId)
         ) {
             $conflicts['employee_code'] = 'Another employee in this branch already has that Employee ID.';
+        }
+
+        return $conflicts;
+    }
+
+    /**
+     * The race conflicts() cannot close: two requests both pass the check,
+     * and the second write hits a unique key (users.email or the branch's
+     * Employee ID). Turns that into the same field errors conflicts() would
+     * have given, instead of an error page. Anything else — another kind of
+     * failure, or a duplicate that is not one of these fields — is rethrown.
+     *
+     * @param array{email:string,employee_code:?string} $fields
+     * @return array<string,string> field => message, never empty
+     * @throws PDOException
+     */
+    public static function conflictsFromDuplicate(PDOException $e, array $fields, ?int $exceptUserId = null): array
+    {
+        // 1062 is "duplicate entry" on both MySQL and MariaDB; SQLSTATE
+        // 23000 alone would also match foreign-key and NOT NULL failures.
+        if ((int) ($e->errorInfo[1] ?? 0) !== 1062) {
+            throw $e;
+        }
+
+        $conflicts = self::conflicts($fields, $exceptUserId);
+        if ($conflicts === []) {
+            throw $e;
         }
 
         return $conflicts;

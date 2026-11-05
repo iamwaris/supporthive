@@ -219,9 +219,52 @@ final class Http
         return str_ends_with(strtolower($name), $suffix) ? substr($name, 0, -strlen($suffix)) : $name;
     }
 
+    /**
+     * For pages that carry a secret in their URL and personal data in their
+     * body (the public joiner form): keep them out of search engines,
+     * caches and other sites' Referer logs.
+     */
+    public static function sendPrivatePageHeaders(): void
+    {
+        if (headers_sent()) {
+            return;
+        }
+
+        header('X-Robots-Tag: noindex, nofollow, noarchive');
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Referrer-Policy: no-referrer');
+    }
+
+    /** The public joiner pages, /join and everything under it. */
+    public static function isPublicJoinPath(): bool
+    {
+        $path = self::path();
+
+        return $path === '/join' || str_starts_with($path, '/join/');
+    }
+
     public static function abort(int $status, string $message = ''): never
     {
         http_response_code($status);
+
+        // Someone holding a joining link must learn nothing about whose it
+        // is: a rate limit or an expired form there gets the same unbranded
+        // page as a dead link, never the app's own error pages.
+        if (self::isPublicJoinPath()) {
+            self::sendPrivatePageHeaders();
+            [$heading, $text] = match ($status) {
+                429 => ['Too many attempts', 'Please wait a while, then try again.'],
+                419 => ['This page has expired', 'Go back, reload the form and submit it again.'],
+                default => ['This link is no longer active', 'Please ask the person who sent it to you for a new one.'],
+            };
+            echo View::capture(
+                'pages/join/message',
+                ['title' => $heading, 'heading' => $heading, 'text' => $text],
+                'layouts/public'
+            );
+            exit;
+        }
         $view = APP_PATH . '/Views/errors/' . $status . '.php';
         if (!is_file($view)) {
             $view = APP_PATH . '/Views/errors/500.php';

@@ -78,11 +78,19 @@ final class BankDetails
      */
     public static function encrypt(array $clean): array
     {
-        $box = SecretBox::fromConfig();
+        // Built only for a value that needs it, so a form with no bank
+        // details never depends on the key (or the extension) at all.
+        $box = null;
         $columns = [];
         foreach (self::COLUMNS as $field => $column) {
             $value = $clean[$field] ?? null;
-            $columns[$column] = $value === null || $value === '' ? null : $box->encrypt((string) $value);
+            if ($value === null || $value === '') {
+                $columns[$column] = null;
+                continue;
+            }
+
+            $box ??= SecretBox::fromConfig();
+            $columns[$column] = $box->encrypt((string) $value);
         }
 
         return $columns;

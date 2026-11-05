@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\Access;
 use App\Services\Audit;
 use App\Services\EmployeeOnboarding;
+use PDOException;
 
 /**
  * In-app user management, admin only (`can:administer`), scoped to the
@@ -87,7 +88,15 @@ final class UserController extends Controller
                 Session::flash('error', 'Please correct the highlighted fields.');
                 Http::redirect('/users');
             }
-            $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
+            try {
+                $created = EmployeeOnboarding::create($fields, EmployeeOnboarding::startingSalary($clean));
+            } catch (PDOException $e) {
+                $raced = EmployeeOnboarding::conflictsFromDuplicate($e, $fields);
+                Session::set('_old', $_POST);
+                Session::flash('errors', array_map(static fn (string $message): array => [$message], $raced));
+                Session::flash('error', 'Please correct the highlighted fields.');
+                Http::redirect('/users');
+            }
             Session::flash(
                 'success',
                 EmployeeOnboarding::credentialsNotice($fields['name'], $fields['email'], $created['temporaryPassword'])

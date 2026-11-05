@@ -3,10 +3,12 @@
 /**
  * One joiner's submission — admin only. Everything they sent, bank details
  * in full (admin-only, like the employee page), and, while it is pending,
- * the approve and delete forms.
+ * the approve and delete forms. Once approved the bank details live only on
+ * the employee, so this page points there instead.
  *
  * @var array<string,mixed>        $submission  JoinerSubmission::findWithReviewer()
- * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>} $bankDetails
+ * @var array{bank_name:?string,bank_account_number:?string,bank_iban:?string,unavailable:list<string>}|null $bankDetails
+ *      null once approved
  * @var array<string,string>       $defaults    owner's defaults for designation and salary
  * @var array<string,list<string>> $errors
  */
@@ -21,6 +23,9 @@ $status = (string) $submission['status'];
 $isPending = $status === 'pending';
 $day = static fn (mixed $date): string => date('j M Y', (int) strtotime((string) $date));
 $bankShown = static function (string $field) use ($bankDetails): string {
+    if ($bankDetails === null) {
+        return 'Not given';
+    }
     if (in_array($field, $bankDetails['unavailable'], true)) {
         return 'Unavailable';
     }
@@ -33,10 +38,14 @@ $rows = [
     'Email' => (string) $submission['email'],
     'Phone' => $submission['phone'] !== null ? (string) $submission['phone'] : 'Not given',
     'Joining date' => $submission['joining_date'] !== null ? $day($submission['joining_date']) : 'Not given',
-    'Bank name' => $bankShown('bank_name'),
-    'Account number' => $bankShown('bank_account_number'),
-    'IBAN' => $bankShown('bank_iban'),
 ];
+if ($bankDetails !== null) {
+    $rows += [
+        'Bank name' => $bankShown('bank_name'),
+        'Account number' => $bankShown('bank_account_number'),
+        'IBAN' => $bankShown('bank_iban'),
+    ];
+}
 
 $approveFailed = array_intersect_key(
     $errors,
@@ -83,12 +92,22 @@ $approveFields = [
                     </div>
                 <?php endforeach; ?>
             </dl>
-            <p class="help mt-5">
-                Bank details are visible to admins only and stored encrypted.
-                <?php if ($bankDetails['unavailable'] !== []) : ?>
-                    “Unavailable” means a stored value could not be decrypted.
-                <?php endif; ?>
-            </p>
+            <?php if ($bankDetails !== null) : ?>
+                <p class="help mt-5">
+                    Bank details are visible to admins only and stored encrypted.
+                    <?php if ($bankDetails['unavailable'] !== []) : ?>
+                        “Unavailable” means a stored value could not be decrypted.
+                    <?php endif; ?>
+                </p>
+            <?php elseif ($submission['employee_user_id'] !== null) : ?>
+                <p class="mt-5 text-sm text-slate-700">
+                    Bank details moved to the employee record.
+                    <a href="<?= e(url('/employees/' . (int) $submission['employee_user_id'] . '#bank-details')) ?>"
+                       class="font-medium text-ink underline">See them there</a>.
+                </p>
+            <?php else : ?>
+                <p class="mt-5 text-sm text-slate-700">Bank details moved to the employee record.</p>
+            <?php endif; ?>
 
             <?php if (!$isPending) : ?>
                 <div class="mt-5 border-t border-slate-200 pt-4 text-sm text-slate-700">

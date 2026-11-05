@@ -7,7 +7,7 @@
  * @var array<string,mixed>|null   $link        EmployeeJoinLink::current()
  * @var string|null                $newLinkUrl  the full URL, only right after generating it
  * @var list<array<string,mixed>>  $submissions
- * @var array<int,string|null>     $bankMasks   submission id => masked account number or IBAN
+ * @var array<int,string|null>     $bankMasks   submission id => masked account number or IBAN (pending rows only)
  * @var string                     $status      pending | approved
  * @var int                        $total
  * @var int                        $page
@@ -75,6 +75,13 @@ $pageUrl = static function (int $target) use ($status): string {
         <?php if ($link !== null) : ?>
             <p class="mt-3 text-[11.5px] text-slate-500">
                 Generated <?= e($when($link['generated_at'])) ?> by <?= e((string) ($link['generated_by_name'] ?? 'Unknown')) ?>.
+            </p>
+            <?php $blocked = (int) $link['blocked_count']; ?>
+            <p class="mt-1 text-[11.5px] text-slate-500">
+                <?= e($blocked === 1 ? '1 submission blocked as automated' : number_format($blocked) . ' submissions blocked as automated') ?>
+                <?php if ($blocked > 0) : ?>
+                    — if a new starter says their form did not arrive, ask them to fill it in again, more slowly.
+                <?php endif; ?>
             </p>
         <?php endif; ?>
 
@@ -152,7 +159,7 @@ $pageUrl = static function (int $target) use ($status): string {
                             </td>
                             <td class="td money hidden text-slate-600 md:table-cell"><?= e((string) ($row['phone'] ?? '—')) ?></td>
                             <td class="td hidden whitespace-nowrap text-slate-600 sm:table-cell"><?= e($when($row['created_at'])) ?></td>
-                            <td class="td money hidden whitespace-nowrap text-slate-600 lg:table-cell"><?= e($bankMasks[$id] ?? '—') ?></td>
+                            <td class="td money hidden whitespace-nowrap text-slate-600 lg:table-cell"><?= e($status === 'pending' ? ($bankMasks[$id] ?? '—') : 'Moved to employee') ?></td>
                             <td class="td text-right whitespace-nowrap">
                                 <a href="<?= e(url('/joiners/' . $id)) ?>" class="btn-secondary"
                                    aria-label="<?= e(($status === 'pending' ? 'Review ' : 'View ') . (string) $row['name']) ?>">

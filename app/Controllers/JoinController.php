@@ -46,8 +46,12 @@ final class JoinController extends Controller
     private const VIEW_PER_IP = 120;
     private const WINDOW_SECONDS = 3600;
 
-    /** Not a real field; a person never sees or fills it. */
-    public const HONEYPOT = 'website';
+    /**
+     * Not a real field; a person never sees or fills it. Named so that no
+     * password manager or browser autofill recognises it ("website", "url"
+     * and the like get filled for real people), and rendered autocomplete=off.
+     */
+    public const HONEYPOT = 'hp_contact_ref';
 
     private const STARTED_KEY = '_join_form_started_at';
     private const SUBMITTED_KEY = '_join_submitted';
@@ -62,7 +66,7 @@ final class JoinController extends Controller
     /** @param array<string,string> $params */
     public function show(array $params): void
     {
-        self::sendPrivacyHeaders();
+        Http::sendPrivatePageHeaders();
         RateLimiter::guard('join-view-ip:' . Http::clientIp(), self::VIEW_PER_IP, self::WINDOW_SECONDS);
 
         $token = (string) ($params['token'] ?? '');
@@ -80,7 +84,7 @@ final class JoinController extends Controller
     /** @param array<string,string> $params */
     public function submit(array $params): void
     {
-        self::sendPrivacyHeaders();
+        Http::sendPrivatePageHeaders();
 
         if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > self::MAX_BODY_BYTES) {
             Logger::security('Joiner form rejected: body too large', ['ip' => Http::clientIp()]);
@@ -105,6 +109,7 @@ final class JoinController extends Controller
         $honeypot = $_POST[self::HONEYPOT] ?? '';
         if (!is_string($honeypot) || $honeypot !== '') {
             Logger::security('Joiner form honeypot filled', ['ip' => Http::clientIp(), 'branch_id' => $branchId]);
+            EmployeeJoinLink::recordBlocked($token);
             $this->finish();
         }
 
@@ -112,6 +117,7 @@ final class JoinController extends Controller
         $startedAt = Session::get(self::STARTED_KEY);
         if (!is_int($startedAt) || time() - $startedAt < self::MIN_SECONDS_ON_FORM) {
             Logger::security('Joiner form submitted too quickly', ['ip' => Http::clientIp(), 'branch_id' => $branchId]);
+            EmployeeJoinLink::recordBlocked($token);
             Session::set('_old', array_diff_key($_POST, array_flip(BankDetails::NOT_FLASHED)));
             Session::flash('error', 'Please take a moment to check your details, then submit again.');
             Http::redirect($back);
@@ -142,7 +148,7 @@ final class JoinController extends Controller
      */
     public function submitted(): void
     {
-        self::sendPrivacyHeaders();
+        Http::sendPrivatePageHeaders();
 
         if (Session::get(self::SUBMITTED_KEY) !== true) {
             $this->inactive();
@@ -209,21 +215,5 @@ final class JoinController extends Controller
             'text' => $text,
         ], 'layouts/public');
         exit;
-    }
-
-    /**
-     * The form carries a secret in its URL and personal data in its body:
-     * keep it out of search engines, caches and other sites' Referer logs.
-     */
-    private static function sendPrivacyHeaders(): void
-    {
-        if (headers_sent()) {
-            return;
-        }
-
-        header('X-Robots-Tag: noindex, nofollow, noarchive');
-        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-        header('Pragma: no-cache');
-        header('Referrer-Policy: no-referrer');
     }
 }

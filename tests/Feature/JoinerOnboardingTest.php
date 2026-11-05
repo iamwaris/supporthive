@@ -262,6 +262,11 @@ final class JoinerOnboardingTest extends TestCase
 
         self::assertSame(200, $result['status']);
         self::assertStringContainsString('name="bank_iban"', $result['body']);
+        self::assertStringContainsString(
+            'name="hp_contact_ref" type="text" value="" tabindex="-1" autocomplete="off"',
+            $result['body']
+        );
+        self::assertStringNotContainsString('name="website"', $result['body']);
         self::assertStringContainsString('noindex', $result['body']);
         foreach (['name="designation"', 'name="salary"', 'name="employee_code"', 'JNR-A'] as $absent) {
             self::assertStringNotContainsString($absent, $result['body']);
@@ -521,6 +526,111 @@ final class JoinerOnboardingTest extends TestCase
         self::assertArrayHasKey('employee_code', $result['session']['_flash']['errors'] ?? []);
         self::assertSame('pending', $this->onlySubmission()['status']);
         self::assertNull(Database::instance()->value("SELECT id FROM users WHERE email = 'jnr-joiner@test.local'"));
+    }
+
+    public function testApprovalMovesTheBankDetailsSoTheSubmissionKeepsNoCopy(): void
+    {
+        $id = $this->submitValid();
+        $before = $this->onlySubmission();
+
+        $this->admin('approve', $this->approvePost(), ['id' => (string) $id]);
+
+        $after = $this->onlySubmission();
+        self::assertNull($after['bank_name_enc']);
+        self::assertNull($after['bank_account_number_enc']);
+        self::assertNull($after['bank_iban_enc']);
+        $employeeId = (int) $after['employee_user_id'];
+        $profile = (array) Database::instance()->first(
+            'SELECT bank_name_enc, bank_account_number_enc, bank_iban_enc FROM employee_profiles WHERE user_id = :id',
+            ['id' => $employeeId]
+        );
+        self::assertSame($before['bank_iban_enc'], $profile['bank_iban_enc']);
+        self::assertSame($before['bank_account_number_enc'], $profile['bank_account_number_enc']);
+        self::assertSame($before['bank_name_enc'], $profile['bank_name_enc']);
+
+        $page = $this->admin('show', [], ['id' => (string) $id], null, 'GET');
+        self::assertSame(200, $page['status']);
+        self::assertStringContainsString('Bank details moved to the employee record', $page['body']);
+        self::assertStringContainsString('/employees/' . $employeeId . '#bank-details', $page['body']);
+        self::assertStringNotContainsString(self::IBAN, $page['body']);
+        self::assertStringNotContainsString(self::ACCOUNT, $page['body']);
+
+        $list = $this->admin('index', [], [], null, 'GET');
+        self::assertStringContainsString('No joiners waiting for review', $list['body']);
+        $approved = ControllerActionRunner::run(
+            RouteDispatch::class,
+            'dispatch',
+            $this->sessionA(),
+            [],
+            [],
+            'GET',
+            ['uri' => '/joiners?status=approved']
+        );
+        self::assertSame(200, $approved['status']);
+        self::assertStringContainsString('Moved to employee', $approved['body']);
+        self::assertStringNotContainsString('****', $approved['body']);
+    }
+
+    public function testBlockedSubmissionsAreCountedPerLinkAndShownToTheAdmin(): void
+    {
+        $this->submit($this->joinerPost('jnr-joiner@test.local', [JoinController::HONEYPOT => 'filled']));
+        $this->submit($this->joinerPost(), null, ['_join_form_started_at' => time()]);
+        $this->submit($this->joinerPost(), null, []);
+        // A real submission is not counted.
+        $this->submit($this->joinerPost());
+
+        $count = static fn (int $branchId): int => (int) Database::instance()->value(
+            'SELECT blocked_count FROM employee_join_links WHERE branch_id = :b',
+            ['b' => $branchId]
+        );
+        self::assertSame(3, $count($this->branchAId));
+
+        $panel = $this->admin('index', [], [], null, 'GET');
+        self::assertStringContainsString('3 submissions blocked as automated', $panel['body']);
+
+        // Per link: a regenerated link starts again from zero.
+        $this->admin('regenerateLink');
+        self::assertSame(0, $count($this->branchAId));
+    }
+
+    public function testRateLimitAndExpiredFormPagesUnderJoinAreNeutral(): void
+    {
+        $expired = ControllerActionRunner::run(
+            RouteDispatch::class,
+            'dispatch',
+            [],
+            $this->joinerPost(),
+            [],
+            'POST',
+            ['uri' => '/join/' . $this->token]
+        );
+
+        for ($i = 0; $i < 120; $i++) {
+            RateLimiter::hit('join-view-ip:' . self::IP);
+        }
+        $limited = ControllerActionRunner::run(
+            RouteDispatch::class,
+            'dispatch',
+            [],
+            [],
+            [],
+            'GET',
+            ['uri' => '/join/' . $this->token]
+        );
+
+        self::assertSame(419, $expired['status']);
+        self::assertStringContainsString('This page has expired', $expired['body']);
+        self::assertSame(429, $limited['status']);
+        self::assertStringContainsString('Too many attempts', $limited['body']);
+        foreach ([$expired['body'], $limited['body']] as $body) {
+            self::assertStringContainsString('<meta name="referrer" content="no-referrer">', $body);
+            self::assertStringContainsString('noindex', $body);
+            // None of the app's own error page: no brand, no way into the app.
+            self::assertStringNotContainsString('Back to home', $body);
+            self::assertStringNotContainsString('LedgerHive', $body);
+            self::assertStringNotContainsString('JNR-A', $body);
+        }
+        self::assertSame(0, $this->submissionCount());
     }
 
     public function testApprovalCreatesTheEmployeeWithDefaultsFirstSalaryBankDetailsAndALogin(): void

@@ -19,6 +19,8 @@ final class RouteDispatch
     public function dispatch(array $params): void
     {
         $_SERVER['REQUEST_URI'] = $params['uri'] ?? '/';
+        parse_str((string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_QUERY), $query);
+        $_GET = $query;
         $_SERVER['SCRIPT_NAME'] = '/index.php';
 
         $router = new Router();

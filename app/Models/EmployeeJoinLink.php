@@ -25,13 +25,13 @@ final class EmployeeJoinLink extends Model
     protected string $table = 'employee_join_links';
 
     /** @var list<string> */
-    protected array $fillable = ['token_hash', 'is_active', 'generated_by', 'generated_at'];
+    protected array $fillable = ['token_hash', 'is_active', 'blocked_count', 'generated_by', 'generated_at'];
 
     /** @return array<string,mixed>|null this branch's link with who generated it, or null if none yet */
     public function current(): ?array
     {
         return $this->db()->first(
-            'SELECT l.id, l.is_active, l.generated_at, l.updated_at, u.name AS generated_by_name
+            'SELECT l.id, l.is_active, l.blocked_count, l.generated_at, l.updated_at, u.name AS generated_by_name
              FROM employee_join_links l
              LEFT JOIN users u ON u.id = l.generated_by
              WHERE l.branch_id = :branch
@@ -51,6 +51,8 @@ final class EmployeeJoinLink extends Model
         $columns = [
             'token_hash' => self::hash($token),
             'is_active' => 1,
+            // The count is per link: a new token starts again from zero.
+            'blocked_count' => 0,
             'generated_by' => Auth::id(),
             'generated_at' => date('Y-m-d H:i:s'),
         ];
@@ -110,6 +112,19 @@ final class EmployeeJoinLink extends Model
         );
 
         return $branchId === null ? null : (int) $branchId;
+    }
+
+    /**
+     * One more submission turned away as automated through this token. A
+     * bare counter — nothing about the request is stored — so a person
+     * caught by mistake shows up as a number on the admin's link panel.
+     */
+    public static function recordBlocked(string $token): void
+    {
+        Database::instance()->run(
+            'UPDATE employee_join_links SET blocked_count = blocked_count + 1 WHERE token_hash = :hash',
+            ['hash' => self::hash($token)]
+        );
     }
 
     public static function hash(string $token): string

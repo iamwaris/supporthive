@@ -52,11 +52,11 @@ final class ErrorHandler
             'file'      => $e->getFile(),
             'line'      => $e->getLine(),
             'path'      => $_SERVER['REQUEST_URI'] ?? 'cli',
-            'trace'     => explode("\n", $e->getTraceAsString()),
+            'trace'     => self::traceWithoutArguments($e),
         ]);
 
         if (PHP_SAPI === 'cli') {
-            fwrite(STDERR, $e->getMessage() . PHP_EOL . $e->getTraceAsString() . PHP_EOL);
+            fwrite(STDERR, $e->getMessage() . PHP_EOL . implode(PHP_EOL, self::traceWithoutArguments($e)) . PHP_EOL);
             exit(1);
         }
 
@@ -70,7 +70,7 @@ final class ErrorHandler
             header('Content-Type: text/plain; charset=utf-8');
             echo $e::class . ': ' . $e->getMessage() . "\n";
             echo $e->getFile() . ':' . $e->getLine() . "\n\n";
-            echo $e->getTraceAsString() . "\n";
+            echo implode("\n", self::traceWithoutArguments($e)) . "\n";
             exit(1);
         }
 
@@ -82,5 +82,35 @@ final class ErrorHandler
             echo 'An unexpected error occurred.';
         }
         exit(1);
+    }
+
+    /**
+     * The stack as file:line and function only — never argument values.
+     *
+     * getTraceAsString() prints arguments unless zend.exception_ignore_args
+     * is on, and an argument can be a password, a remember-me cookie or a
+     * bank detail on its way into SecretBox::encrypt(). bootstrap.php turns
+     * that setting on, but the log must not depend on it: this reads only
+     * the frame keys that cannot hold a value.
+     *
+     * @return list<string>
+     */
+    public static function traceWithoutArguments(Throwable $e): array
+    {
+        $lines = [];
+        foreach ($e->getTrace() as $index => $frame) {
+            $lines[] = sprintf(
+                '#%d %s(%s): %s%s%s()',
+                $index,
+                $frame['file'] ?? '[internal function]',
+                isset($frame['line']) ? (string) $frame['line'] : '?',
+                $frame['class'] ?? '',
+                $frame['type'] ?? '',
+                $frame['function']
+            );
+        }
+        $lines[] = '#' . count($lines) . ' {main}';
+
+        return $lines;
     }
 }
