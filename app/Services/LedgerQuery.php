@@ -289,7 +289,9 @@ final class LedgerQuery
                        pc.name AS parent_category_name,
                        p.name  AS partner_name,
                        u.name  AS created_by_name,
-                       v.name  AS voided_by_name
+                       v.name  AS voided_by_name,
+                       pl.run_id AS salary_run_id,
+                       pl.id   AS salary_line_id
                 FROM transactions t
                 JOIN accounts a         ON a.id  = t.account_id
                 LEFT JOIN categories c  ON c.id  = t.category_id
@@ -297,6 +299,7 @@ final class LedgerQuery
                 LEFT JOIN partners p    ON p.id  = t.partner_id
                 JOIN users u            ON u.id  = t.created_by
                 LEFT JOIN users v       ON v.id  = t.voided_by
+                LEFT JOIN payroll_run_lines pl ON pl.paid_transaction_id = t.id AND pl.branch_id = t.branch_id
                 WHERE ' . $this->where() . '
                 ORDER BY ' . $this->orderBy . '
                 LIMIT :take OFFSET :skip';

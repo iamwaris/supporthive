@@ -38,20 +38,26 @@ final class PayrollRunLine extends Model
     /** @var list<string> */
     protected array $fillable = ['salary', 'absent_days', 'working_days', 'screenshot_filename'];
 
+    /** The admin's view of a line: its run's withdrawal, the employee, and the account it was paid from. */
+    private const ADMIN_SELECT = 'SELECT l.*, u.name, u.email, u.status AS user_status,
+                r.withdrawn_at AS run_withdrawn_at, pa.name AS paid_account_name
+             FROM payroll_run_lines l
+             JOIN payroll_runs r ON r.id = l.run_id AND r.branch_id = l.branch_id
+             JOIN users u ON u.id = l.user_id
+             LEFT JOIN accounts pa ON pa.id = l.paid_account_id AND pa.branch_id = l.branch_id';
+
     /**
      * The run's lines with each employee's name and email, by Employee ID.
      * run_withdrawn_at is set when the run was withdrawn (PAY-3): every
-     * notice sent from then on is a correction.
+     * notice sent from then on is a correction. paid_account_name is set
+     * on a line marked as paid (PAY-5).
      *
      * @return list<array<string,mixed>>
      */
     public function forRun(int $runId): array
     {
         return $this->db()->all(
-            'SELECT l.*, u.name, u.email, u.status AS user_status, r.withdrawn_at AS run_withdrawn_at
-             FROM payroll_run_lines l
-             JOIN payroll_runs r ON r.id = l.run_id AND r.branch_id = l.branch_id
-             JOIN users u ON u.id = l.user_id
+            self::ADMIN_SELECT . '
              WHERE l.run_id = :run AND l.branch_id = :branch
              ORDER BY l.employee_code',
             ['run' => $runId, 'branch' => $this->requireBranchId()]
@@ -62,10 +68,7 @@ final class PayrollRunLine extends Model
     public function findInRun(int $runId, int $lineId): ?array
     {
         return $this->db()->first(
-            'SELECT l.*, u.name, u.email, u.status AS user_status, r.withdrawn_at AS run_withdrawn_at
-             FROM payroll_run_lines l
-             JOIN payroll_runs r ON r.id = l.run_id AND r.branch_id = l.branch_id
-             JOIN users u ON u.id = l.user_id
+            self::ADMIN_SELECT . '
              WHERE l.id = :id AND l.run_id = :run AND l.branch_id = :branch
              LIMIT 1',
             ['id' => $lineId, 'run' => $runId, 'branch' => $this->requireBranchId()]
@@ -211,12 +214,15 @@ final class PayrollRunLine extends Model
     {
         $line = $this->findInRun($runId, $lineId);
 
-        return $line !== null && PayrollLineStatus::from((string) $line['status'])->canEdit();
+        return $line !== null
+            && $line['paid_transaction_id'] === null
+            && PayrollLineStatus::from((string) $line['status'])->canEdit();
     }
 
     /**
      * The line, locked for this transaction, if it may still change — any
-     * status but confirmed.
+     * status but confirmed, and never once paid (a paid line is confirmed
+     * anyway; checked again so the rule does not hang on that alone).
      *
      * @return array<string,mixed>|null
      */
@@ -225,6 +231,7 @@ final class PayrollRunLine extends Model
         return $db->first(
             "SELECT * FROM payroll_run_lines
              WHERE id = :id AND run_id = :run AND branch_id = :branch AND status IN ('draft','sent','query')
+               AND paid_transaction_id IS NULL
              FOR UPDATE",
             ['id' => $lineId, 'run' => $runId, 'branch' => $branchId]
         );

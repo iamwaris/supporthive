@@ -31,6 +31,7 @@ $pageUrl = static fn (int $target): string => url('/salary-notices') . ($target 
                         <th scope="col" class="th">Month</th>
                         <th scope="col" class="th text-right">Employees</th>
                         <th scope="col" class="th text-right">Confirmed</th>
+                        <th scope="col" class="th text-right">Paid</th>
                         <th scope="col" class="th text-right">Query</th>
                         <th scope="col" class="th hidden text-right sm:table-cell">Awaiting</th>
                         <th scope="col" class="th hidden text-right sm:table-cell">Not sent</th>
@@ -40,7 +41,7 @@ $pageUrl = static fn (int $target): string => url('/salary-notices') . ($target 
                 <tbody>
                     <?php if ($runs === []) : ?>
                         <tr>
-                            <td class="td" colspan="7">
+                            <td class="td" colspan="8">
                                 <p class="py-10 text-center text-sm text-slate-600">
                                     No salary notices yet. Import a month's sheet to start.
                                 </p>
@@ -62,6 +63,7 @@ $pageUrl = static fn (int $target): string => url('/salary-notices') . ($target 
                             </td>
                             <td class="td money text-right"><?= e((string) (int) $run['line_count']) ?></td>
                             <td class="td money text-right"><?= e((string) (int) $run['confirmed_count']) ?></td>
+                            <td class="td money text-right"><?= e((string) (int) $run['paid_count']) ?></td>
                             <td class="td money text-right <?= (int) $run['query_count'] > 0 ? 'font-semibold text-bad-text' : '' ?>"><?= e((string) (int) $run['query_count']) ?></td>
                             <td class="td money hidden text-right sm:table-cell"><?= e((string) (int) $run['pending_count']) ?></td>
                             <td class="td money hidden text-right sm:table-cell"><?= e((string) (int) $run['draft_count']) ?></td>

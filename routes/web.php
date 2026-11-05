@@ -165,6 +165,9 @@ $router->get('/salary-notices/{id}/lines/{line}/preview-email', 'PayrollControll
 $router->get('/salary-notices/{id}/lines/{line}/preview', 'PayrollController@previewNotice', ['can:administer']);
 // PAY-3: withdraw every notice of the month (all links die, lines back to draft) to correct and resend.
 $router->post('/salary-notices/{id}/withdraw', 'PayrollController@withdraw', ['can:administer']);
+// PAY-5: mark a confirmed line as paid (posts the salary expense) and undo it (voids that expense).
+$router->post('/salary-notices/{id}/lines/{line}/pay', 'PayrollController@markPaid', ['can:administer']);
+$router->post('/salary-notices/{id}/lines/{line}/unpay', 'PayrollController@markUnpaid', ['can:administer']);
 
 $router->get('/employee-documents', 'EmployeeDocumentController@index', ['can:administer']);
 $router->post('/employee-documents', 'EmployeeDocumentController@store', ['can:administer']);

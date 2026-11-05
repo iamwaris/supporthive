@@ -29,6 +29,11 @@ use RuntimeException;
  */
 final class TransactionService
 {
+    /** Which void path is asking: each kind of linked posting is voided only through its own. */
+    private const VOID_LEDGER = 'ledger';
+    private const VOID_REGISTER = 'register';
+    private const VOID_SALARY = 'salary';
+
     /**
      * Post a single movement.
      *
@@ -115,6 +120,51 @@ final class TransactionService
             'transaction_date' => $date,
             'description' => $description,
             'reference_no' => $reference,
+        ], $link);
+    }
+
+    /**
+     * Post a confirmed salary notice line's payment as an ordinary expense
+     * AND link it to the line, in one database transaction (PAY-5).
+     *
+     * Like a register movement, the link is not optional: the line must be
+     * in this branch, confirmed and not already paid, or the posting is
+     * rolled back. So a salary payment can never exist without exactly one
+     * line pointing at it, and a line is never paid twice.
+     */
+    public static function postSalaryPayment(
+        int $lineId,
+        string $amount,
+        int $accountId,
+        int $categoryId,
+        string $date,
+        string $description
+    ): int {
+        $paidOn = self::normaliseDate($date);
+        $link = static function (int $transactionId) use ($lineId, $accountId, $paidOn): void {
+            $linked = Database::instance()->update(
+                'payroll_run_lines',
+                [
+                    'paid_at' => $paidOn,
+                    'paid_by' => Auth::id(),
+                    'paid_transaction_id' => $transactionId,
+                    'paid_account_id' => $accountId,
+                ],
+                "id = :line AND branch_id = :branch AND status = 'confirmed' AND paid_transaction_id IS NULL",
+                ['line' => $lineId, 'branch' => self::requireBranchId()]
+            );
+            if ($linked !== 1) {
+                throw new RuntimeException('That salary line cannot take this payment.');
+            }
+        };
+
+        return self::postMovement([
+            'type' => TransactionType::Expense,
+            'amount' => $amount,
+            'account_id' => $accountId,
+            'category_id' => $categoryId,
+            'transaction_date' => $paidOn,
+            'description' => $description,
         ], $link);
     }
 
@@ -326,13 +376,14 @@ final class TransactionService
      *
      * A receivables / payables posting is refused here: its register entry
      * would still claim the money moved. It is voided only by cancelling the
-     * entry, through voidRegisterPosting().
+     * entry, through voidRegisterPosting(). Likewise a salary payment, whose
+     * notice line would still say paid: only voidSalaryPayment() voids it.
      *
      * @return int how many rows were voided
      */
     public static function void(int $transactionId, string $reason): int
     {
-        return self::voidTransaction($transactionId, $reason, false);
+        return self::voidTransaction($transactionId, $reason, self::VOID_LEDGER);
     }
 
     /**
@@ -342,10 +393,20 @@ final class TransactionService
      */
     public static function voidRegisterPosting(int $transactionId, string $reason): int
     {
-        return self::voidTransaction($transactionId, $reason, true);
+        return self::voidTransaction($transactionId, $reason, self::VOID_REGISTER);
     }
 
-    private static function voidTransaction(int $transactionId, string $reason, bool $forRegister): int
+    /**
+     * Void the expense of a salary payment being undone. Called only by
+     * SalaryPayment::undo(), inside its own database transaction with the
+     * line's paid columns cleared; refuses any other kind of row.
+     */
+    public static function voidSalaryPayment(int $transactionId, string $reason): int
+    {
+        return self::voidTransaction($transactionId, $reason, self::VOID_SALARY);
+    }
+
+    private static function voidTransaction(int $transactionId, string $reason, string $path): int
     {
         $reason = trim($reason);
 
@@ -370,14 +431,28 @@ final class TransactionService
         }
 
         $isRegisterRow = TransactionType::tryFrom((string) $transaction['type'])?->isRegisterMovement() === true;
-        if ($isRegisterRow && !$forRegister) {
+        if ($isRegisterRow && $path !== self::VOID_REGISTER) {
             throw new RuntimeException(
                 'This transaction belongs to a receivable or payable. Cancel the entry from '
                 . 'Receivables or Payables instead; that voids this posting with it.'
             );
         }
-        if (!$isRegisterRow && $forRegister) {
+        if (!$isRegisterRow && $path === self::VOID_REGISTER) {
             throw new RuntimeException('That transaction is not a receivables / payables posting.');
+        }
+
+        $isSalaryRow = (int) $db->value(
+            'SELECT COUNT(*) FROM payroll_run_lines WHERE paid_transaction_id = :id AND branch_id = :branch',
+            ['id' => $transactionId, 'branch' => (int) $transaction['branch_id']]
+        ) > 0;
+        if ($isSalaryRow && $path !== self::VOID_SALARY) {
+            throw new RuntimeException(
+                'This transaction is a salary payment. Undo it from Salary notices instead (Mark as unpaid '
+                . 'on the employee line); that voids this posting with it.'
+            );
+        }
+        if (!$isSalaryRow && $path === self::VOID_SALARY) {
+            throw new RuntimeException('That transaction is not a salary payment.');
         }
 
         $userId = Auth::id();

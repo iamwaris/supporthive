@@ -16,12 +16,19 @@
  * @var string                                            $symbol       currency symbol
  * @var float                                             $maxUploadMb
  * @var int                                               $editLineId   the line whose figure form just failed, else 0
+ * @var int                                               $payLineId    the line whose "Mark as paid" form just failed, else 0
+ * @var int                                               $paidCount    lines marked as paid
+ * @var list<array<string,mixed>>                         $accounts     the branch's active accounts
+ * @var int|null                                          $defaultAccountId "Cash" if there is one, else the first
+ * @var string                                            $today        Y-m-d, the latest payment date allowed
+ * @var array<int,string>                                 $expenseLinks line id => the ledger filtered to its salary expense
  * @var array<string,list<string>>                        $errors
  */
 
 declare(strict_types=1);
 
 use App\Domain\PayrollLineStatus;
+use App\Services\Payroll\SalaryPayment;
 
 $errors = $errors ?? [];
 $runId = (int) $run['id'];
@@ -41,6 +48,8 @@ foreach ($lines as $line) {
 $outstanding = $counts['sent'] + $counts['confirmed'] + $counts['query'];
 $monthLabel = date('F Y', (int) strtotime((string) $run['period_month']));
 $withdrawError = $errors['withdraw_reason'][0] ?? null;
+$shortDate = static fn (mixed $value): string => date('j M Y', (int) strtotime((string) $value));
+$paidLock = 'Some salaries for this month are marked as paid. Undo those payments first (Mark as unpaid on each paid line).';
 $cancelWarning = "This cancels the link already sent; you'll need to resend.";
 $badge = [
     'draft' => 'badge-mute',
@@ -100,6 +109,11 @@ $badge = [
             </div>
         <?php endforeach; ?>
     </section>
+    <?php if ($counts['confirmed'] > 0) : ?>
+        <p class="-mt-2 text-xs text-slate-600">
+            Paid: <span class="money"><?= e((string) $paidCount) ?></span> of <?= e($counts['confirmed'] === 1 ? '1 confirmed salary' : $counts['confirmed'] . ' confirmed salaries') ?>.
+        </p>
+    <?php endif; ?>
 
     <section id="note" class="card p-5 sm:p-6" aria-labelledby="note-heading">
         <h2 id="note-heading" class="font-display text-sm font-semibold text-ink">Note for the month</h2>
@@ -185,6 +199,10 @@ $badge = [
                     $editErrors = $lineId === $editLineId
                         ? array_intersect_key($errors, ['salary' => 1, 'absent_days' => 1, 'working_days' => 1])
                         : [];
+                    $isPaid = $line['paid_transaction_id'] !== null;
+                    $payErrors = $lineId === $payLineId
+                        ? array_intersect_key($errors, ['account_id' => 1, 'paid_at' => 1])
+                        : [];
                     ?>
                     <tbody id="line-<?= e((string) $lineId) ?>" class="border-b-2 border-slate-200">
                         <tr>
@@ -222,6 +240,14 @@ $badge = [
                                     <p class="mt-1 text-xs text-slate-700">
                                         Confirmed by “<?= e((string) $line['signed_name']) ?>” on <?= e($when($line['responded_at'])) ?>
                                     </p>
+                                    <?php if ($isPaid) : ?>
+                                        <p class="mt-1 text-xs font-medium text-ok-text">
+                                            Paid <?= e($shortDate($line['paid_at'])) ?> from <?= e((string) ($line['paid_account_name'] ?? 'a removed account')) ?>
+                                            · <a href="<?= e(url($expenseLinks[$lineId] ?? '/transactions')) ?>" class="text-brand-900 underline">view expense</a>
+                                        </p>
+                                    <?php else : ?>
+                                        <p class="mt-1 text-[11.5px] text-slate-500">Not paid yet</p>
+                                    <?php endif; ?>
                                 <?php elseif ($status === PayrollLineStatus::Query) : ?>
                                     <p class="mt-1 text-[11.5px] text-slate-500">Raised <?= e($when($line['responded_at'])) ?>:</p>
                                     <p class="text-xs whitespace-pre-line text-slate-700"><?= e((string) $line['query_text']) ?></p>
@@ -330,8 +356,75 @@ $badge = [
                                         </details>
                                     <?php endif; ?>
 
-                                    <?php if ($status === PayrollLineStatus::Confirmed) : ?>
-                                        <p class="text-[11.5px] text-slate-500">Closed: the employee confirmed this notice.</p>
+                                    <?php if ($status === PayrollLineStatus::Confirmed && $isPaid) : ?>
+                                        <details id="line-<?= e((string) $lineId) ?>-unpay">
+                                            <summary class="btn-secondary cursor-pointer list-none [&::-webkit-details-marker]:hidden">Mark as unpaid…</summary>
+                                            <div class="mt-2 max-w-sm rounded-lg border border-bad-line bg-bad-bg p-3">
+                                                <p class="text-xs text-bad-text">
+                                                    The expense of <?= e($symbol) ?> <?= e($money($line['salary'])) ?> recorded for <?= e((string) $line['name']) ?>
+                                                    on <?= e($shortDate($line['paid_at'])) ?> is voided (kept, with a reason) and this salary shows as unpaid again.
+                                                </p>
+                                                <form method="post" action="<?= e(url($lineBase . '/unpay')) ?>" class="mt-2">
+                                                    <?= csrf_field() ?>
+                                                    <button type="submit" class="btn-dark">Yes, mark as unpaid</button>
+                                                </form>
+                                            </div>
+                                        </details>
+                                    <?php elseif ($status === PayrollLineStatus::Confirmed) : ?>
+                                        <?php if ($accounts === []) : ?>
+                                            <p class="text-[11.5px] text-slate-600">
+                                                To mark this salary as paid, first <a href="<?= e(url('/accounts')) ?>" class="text-brand-900 underline">add an active account</a>.
+                                            </p>
+                                        <?php else : ?>
+                                            <?php
+                                            $payId = 'line-' . $lineId . '-pay';
+                                            $chosenAccount = $payErrors !== [] ? (int) old('account_id', (string) $defaultAccountId) : (int) $defaultAccountId;
+                                            $chosenDate = $payErrors !== [] ? old('paid_at', $today) : $today;
+                                            $accountNames = [];
+                                            foreach ($accounts as $account) {
+                                                $accountNames[(string) $account['id']] = (string) $account['name'];
+                                            }
+                                            $confirmLead = 'Record ' . $symbol . ' ' . $money($line['salary']) . ' salary for ' . (string) $line['name'];
+                                            ?>
+                                            <details id="<?= e($payId) ?>" <?= $payErrors !== [] ? 'open' : '' ?>>
+                                                <summary class="btn-primary cursor-pointer list-none [&::-webkit-details-marker]:hidden">Mark as paid…</summary>
+                                                <form method="post" action="<?= e(url($lineBase . '/pay')) ?>"
+                                                      class="mt-2 grid max-w-xl grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-2"
+                                                      x-data="{ account: <?= e((string) json_encode((string) $chosenAccount)) ?>, paidOn: <?= e((string) json_encode($chosenDate)) ?>, names: <?= e((string) json_encode($accountNames)) ?> }">
+                                                    <?= csrf_field() ?>
+                                                    <div>
+                                                        <label for="<?= e($payId) ?>-account" class="label">Paid from</label>
+                                                        <select id="<?= e($payId) ?>-account" name="account_id" required x-model="account"
+                                                                class="<?= isset($payErrors['account_id'][0]) ? 'input-error' : 'input' ?>"
+                                                                <?= isset($payErrors['account_id'][0]) ? 'aria-invalid="true" aria-describedby="' . e($payId) . '-account-error"' : '' ?>>
+                                                            <?php foreach ($accounts as $account) : ?>
+                                                                <option value="<?= e((string) (int) $account['id']) ?>" <?= (int) $account['id'] === $chosenAccount ? 'selected' : '' ?>><?= e((string) $account['name']) ?></option>
+                                                            <?php endforeach; ?>
+                                                        </select>
+                                                        <?php if (isset($payErrors['account_id'][0])) : ?>
+                                                            <p id="<?= e($payId) ?>-account-error" class="error"><?= e($payErrors['account_id'][0]) ?></p>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <div>
+                                                        <label for="<?= e($payId) ?>-date" class="label">Payment date</label>
+                                                        <input id="<?= e($payId) ?>-date" name="paid_at" type="date" required max="<?= e($today) ?>" x-model="paidOn"
+                                                               value="<?= e($chosenDate) ?>"
+                                                               class="<?= isset($payErrors['paid_at'][0]) ? 'input-error' : 'input' ?> money"
+                                                               <?= isset($payErrors['paid_at'][0]) ? 'aria-invalid="true" aria-describedby="' . e($payId) . '-date-error"' : '' ?>>
+                                                        <?php if (isset($payErrors['paid_at'][0])) : ?>
+                                                            <p id="<?= e($payId) ?>-date-error" class="error"><?= e($payErrors['paid_at'][0]) ?></p>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <p class="text-xs text-slate-700 sm:col-span-2" aria-live="polite">
+                                                        <span x-text="<?= e((string) json_encode($confirmLead)) ?> + ' from ' + (names[account] ?? 'the chosen account') + ' on ' + paidOn + '?'"><?= e($confirmLead) ?> from the account and on the date chosen above?</span>
+                                                        It is recorded as an expense under <?= e(SalaryPayment::CATEGORY_NAME) ?>.
+                                                    </p>
+                                                    <div class="sm:col-span-2">
+                                                        <button type="submit" class="btn-dark">Yes, record the payment</button>
+                                                    </div>
+                                                </form>
+                                            </details>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </div>
                             </td>
@@ -351,6 +444,9 @@ $badge = [
 
     <section id="add-employees" class="card p-5 sm:p-6" aria-labelledby="add-employees-heading">
         <h2 id="add-employees-heading" class="font-display text-sm font-semibold text-ink">Upload sheet: add or update employees</h2>
+        <?php if ($paidCount > 0) : ?>
+            <p class="mt-1 text-xs font-medium text-bad-text">Locked: <?= e($paidLock) ?></p>
+        <?php endif; ?>
         <p class="mt-1 text-xs text-slate-600">
             New employees are added as "Not sent"; changed figures are updated (a sent link is cancelled, after you
             confirm); unchanged rows, and employees not in the file, are left as they are; a changed confirmed
@@ -384,6 +480,9 @@ $badge = [
                 For when the wrong figures went out. Every line goes back to "Not sent" so you can correct it and send
                 an updated notice — to everyone, including those who already confirmed.
             </p>
+            <?php if ($paidCount > 0) : ?>
+                <p class="mt-3 text-sm font-medium text-bad-text">Cannot withdraw: <?= e($paidLock) ?></p>
+            <?php else : ?>
             <details class="mt-3" <?= $withdrawError !== null ? 'open' : '' ?>>
                 <summary class="btn-secondary cursor-pointer list-none text-bad-text [&::-webkit-details-marker]:hidden">Withdraw this month's notices…</summary>
                 <form method="post" action="<?= e(url($base . '/withdraw')) ?>" class="mt-3 flex max-w-xl flex-col gap-3 rounded-lg border border-bad-line bg-bad-bg p-4" novalidate>
@@ -410,6 +509,7 @@ $badge = [
                     <div><button type="submit" class="btn-dark">Yes, withdraw <?= e($monthLabel) ?></button></div>
                 </form>
             </details>
+            <?php endif; ?>
         </section>
     <?php endif; ?>
 </div>

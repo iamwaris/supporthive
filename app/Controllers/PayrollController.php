@@ -15,12 +15,16 @@ use App\Core\SpreadsheetReader;
 use App\Core\UnreadableSpreadsheet;
 use App\Core\Validator;
 use App\Domain\PayrollLineStatus;
+use App\Models\Account;
 use App\Models\PayrollRun;
 use App\Models\PayrollRunLine;
+use App\Services\Payroll\PaidLinesBlockChange;
 use App\Services\Payroll\PayrollImport;
 use App\Services\Payroll\PayrollNoticeSender;
 use App\Services\Payroll\PayrollSheetUpdate;
 use App\Services\Payroll\PendingSheetUpdate;
+use App\Services\Payroll\SalaryPayment;
+use App\Services\Payroll\SalaryPaymentRefused;
 use App\Services\Settings;
 use InvalidArgumentException;
 use PDOException;
@@ -31,8 +35,9 @@ use RuntimeException;
  * the admin's branch: import a month's sheet, add missing employees and
  * update figures with a further file, attach each employee's attendance screenshot, preview
  * the email and the notice page, email each employee their private link, and
- * see who confirmed or queried, and withdraw the whole month to correct
- * and resend it.
+ * see who confirmed or queried, withdraw the whole month to correct
+ * and resend it, and mark each confirmed salary as paid (PAY-5), which
+ * records the expense.
  *
  * Every run id resolves through PayrollRun::find() (branch-scoped) and every
  * line id through PayrollRunLine::findInRun() (branch- and run-scoped), so
@@ -122,6 +127,9 @@ final class PayrollController extends Controller
         }
 
         if ($existing !== null) {
+            if ($runs->hasPaidLines((int) $existing['id'])) {
+                $this->failImport(PaidLinesBlockChange::MESSAGE);
+            }
             if ($outstanding) {
                 $this->failImport(
                     'Notices for ' . $monthLabel . ' are out with employees, so its lines cannot be replaced. '
@@ -139,6 +147,8 @@ final class PayrollController extends Controller
 
         try {
             $runId = $runs->import($periodMonth, $note, $result->lines);
+        } catch (PaidLinesBlockChange $e) {
+            $this->failImport($e->getMessage());
         } catch (RuntimeException | PDOException $e) {
             // Another admin emailed or imported this month between the checks above and the write.
             Logger::error('Payroll import failed', ['error' => $e->getMessage()]);
@@ -178,6 +188,9 @@ final class PayrollController extends Controller
         $run = $this->findRunOr404($params);
         $runId = (int) $run['id'];
         $back = '/salary-notices/' . $runId . '#add-employees';
+        if ((new PayrollRun())->hasPaidLines($runId)) {
+            $this->failWithFieldErrors(['sheet' => PaidLinesBlockChange::MESSAGE], $back);
+        }
 
         $rows = $this->readUploadedSheet($back, 'Choose the .xlsx or .csv file with the employees to add or update.');
         try {
@@ -350,7 +363,9 @@ final class PayrollController extends Controller
         if (!$saved) {
             Session::flash(
                 'error',
-                'This line can no longer be changed: the employee has confirmed it.'
+                $line['paid_transaction_id'] !== null
+                    ? 'This line is marked as paid, so its figures cannot change. Undo the payment first.'
+                    : 'This line can no longer be changed: the employee has confirmed it.'
             );
             Http::redirect($anchor);
         }
@@ -421,6 +436,9 @@ final class PayrollController extends Controller
 
         try {
             $counts = (new PayrollRun())->withdraw((int) $run['id'], $reason);
+        } catch (PaidLinesBlockChange $e) {
+            Session::flash('error', 'Nothing was withdrawn. ' . $e->getMessage());
+            Http::redirect($back);
         } catch (PDOException $e) {
             Logger::error('Payroll withdraw failed', ['run_id' => (int) $run['id'], 'error' => $e->getMessage()]);
             Session::flash('error', 'Nothing was withdrawn: please try again.');
@@ -447,6 +465,89 @@ final class PayrollController extends Controller
             . '. Correct the figures, then resend.'
         );
         Http::redirect($back);
+    }
+
+    /**
+     * "Mark as paid" (PAY-5): a confirmed, unpaid line's final salary is
+     * recorded as an expense from the chosen account on the chosen date
+     * (not in the future), and linked to the line. The confirm step is the
+     * form itself, opened from the line.
+     *
+     * @param array<string,string> $params
+     */
+    public function markPaid(array $params): void
+    {
+        [$run, $line] = $this->findLineOr404($params);
+        $anchor = '/salary-notices/' . (int) $run['id'] . '#line-' . (int) $line['id'];
+
+        // Read by show() so the field errors open under this line only.
+        Session::flash('payroll_pay_line', (int) $line['id']);
+        $input = Validator::make($_POST, ['account_id' => 'required|int', 'paid_at' => 'required|ymd']);
+        $errors = $input->errors();
+        if ($errors !== []) {
+            $this->failWithFieldErrors(array_intersect_key([
+                'account_id' => 'Choose the account the salary was paid from.',
+                'paid_at' => 'Enter the payment date as a date, e.g. ' . date('Y-m-d') . '.',
+            ], $errors), $anchor . '-pay');
+        }
+        $clean = $input->validated();
+        $accountId = (int) $clean['account_id'];
+        $paidOn = (string) $clean['paid_at'];
+
+        try {
+            SalaryPayment::pay((int) $run['id'], (int) $line['id'], $accountId, $paidOn);
+        } catch (SalaryPaymentRefused $e) {
+            if ($e->field !== null) {
+                $this->failWithFieldErrors([$e->field => $e->getMessage()], $anchor . '-pay');
+            }
+            $this->failLine($e->getMessage(), $anchor);
+        } catch (InvalidArgumentException | RuntimeException | PDOException $e) {
+            Logger::error('Salary payment failed', ['line_id' => (int) $line['id'], 'error' => $e->getMessage()]);
+            $this->failLine(
+                'Nothing was recorded: the payment could not be saved just now. Please try again.',
+                $anchor
+            );
+        }
+
+        Session::forget('_old');
+        Session::flash(
+            'success',
+            'Recorded ' . Settings::string('currency_symbol', 'Rs') . ' '
+            . number_format((float) $line['salary'], 2) . ' salary for ' . (string) $line['name'] . ' from '
+            . (string) ((new Account())->find($accountId)['name'] ?? 'the account') . ' on '
+            . date('j M Y', (int) strtotime($paidOn)) . ', as an expense under ' . SalaryPayment::CATEGORY_NAME . '.'
+        );
+        Http::redirect($anchor);
+    }
+
+    /**
+     * "Mark as unpaid" (PAY-5): void the line's salary expense and clear the
+     * payment, for when it was recorded by mistake.
+     *
+     * @param array<string,string> $params
+     */
+    public function markUnpaid(array $params): void
+    {
+        [$run, $line] = $this->findLineOr404($params);
+        $anchor = '/salary-notices/' . (int) $run['id'] . '#line-' . (int) $line['id'];
+
+        try {
+            SalaryPayment::undo((int) $run['id'], (int) $line['id']);
+        } catch (SalaryPaymentRefused $e) {
+            $this->failLine($e->getMessage(), $anchor);
+        } catch (InvalidArgumentException | RuntimeException | PDOException $e) {
+            Logger::error('Salary payment undo failed', ['line_id' => (int) $line['id'], 'error' => $e->getMessage()]);
+            $this->failLine(
+                'Nothing was changed: the payment could not be undone just now. Please try again.',
+                $anchor
+            );
+        }
+
+        Session::flash(
+            'success',
+            'Payment undone for ' . (string) $line['name'] . ': its expense was voided and the salary is unpaid again.'
+        );
+        Http::redirect($anchor);
     }
 
     /** "Send to all not yet sent": draft lines only. @param array<string,string> $params */
@@ -549,6 +650,9 @@ final class PayrollController extends Controller
         $back = '/salary-notices/' . $runId;
         try {
             $applied = (new PayrollRun())->updateFromSheet($runId, $rows, $state);
+        } catch (PaidLinesBlockChange $e) {
+            Session::flash('error', 'Nothing was changed. ' . $e->getMessage());
+            Http::redirect($back . '#add-employees');
         } catch (RuntimeException | PDOException $e) {
             Logger::error('Payroll sheet update failed', ['run_id' => $runId, 'error' => $e->getMessage()]);
             $applied = null;
@@ -587,6 +691,32 @@ final class PayrollController extends Controller
         $runs = new PayrollRun();
         $lines = (new PayrollRunLine())->forRun($runId);
         $monthLabel = PayrollNoticeSender::monthLabel((string) $run['period_month']);
+        $accounts = (new Account())->activeOrdered();
+        $defaultAccountId = null;
+        foreach ($accounts as $account) {
+            if (strcasecmp((string) $account['name'], 'Cash') === 0) {
+                $defaultAccountId = (int) $account['id'];
+                break;
+            }
+        }
+
+        // Each paid line links to its expense: the ledger filtered to that
+        // day, account and description, which names the employee and ID.
+        $expenseLinks = [];
+        foreach ($lines as $line) {
+            if ($line['paid_transaction_id'] !== null) {
+                $expenseLinks[(int) $line['id']] = '/transactions?' . http_build_query([
+                    'from' => (string) $line['paid_at'],
+                    'to' => (string) $line['paid_at'],
+                    'account_id' => (int) $line['paid_account_id'],
+                    'q' => SalaryPayment::description(
+                        (string) $run['period_month'],
+                        (string) $line['name'],
+                        (string) $line['employee_code']
+                    ),
+                ]);
+            }
+        }
 
         http_response_code($status);
         $this->view('pages/salary-notices/show', [
@@ -601,6 +731,15 @@ final class PayrollController extends Controller
             'missing' => $runs->activeEmployeesWithoutLine($runId),
             'sheetErrors' => $sheetErrors,
             'editLineId' => (int) (Session::flash('payroll_edit_line') ?? 0),
+            'payLineId' => (int) (Session::flash('payroll_pay_line') ?? 0),
+            'paidCount' => count(array_filter(
+                $lines,
+                static fn (array $line): bool => $line['paid_transaction_id'] !== null
+            )),
+            'accounts' => $accounts,
+            'defaultAccountId' => $defaultAccountId ?? (isset($accounts[0]) ? (int) $accounts[0]['id'] : null),
+            'today' => date('Y-m-d'),
+            'expenseLinks' => $expenseLinks,
             'symbol' => Settings::string('currency_symbol', 'Rs'),
             'maxUploadMb' => round((int) Config::get('uploads.max_bytes', 5_242_880) / 1048576, 1),
         ]);

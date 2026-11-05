@@ -9,6 +9,7 @@ use App\Core\Database;
 use App\Core\Logger;
 use App\Core\Model;
 use App\Services\Audit;
+use App\Services\Payroll\PaidLinesBlockChange;
 use App\Services\Payroll\PayrollSheetUpdate;
 use App\Services\Payroll\PayrollSheetUpdatePlan;
 use RuntimeException;
@@ -49,7 +50,8 @@ final class PayrollRun extends Model
                     COALESCE(SUM(l.status = 'confirmed'), 0) AS confirmed_count,
                     COALESCE(SUM(l.status = 'query'), 0) AS query_count,
                     COALESCE(SUM(l.status = 'sent'), 0) AS pending_count,
-                    COALESCE(SUM(l.status = 'draft'), 0) AS draft_count
+                    COALESCE(SUM(l.status = 'draft'), 0) AS draft_count,
+                    COALESCE(SUM(l.paid_transaction_id IS NOT NULL), 0) AS paid_count
              FROM payroll_runs r
              LEFT JOIN payroll_run_lines l ON l.run_id = r.id AND l.branch_id = r.branch_id
              WHERE r.branch_id = :branch
@@ -72,6 +74,19 @@ final class PayrollRun extends Model
         return (int) $this->db()->value(
             "SELECT COUNT(*) FROM payroll_run_lines
              WHERE run_id = :run AND branch_id = :branch AND status IN ('sent','confirmed','query')",
+            ['run' => $runId, 'branch' => $this->requireBranchId()]
+        ) > 0;
+    }
+
+    /**
+     * True while any line of the run is marked as paid (PAY-5). That locks
+     * every month-wide change: withdraw, full re-import and sheet update.
+     */
+    public function hasPaidLines(int $runId): bool
+    {
+        return (int) $this->db()->value(
+            'SELECT COUNT(*) FROM payroll_run_lines
+             WHERE run_id = :run AND branch_id = :branch AND paid_transaction_id IS NOT NULL',
             ['run' => $runId, 'branch' => $this->requireBranchId()]
         ) > 0;
     }
@@ -100,6 +115,8 @@ final class PayrollRun extends Model
      * out with employees (never sent, or already withdrawn — a second
      * concurrent withdrawal lands here once the first commits).
      *
+     * Throws PaidLinesBlockChange when a line of the run is marked as paid.
+     *
      * @return array{confirmed:int,query:int,sent:int,draft:int}|null
      */
     public function withdraw(int $runId, string $reason): ?array
@@ -118,11 +135,12 @@ final class PayrollRun extends Model
 
             $lines = $db->all(
                 'SELECT id, employee_code, status, salary, absent_days, working_days, signed_name, responded_at,
-                        response_ip, query_text, emailed_at, token_expires_at
+                        response_ip, query_text, emailed_at, token_expires_at, paid_transaction_id
                  FROM payroll_run_lines WHERE run_id = :run AND branch_id = :branch
                  ORDER BY id FOR UPDATE',
                 ['run' => $runId, 'branch' => $branchId]
             );
+            self::refuseIfAnyPaid($lines);
 
             $counts = ['confirmed' => 0, 'query' => 0, 'sent' => 0, 'draft' => 0];
             foreach ($lines as $line) {
@@ -221,6 +239,7 @@ final class PayrollRun extends Model
      *     user_id:int,name:string,employee_code:string,salary:string,absent_days:string,working_days:string
      * }> $lines
      * @throws RuntimeException when the existing run has a notice out with an employee
+     * @throws PaidLinesBlockChange when a line of the existing run is marked as paid
      */
     public function import(string $periodMonth, ?string $note, array $lines): int
     {
@@ -242,6 +261,9 @@ final class PayrollRun extends Model
                 $runId = $this->create(['period_month' => $periodMonth, 'note' => $note, 'created_by' => Auth::id()]);
             } else {
                 $runId = (int) $existing['id'];
+                if ($this->hasPaidLines($runId)) {
+                    throw new PaidLinesBlockChange();
+                }
                 if ($this->hasOutstandingNotices($runId)) {
                     throw new RuntimeException('Notices for this month are out with employees.');
                 }
@@ -294,6 +316,8 @@ final class PayrollRun extends Model
      * and left-out lines are not written at all. One audit row for the upload
      * carries the counts.
      *
+     * Throws PaidLinesBlockChange when a line of the run is marked as paid.
+     *
      * @param array<int,list<string>> $rows the sheet, as for PayrollImport::validate()
      */
     public function updateFromSheet(int $runId, array $rows, string $expectedState): ?PayrollSheetUpdatePlan
@@ -316,11 +340,12 @@ final class PayrollRun extends Model
             }
 
             $lines = $db->all(
-                'SELECT id, user_id, status, salary, absent_days, working_days, token_expires_at
+                'SELECT id, user_id, status, salary, absent_days, working_days, token_expires_at, paid_transaction_id
                  FROM payroll_run_lines WHERE run_id = :run AND branch_id = :branch
                  ORDER BY id FOR UPDATE',
                 ['run' => $runId, 'branch' => $branchId]
             );
+            self::refuseIfAnyPaid($lines);
             $plan = PayrollSheetUpdate::plan($rows, $this->branchEmployees(), $lines);
             if (!$plan->passes() || !hash_equals($expectedState, $plan->state)) {
                 return null;
@@ -382,6 +407,19 @@ final class PayrollRun extends Model
             'name' => (string) $row['name'],
             'employee_code' => $row['employee_code'] === null ? null : (string) $row['employee_code'],
         ], $rows);
+    }
+
+    /**
+     * @param list<array<string,mixed>> $lines the run's lines as locked
+     * @throws PaidLinesBlockChange
+     */
+    private static function refuseIfAnyPaid(array $lines): void
+    {
+        foreach ($lines as $line) {
+            if ($line['paid_transaction_id'] !== null) {
+                throw new PaidLinesBlockChange();
+            }
+        }
     }
 
     /**

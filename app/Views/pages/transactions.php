@@ -362,8 +362,12 @@ $shareSummary = $inShare === null
                     <?php
                     $isVoid = (string) $row['status'] === 'void';
                     $type = TransactionType::from((string) $row['type']);
-                    // A register posting is voided only by cancelling its entry.
+                    // A register posting is voided only by cancelling its entry,
+                    // a salary payment only by undoing it on its salary notice.
                     $registerKind = ReceivablePayableKind::fromMovement($type);
+                    $salaryLink = ($row['salary_line_id'] ?? null) === null
+                        ? null
+                        : '/salary-notices/' . (int) $row['salary_run_id'] . '#line-' . (int) $row['salary_line_id'];
                     $signed = ((int) $row['direction'] === 1 ? '+' : '−') . $money($row['amount']);
                     $category = $row['parent_category_name'] !== null
                         ? (string) $row['parent_category_name'] . ' · ' . (string) $row['category_name']
@@ -426,7 +430,13 @@ $shareSummary = $inShare === null
                                         class="rounded-md px-2 py-1 text-[11.5px] font-medium text-slate-600 hover:bg-slate-100">
                                     Attach
                                 </button>
-                                <?php if ($registerKind !== null && !$isVoid) : ?>
+                                <?php if ($salaryLink !== null && !$isVoid) : ?>
+                                    <a href="<?= e(url($salaryLink)) ?>"
+                                       class="rounded-md px-2 py-1 text-[11.5px] font-medium text-slate-600 hover:bg-slate-100"
+                                       title="A salary payment: undo it on its salary notice (Mark as unpaid) to void it">
+                                        Manage in Salary notices
+                                    </a>
+                                <?php elseif ($registerKind !== null && !$isVoid) : ?>
                                     <a href="<?= e(url($registerKind->path())) ?>"
                                        class="rounded-md px-2 py-1 text-[11.5px] font-medium text-slate-600 hover:bg-slate-100"
                                        title="Cancel the entry in <?= e($registerKind->title()) ?> to void this posting">
@@ -465,7 +475,7 @@ $shareSummary = $inShare === null
                         </tr>
                     <?php endif; ?>
 
-                    <?php if ($canWrite && !$isVoid && $registerKind === null) : ?>
+                    <?php if ($canWrite && !$isVoid && $registerKind === null && $salaryLink === null) : ?>
                         <tr x-show="openId === <?= $rowId ?>" x-cloak>
                             <td class="border-b border-slate-100 bg-bad-bg px-3.5 py-4" colspan="8">
                                 <form method="post" action="<?= e(url('/transactions/' . $rowId . '/void')) ?>"
